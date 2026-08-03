@@ -14,13 +14,24 @@ const APP_ID = 'com.joinerystudio.bathroom';
 const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
 const STATE_FILE = path.join(app.getPath('userData'), 'window-state.json');
 
-// Where bathroom.html normally lives: the repo this shell sits in, one level up
-// from here. Overridable via config.json so the app keeps working if the
-// checkout is moved, and it falls back to the bundled copy on a machine that
-// has never cloned the repo.
-const DEFAULT_HTML = path.join(__dirname, '..', 'bathroom.html');
+// Where bathroom.html lives in a checkout: the root of the repo this shell sits
+// in. Two ways to get there, because __dirname points inside app.asar once the
+// app is packaged and `..` from there is not the repo:
+//
+//   run from source   <repo>/desktop/main.js              -> ../
+//   run from the exe  <repo>/desktop/dist/win-unpacked/   -> ../../../
+//
+// The portable exe unpacks itself to %TEMP%, so neither resolves and it falls
+// through to the bundled copy — which is what a portable copy should use.
+const CHECKOUT_CANDIDATES = [
+  path.resolve(__dirname, '..', 'bathroom.html'),
+  path.resolve(path.dirname(app.getPath('exe')), '..', '..', '..', 'bathroom.html'),
+];
+function checkoutHtml() {
+  return CHECKOUT_CANDIDATES.find(p => { try { return fs.existsSync(p); } catch (_) { return false; } }) || null;
+}
 // A copy packaged inside the exe, so the app is genuinely standalone on a
-// machine that has never seen the drawings folder.
+// machine that has never cloned the repo.
 const BUNDLED_HTML = path.join(__dirname, 'bundled', 'bathroom.html');
 
 let mainWindow = null;
@@ -42,7 +53,10 @@ function writeJson(file, data) {
 function htmlPath() {
   const cfg = readJson(CONFIG_FILE, {});
   if (cfg.htmlPath && fs.existsSync(cfg.htmlPath)) return cfg.htmlPath;
-  if (!cfg.forceBundled && fs.existsSync(DEFAULT_HTML)) return DEFAULT_HTML;
+  if (!cfg.forceBundled) {
+    const live = checkoutHtml();
+    if (live) return live;
+  }
   if (fs.existsSync(BUNDLED_HTML)) return BUNDLED_HTML;
   return null;
 }
@@ -273,7 +287,7 @@ function loadApp() {
       type: 'error',
       title: 'bathroom.html not found',
       message: 'Could not find the drawing app file.',
-      detail: `Looked for:\n${DEFAULT_HTML}\n\nUse File → Change bathroom.html location… to point at it.`,
+      detail: `Looked for:\n${CHECKOUT_CANDIDATES.join('\n')}\n\nUse File → Change bathroom.html location… to point at it.`,
       buttons: ['OK'],
     });
     return;
