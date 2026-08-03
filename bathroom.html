@@ -1013,7 +1013,7 @@ const CATALOG = {
     defaultConfig:{ screenType:'panel-door', glassT:10, screenH:2000, frame:'frameless',
                     screenFinish:'matt-black', entryW:600, returnW:400, hinge:'R', swing:'out',
                     // A blade wall is a built return: tiled, not glass.
-                    sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100,
+                    sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100, panelSide:'',
                     base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40,
                     mixerH:1050, railH:1800, roseH:2050, roseType:'overhead', labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
@@ -1067,12 +1067,6 @@ function screenLayout(cab){
   const W = cab.W, D = cab.D;
   const t = Math.max(6, c.glassT || 10);
   const ret = Math.max(0, Math.min(D - 50, c.returnW || 400));
-  let entry = Math.max(0, Math.min(W - 100, c.entryW || 600));
-  if(type === 'none') entry = 0;
-  if(type === 'panel') entry = Math.max(0, Math.min(W - 100, c.entryW || 600));
-  if(type === 'door' || type === 'pivot') entry = W;              // the whole face opens
-  if(type === 'sliding') entry = Math.round(W / 2);               // one leaf slides past the other
-  const fixed = Math.max(0, W - entry);
   const blade = (c.sideWall === 'blade')
     ? { side: c.bladeSide || 'L', t: Math.max(50, c.bladeT || 90),
         // A blade is the side wall of the shower, so it runs the full depth
@@ -1081,10 +1075,44 @@ function screenLayout(cab){
         d: Math.max(100, Math.min(D, c.bladeD > 0 ? c.bladeD : D)),
         h: Math.max(300, c.bladeH || 2100) }
     : null;
+  // The glass run: what is left of the face once the blade has taken its side.
+  // Everything — the opening, the panel, the door — is set out inside this,
+  // which is what stops the panel and the door overlapping by the blade.
+  const bt = blade ? blade.t : 0;
+  const gs = (blade && blade.side === 'L') ? bt : 0;
+  const ge = (blade && blade.side === 'R') ? W - bt : W;
+  const gl = Math.max(0, ge - gs);
+
+  let entry;
+  if(type === 'none')                          entry = 0;
+  else if(type === 'door' || type === 'pivot') entry = gl;        // the whole run opens
+  else if(type === 'sliding')                  entry = gl / 2;    // one leaf passes the other
+  else entry = Math.max(0, Math.min(gl, c.entryW || 600));
+  const fixed = Math.max(0, gl - entry);
+
+  // Which end of the glass run the fixed panel sits at. Independent of the
+  // hinge: moving the hinge should not walk the panel across the shower. With a
+  // blade, the panel defaults to the far end, since the blade already closes
+  // its own side.
+  const panelSide = c.panelSide || (blade ? (blade.side === 'L' ? 'R' : 'L') : 'L');
+  const panelFrom = (panelSide === 'L') ? gs : ge - fixed;
+  const panelTo   = (panelSide === 'L') ? gs + fixed : ge;
+  const doorFrom  = (panelSide === 'L') ? gs + fixed : gs;
+  const doorTo    = (panelSide === 'L') ? ge : ge - fixed;
+
+  const hinge = c.hinge || 'R';
+  const hingeU = (hinge === 'L') ? doorFrom : doorTo;
+  // Hung on the blade when the door's hinged edge IS the blade's inside face.
+  const onBlade = !!blade && Math.abs(hingeU - (blade.side === 'L' ? gs : ge)) < 0.5;
+
   return { type, def, t, ret, entry, fixed, W, D, blade,
+           gs, ge, gl, panelSide, panelFrom, panelTo, doorFrom, doorTo,
+           hingeU, onBlade, hingeV: onBlade ? blade.d : D,
+           dir: (hinge === 'L') ? 1 : -1,
+           doorLen: Math.max(0, doorTo - doorFrom),
            // The hinge side is the drafter's, blade or no blade — a door can be
            // hung off the blade or off the jamb opposite it.
-           hinge: c.hinge || 'R', swing: c.swing || 'out',
+           hinge, swing: c.swing || 'out',
            height: c.screenH || 2000, frame: c.frame || 'frameless' };
 }
 
@@ -6972,49 +7000,44 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
     const tp = planMap(wallId, uOff + u0 + bl.t / 2, bl.d + 95, plan);
     d.text(tp[0], tp[1], 'BLADE ' + Math.round(bl.t), { align:'center', size:4, color:COL.muted });
   }
-  const bladeOn = L.blade ? L.blade.side : null;
+  // A glass return goes on the panel's side, and only where a blade is not
+  // already doing that job.
   if((L.type === 'return-panel' || L.type === 'corner')
-     && bladeOn !== (hingeRight ? 'R' : 'L')){
-    paneV(hingeRight ? L.W : 0, L.D - L.ret, L.D);
+     && (!L.blade || L.blade.side !== L.panelSide)){
+    paneV(L.panelSide === 'R' ? L.ge : L.gs, L.D - L.ret, L.D);
   }
   if(L.fixed > 0 && L.type !== 'sliding'){
-    // The fixed pane sits on the side away from the entry.
-    if(hingeRight) paneU(0, L.fixed); else paneU(L.W - L.fixed, L.W);
+    paneU(L.panelFrom, L.panelTo);
   }
   if(L.type === 'sliding'){
     // Two panes on separate tracks, one shown offset, with the travel arrow.
-    paneU(0, L.W / 2 + 40);
-    d.polygon(P([[L.W/2 - 40, L.D + L.t*0.9],[L.W, L.D + L.t*0.9],
-                 [L.W, L.D + L.t*1.9],[L.W/2 - 40, L.D + L.t*1.9]]), SAN.glass, ink, LW.thin);
-    const a = planMap(wallId, uOff + L.W*0.30, L.D + 95, plan);
-    const b = planMap(wallId, uOff + L.W*0.70, L.D + 95, plan);
+    const mid = (L.gs + L.ge) / 2;
+    paneU(L.gs, mid + 40);
+    d.polygon(P([[mid - 40, L.D + L.t*0.9],[L.ge, L.D + L.t*0.9],
+                 [L.ge, L.D + L.t*1.9],[mid - 40, L.D + L.t*1.9]]), SAN.glass, ink, LW.thin);
+    const a = planMap(wallId, uOff + L.gs + L.gl*0.30, L.D + 95, plan);
+    const b = planMap(wallId, uOff + L.gs + L.gl*0.70, L.D + 95, plan);
     d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
     [[a, 1], [b, -1]].forEach(([p, s])=>{
       d.line(p[0], p[1], p[0] + 3*s, p[1] - 1.6, COL.ink3, LW.hairline);
       d.line(p[0], p[1], p[0] + 3*s, p[1] + 1.6, COL.ink3, LW.hairline);
     });
   } else if(L.def.door){
-    const bl = L.blade;
-    // A door hung on the blade pivots on its INSIDE face at the end of the
-    // blade. Hung on the other side it pivots on that jamb, at the front of the
-    // tray, and the blade is simply the wall it closes against.
-    const onBlade = !!bl && bl.side === (hingeRight ? 'R' : 'L');
-    const hingeU = onBlade ? (hingeRight ? L.W - bl.t : bl.t) : (hingeRight ? L.W : 0);
-    const hingeV = onBlade ? bl.d : L.D;
-    const span = bl ? (L.W - bl.t) : L.W;
-    const len = (L.type === 'door' || L.type === 'pivot') ? span : Math.min(L.entry, span);
-    const dir = hingeRight ? -1 : 1;
+    // The leaf fills the door opening, hinged at whichever of its two edges was
+    // chosen. A door hung on the blade pivots on the blade's inside face at the
+    // end of the blade; anywhere else it pivots at the front of the tray.
+    const len = L.doorLen;
     if(L.type === 'pivot'){
       // A pivot hangs on a spindle set in from the jamb, so it swings both ways.
-      const pu = hingeU + dir * len * 0.15;
-      leaf(pu, len * 0.85, dir, 78, hingeV);
+      const pu = L.hingeU + L.dir * len * 0.15;
+      leaf(pu, len * 0.85, L.dir, 78, L.hingeV);
     } else {
-      leaf(hingeU, len, dir, 82, hingeV);
+      leaf(L.hingeU, len, L.dir, 82, L.hingeV);
     }
   }
   // The clear opening, which is what the screen is ordered to.
   if(L.def.opening && L.entry > 0){
-    const mid = hingeRight ? L.W - L.entry / 2 : L.entry / 2;
+    const mid = (L.doorFrom + L.doorTo) / 2;
     const tp = planMap(wallId, uOff + mid, L.D + 175, plan);
     d.text(tp[0], tp[1], Math.round(L.entry) + ' clear', { align:'center', size:4, color:COL.muted });
   }
@@ -7165,23 +7188,25 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       }
       if(L.type === 'none') return;
       const ink = screenInk(cab);
-      const hingeRight = (L.hinge === 'R');
-      const edgeU = hingeRight ? cab.W - L.t : 0;
-      R(edgeU, hobH, edgeU + L.t, L.height, SAN.glass, ink, LW.thin);
+      // The glass arris at each end of the run that is not already a blade.
+      if(!(L.blade && L.blade.side === 'L')) R(L.gs, hobH, L.gs + L.t, L.height, SAN.glass, ink, LW.thin);
+      if(!(L.blade && L.blade.side === 'R')) R(L.ge - L.t, hobH, L.ge, L.height, SAN.glass, ink, LW.thin);
       // The leading edge of an opening leaf, dashed: it is in front of the wall
       // being drawn, not on it.
-      if(L.def.door && L.entry > 0 && L.entry < cab.W){
-        const du = hingeRight ? cab.W - L.entry : L.entry;
+      if(L.def.door && L.doorLen > 0 && L.fixed > 0){
+        const du = (L.hinge === 'L') ? L.doorTo : L.doorFrom;
         d.dashed(true);
         d.line(X(du), Y(hobH), X(du), Y(L.height), COL.ink3, LW.hairline);
         d.dashed(false);
       }
       if(L.frame === 'framed'){
-        R(0, L.height, cab.W, L.height + 40, '#EFEFEC', ink, LW.hairline);   // header
+        R(L.gs, L.height, L.ge, L.height + 40, '#EFEFEC', ink, LW.hairline);   // header
       }
-      // Height is the thing an installer asks for.
-      d.text(X(edgeU + (hingeRight ? -30 : 30)), Y(L.height - 90),
-        String(Math.round(L.height)), { align: hingeRight ? 'right' : 'left', size:4, color:COL.muted });
+      // Height is the thing an installer asks for. Put it inside the glass run,
+      // against whichever end is glass rather than blade.
+      const _hOnLeft = !(L.blade && L.blade.side === 'L');
+      d.text(X(_hOnLeft ? L.gs + 30 : L.ge - 30), Y(L.height - 90),
+        String(Math.round(L.height)), { align: _hOnLeft ? 'left' : 'right', size:4, color:COL.muted });
     })();
     // Mixer, rail and rose.
     const mixH = c.mixerH || 1050;
@@ -12104,6 +12129,9 @@ function renderEditPanel(){
       pick('Configuration', 'screenType', Object.entries(SHOWER_SCREENS).map(([k, v]) => [k, v.label]));
       const sd = screenDef(c.screenType);
       if(sd.opening !== false){
+        if(!c.panelSide) c.panelSide = screenLayout(cab).panelSide;
+        if(screenLayout(cab).fixed > 0)
+          pick('Fixed panel at', 'panelSide', [['L','Left'],['R','Right']]);
         pick('Hinge side', 'hinge', [['L','Left'],['R','Right']]);
         if(c.sideWall === 'blade'){
           const onBlade = (c.hinge || 'R') === (c.bladeSide || 'L');
@@ -12140,7 +12168,8 @@ function renderEditPanel(){
           L.type === 'none' ? 'Walk-in — nothing to order.'
             : `${L.fixed > 0 ? Math.round(L.fixed) + ' fixed + ' : ''}${Math.round(L.entry)} clear` +
               `  ·  ${L.t} mm glass  ·  ${Math.round(L.height)} high` +
-              (screenDef(L.type).ret ? `  ·  ${Math.round(L.ret)} return` : '')));
+              (screenDef(L.type).ret ? `  ·  ${Math.round(L.ret)} return` : '') +
+              (L.blade ? `  ·  in ${Math.round(L.gl)} of glass beside the ${L.blade.t} blade` : '')));
       }
       editor.appendChild(el('h3', {}, 'Tray and outlet'));
       pick('Base', 'base', [['tiled','Tiled, on-site'],['acrylic','Acrylic base'],['stone','Stone base']]);
