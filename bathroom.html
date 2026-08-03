@@ -1012,6 +1012,8 @@ const CATALOG = {
   'shower':      { label:'Shower',                  defaultW:900, H:2000, D:900, row:'base', hasShelves:false,
     defaultConfig:{ screenType:'panel-door', glassT:10, screenH:2000, frame:'frameless',
                     screenFinish:'matt-black', entryW:600, returnW:400, hinge:'R', swing:'out',
+                    // A blade wall is a built return: tiled, not glass.
+                    sideWall:'none', bladeSide:'L', bladeT:90, bladeD:600, bladeH:2100,
                     base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40,
                     mixerH:1050, railH:1800, roseH:2050, roseType:'overhead', labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
@@ -1071,7 +1073,11 @@ function screenLayout(cab){
   if(type === 'door' || type === 'pivot') entry = W;              // the whole face opens
   if(type === 'sliding') entry = Math.round(W / 2);               // one leaf slides past the other
   const fixed = Math.max(0, W - entry);
-  return { type, def, t, ret, entry, fixed, W, D,
+  const blade = (c.sideWall === 'blade')
+    ? { side: c.bladeSide || 'L', t: Math.max(50, c.bladeT || 90),
+        d: Math.max(100, Math.min(D, c.bladeD || 600)), h: Math.max(300, c.bladeH || 2100) }
+    : null;
+  return { type, def, t, ret, entry, fixed, W, D, blade,
            hinge: c.hinge || 'R', swing: c.swing || 'out',
            height: c.screenH || 2000, frame: c.frame || 'frameless' };
 }
@@ -6905,7 +6911,21 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
   };
 
   const hingeRight = (L.hinge === 'R');
-  if(L.type === 'return-panel' || L.type === 'corner'){
+  // A blade wall is built, so it is drawn as wall rather than glass, and it
+  // replaces the glass return on the side it stands on.
+  if(L.blade){
+    const bl = L.blade;
+    const u0 = (bl.side === 'R') ? L.W - bl.t : 0;
+    const wm = wallMaterial(state.room.wallMaterial);
+    const fill = state.room.wallColorOverride || (wm && wm.color) || COL.poche;
+    d.polygon(P([[u0, 0],[u0 + bl.t, 0],[u0 + bl.t, bl.d],[u0, bl.d]]), fill, COL.ink, LW.thin);
+    // The nib end gets the same line weight the room's own walls carry.
+    const tp = planMap(wallId, uOff + u0 + bl.t / 2, bl.d + 95, plan);
+    d.text(tp[0], tp[1], 'BLADE ' + Math.round(bl.t), { align:'center', size:4, color:COL.muted });
+  }
+  const bladeOn = L.blade ? L.blade.side : null;
+  if((L.type === 'return-panel' || L.type === 'corner')
+     && bladeOn !== (hingeRight ? 'R' : 'L')){
     paneV(hingeRight ? L.W : 0, L.D - L.ret, L.D);
   }
   if(L.fixed > 0 && L.type !== 'sliding'){
@@ -7080,6 +7100,15 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
     // Screen — edge on, so it is the glass arris and the door's leading edge.
     (function(){
       const L = screenLayout(cab);
+      if(L.blade){
+        // Seen from the room the blade comes at you, so on this wall it reads as
+        // a strip of tiled wall at one end, full height of the blade.
+        const bl = L.blade;
+        const u0 = (bl.side === 'R') ? cab.W - bl.t : 0;
+        R(u0, hobH, u0 + bl.t, bl.h, o.tileCol || '#EFEFEC', stroke, lw);
+        d.text(X(u0 + bl.t / 2), Y(bl.h + 60), 'BLADE',
+          { align:'center', size:4, color:COL.muted });
+      }
       if(L.type === 'none') return;
       const ink = screenInk(cab);
       const hingeRight = (L.hinge === 'R');
@@ -10493,6 +10522,7 @@ function screenScheduleNote(cab){
   if(L.entry > 0) bits.push(`${Math.round(L.entry)} clear opening`);
   if(screenDef(L.type).ret) bits.push(`${Math.round(L.ret)} return`);
   if(screenDef(L.type).door) bits.push(`hinge ${L.hinge === 'R' ? 'RH' : 'LH'}`);
+  if(L.blade) bits.push(`${L.blade.t} blade wall ${L.blade.side === 'R' ? 'RH' : 'LH'} (built, tiled)`);
   const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
   if(f) bits.push(f.label.toLowerCase());
   return bits.join(' · ');
@@ -11051,6 +11081,27 @@ function _liveReorderCab(){
     u += lf + arr[i].W + rt;
   }
   arr.splice(newIdx, 0, cab);
+
+  if(isSanitary(cab)){
+    // Where everything before it ends.
+    let prevEnd = startOff;
+    for(let i = 0; i < newIdx; i++){
+      const a = arr[i].adj || {};
+      prevEnd += (a.left?.filler || 0) + (a.left?.panel || 0) + arr[i].W
+               + (a.right?.filler || 0) + (a.right?.panel || 0);
+    }
+    if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
+    if(!cab.adj.left) cab.adj.left = { filler:0, panel:0 };
+    const panel = cab.adj.left.panel || 0;
+    // Centre it on the cursor, then keep it on the wall and clear of its
+    // neighbour — the gap can open but it cannot go negative.
+    const wallLen = (ds.pending.wallId === 'island')
+      ? ((state.island && state.island.length) || 0) : wallLength(ds.pending.wallId);
+    const want = ds.hoverU - cab.W / 2;
+    const maxGap = Math.max(0, wallLen - prevEnd - panel - cab.W);
+    cab.adj.left.filler = Math.round(Math.max(0, Math.min(maxGap, want - prevEnd - panel)) / 5) * 5;
+    cab.adj.left.kind = 'space';
+  }
 }
 
 // Commit cab drag — live reorder already placed the cab. Just clear drag state.
@@ -11920,6 +11971,17 @@ function renderEditPanel(){
       }
       if(sd.ret) num('Return panel', 'returnW', 150, 1200, 10);
       if(sd.door === 'hinged') pick('Swing', 'swing', [['out','Outwards'],['in','Inwards']]);
+      pick('Side wall', 'sideWall',
+        [['none','None — glass or open'],['blade','Tiled blade wall']]);
+      if(c.sideWall === 'blade'){
+        pick('Blade on', 'bladeSide', [['L','Left'],['R','Right']]);
+        num('Blade thickness', 'bladeT', 50, 300, 5);
+        num('Blade projection', 'bladeD', 100, 2000, 10);
+        num('Blade height', 'bladeH', 300, 3000, 10);
+        editor.appendChild(el('div', { class:'ctrl',
+          style:'font-size:11px;color:var(--muted);margin-top:-6px' },
+          'Built and tiled, not glass. It replaces the glass return on that side.'));
+      }
       pick('Framing', 'frame', [['frameless','Frameless'],['semi-frameless','Semi-frameless'],['framed','Fully framed']]);
       pick('Hardware finish', 'screenFinish', Object.entries(SCREEN_FINISHES).map(([k, v]) => [k, v.label]));
       num('Glass thickness', 'glassT', 6, 12, 1);
