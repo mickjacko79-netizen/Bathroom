@@ -1013,7 +1013,7 @@ const CATALOG = {
     defaultConfig:{ screenType:'panel-door', glassT:10, screenH:2000, frame:'frameless',
                     screenFinish:'matt-black', entryW:600, returnW:400, hinge:'R', swing:'out',
                     // A blade wall is a built return: tiled, not glass.
-                    sideWall:'none', bladeSide:'L', bladeT:90, bladeD:600, bladeH:2100,
+                    sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100,
                     base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40,
                     mixerH:1050, railH:1800, roseH:2050, roseType:'overhead', labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
@@ -1075,11 +1075,16 @@ function screenLayout(cab){
   const fixed = Math.max(0, W - entry);
   const blade = (c.sideWall === 'blade')
     ? { side: c.bladeSide || 'L', t: Math.max(50, c.bladeT || 90),
-        d: Math.max(100, Math.min(D, c.bladeD || 600)), h: Math.max(300, c.bladeH || 2100) }
+        // A blade is the side wall of the shower, so it runs the full depth
+        // unless it is deliberately stopped short. Anything past the tray would
+        // hang in the room, so it is capped there.
+        d: Math.max(100, Math.min(D, c.bladeD > 0 ? c.bladeD : D)),
+        h: Math.max(300, c.bladeH || 2100) }
     : null;
   return { type, def, t, ret, entry, fixed, W, D, blade,
-           // The blade is what the door hangs on, so it decides the hinge side.
-           hinge: blade ? blade.side : (c.hinge || 'R'), swing: c.swing || 'out',
+           // The hinge side is the drafter's, blade or no blade — a door can be
+           // hung off the blade or off the jamb opposite it.
+           hinge: c.hinge || 'R', swing: c.swing || 'out',
            height: c.screenH || 2000, frame: c.frame || 'frameless' };
 }
 
@@ -6930,17 +6935,20 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
   // A hinged leaf, shown open, with its arc. hv is the depth the hinge sits at:
   // the front face of the tray normally, or the end of the blade where the door
   // hangs off one.
+  // sw is +1 for a leaf that swings out into the room, -1 for one that swings
+  // back into the tray.
+  const sw = (L.swing === 'in') ? -1 : 1;
   const leaf = (hu, len, dir, angle, hv)=>{
     const a = (angle === undefined ? 82 : angle) * Math.PI / 180;
     const v0 = (hv === undefined) ? L.D : hv;
-    const ex = hu + dir * len * Math.cos(a), ev = v0 + len * Math.sin(a);
-    const nx = -Math.sin(a) * half * dir, nv = Math.cos(a) * half;
+    const ex = hu + dir * len * Math.cos(a), ev = v0 + sw * len * Math.sin(a);
+    const nx = -Math.sin(a) * half * dir, nv = sw * Math.cos(a) * half;
     d.polygon(P([[hu + nx, v0 + nv],[ex + nx, ev + nv],[ex - nx, ev - nv],[hu - nx, v0 - nv]]),
       SAN.glass, ink, LW.thin);
     const arc = [];
     for(let i = 0; i <= 12; i++){
       const t = (i / 12) * a;
-      arc.push([hu + dir * len * Math.cos(t), v0 + len * Math.sin(t)]);
+      arc.push([hu + dir * len * Math.cos(t), v0 + sw * len * Math.sin(t)]);
     }
     const ap = P(arc);
     d.dashed(true);
@@ -6987,10 +6995,12 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
     });
   } else if(L.def.door){
     const bl = L.blade;
-    // Off the blade's inside face, at the end of the blade. Without a blade it
-    // is the jamb at the front face of the tray, as before.
-    const hingeU = bl ? (hingeRight ? L.W - bl.t : bl.t) : (hingeRight ? L.W : 0);
-    const hingeV = bl ? bl.d : L.D;
+    // A door hung on the blade pivots on its INSIDE face at the end of the
+    // blade. Hung on the other side it pivots on that jamb, at the front of the
+    // tray, and the blade is simply the wall it closes against.
+    const onBlade = !!bl && bl.side === (hingeRight ? 'R' : 'L');
+    const hingeU = onBlade ? (hingeRight ? L.W - bl.t : bl.t) : (hingeRight ? L.W : 0);
+    const hingeV = onBlade ? bl.d : L.D;
     const span = bl ? (L.W - bl.t) : L.W;
     const len = (L.type === 'door' || L.type === 'pivot') ? span : Math.min(L.entry, span);
     const dir = hingeRight ? -1 : 1;
@@ -10595,7 +10605,10 @@ function screenScheduleNote(cab){
   const bits = [screenDef(L.type).label, `${L.t} mm toughened`, `${Math.round(L.height)} H`];
   if(L.entry > 0) bits.push(`${Math.round(L.entry)} clear opening`);
   if(screenDef(L.type).ret) bits.push(`${Math.round(L.ret)} return`);
-  if(screenDef(L.type).door) bits.push(`hinge ${L.hinge === 'R' ? 'RH' : 'LH'}`);
+  if(screenDef(L.type).door){
+    bits.push(`hinge ${L.hinge === 'R' ? 'RH' : 'LH'}`);
+    bits.push(L.swing === 'in' ? 'opens in' : 'opens out');
+  }
   if(L.blade) bits.push(`${L.blade.t} blade wall ${L.blade.side === 'R' ? 'RH' : 'LH'} (built, tiled)`);
   const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
   if(f) bits.push(f.label.toLowerCase());
@@ -12091,24 +12104,26 @@ function renderEditPanel(){
       pick('Configuration', 'screenType', Object.entries(SHOWER_SCREENS).map(([k, v]) => [k, v.label]));
       const sd = screenDef(c.screenType);
       if(sd.opening !== false){
+        pick('Hinge side', 'hinge', [['L','Left'],['R','Right']]);
         if(c.sideWall === 'blade'){
+          const onBlade = (c.hinge || 'R') === (c.bladeSide || 'L');
           editor.appendChild(el('div', { class:'ctrl',
-            style:'font-size:11px;color:var(--muted)' },
-            'The door hangs off the blade wall, so the blade side sets the hinge.'));
-        } else {
-          pick('Fixed panel / hinge side', 'hinge', [['R','Right'],['L','Left']]);
+            style:'font-size:11px;color:var(--muted);margin-top:-6px' },
+            onBlade ? 'Hung off the blade — it pivots on the blade’s inside face.'
+                    : 'Hung off the jamb opposite the blade, closing against it.'));
         }
         if(c.screenType !== 'door' && c.screenType !== 'pivot' && c.screenType !== 'sliding')
           num('Clear opening', 'entryW', 400, 1400, 10);
       }
       if(sd.ret) num('Return panel', 'returnW', 150, 1200, 10);
-      if(sd.door === 'hinged') pick('Swing', 'swing', [['out','Outwards'],['in','Inwards']]);
+      if(sd.door === 'hinged' || sd.door === 'pivot')
+        pick('Swing', 'swing', [['out','Outwards, into the room'],['in','Inwards, into the shower']]);
       pick('Side wall', 'sideWall',
         [['none','None — glass or open'],['blade','Tiled blade wall']]);
       if(c.sideWall === 'blade'){
         pick('Blade on', 'bladeSide', [['L','Left'],['R','Right']]);
         num('Blade thickness', 'bladeT', 50, 300, 5);
-        num('Blade projection', 'bladeD', 100, 2000, 10);
+        num('Blade projection (0 = full depth)', 'bladeD', 0, 2000, 10);
         num('Blade height', 'bladeH', 300, 3000, 10);
         editor.appendChild(el('div', { class:'ctrl',
           style:'font-size:11px;color:var(--muted);margin-top:-6px' },
