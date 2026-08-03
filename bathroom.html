@@ -2540,6 +2540,22 @@ let nextCabId = 1;
 // Sanitaryware is not cabinetry: a 1700 bath, a 1200 shower and a vanity mirror
 // running the full length of the wall are all ordinary, so those types are
 // capped where they actually stop rather than at a cabinet's 1200.
+// Depth range by type. Sanitaryware and wall accessories are not carcasses —
+// a mirror is glass on a backing, a rail is a bracket — so they get a range
+// that reaches down to what they actually are.
+function minDepthFor(type){
+  if(type === 'mirror') return 6;
+  if(type === 'towel-rail' || type === 'shower-niche') return 40;
+  // A shaving cabinet is 150 deep and a wall filler less — the cabinetry
+  // minimum of 200 sat above their own defaults, so they could not be reduced.
+  const def = (typeof CATALOG !== 'undefined') ? CATALOG[type] : null;
+  if(def && def.row === 'wall') return 60;
+  return (typeof SANITARY_TYPES !== 'undefined' && SANITARY_TYPES.indexOf(type) >= 0) ? 100 : 200;
+}
+function maxDepthFor(type){
+  if(type === 'mirror') return 300;
+  return 900;
+}
 function maxWidthFor(type){
   return (typeof SANITARY_TYPES !== 'undefined' && SANITARY_TYPES.indexOf(type) >= 0) ? 2400 : 1200;
 }
@@ -4513,6 +4529,22 @@ function cabKickH(cab){
   if(c.mount === 'wall-hung') return cabFloatH(cab);
   if(typeof c.kickH === 'number') return Math.max(0, c.kickH);
   return null;                      // fall through to the project default
+}
+// How far a wall-row item is set back into the wall. 0 is surface mounted;
+// equal to its own depth is flush with the wall face. Clamped to the item, so a
+// value left behind by a depth change cannot invert the footprint.
+function cabRecess(cab){
+  const c = (cab && cab.config) || {};
+  if(!c.recess) return 0;
+  return Math.max(0, Math.min(cab.D || 0, c.recess));
+}
+// Which items can be let into a wall at all.
+function cabTakesRecess(cab){
+  return !!cab && ['mirror', 'wall', 'filler-wall'].indexOf(cab.type) >= 0;
+}
+// True when the item is fully buried and its face sits flush with the wall.
+function isFlushRecessed(cab){
+  return cabTakesRecess(cab) && cabRecess(cab) >= (cab.D || 0) - 0.5;
 }
 function isWallHung(cab){ return !!(cab && cab.config && cab.config.mount === 'wall-hung'); }
 // The kick's fill. Nothing under a wall-hung unit, so nothing is painted there.
@@ -7159,6 +7191,12 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
   const W = cab.W*s, H = cab.H*s;
 
   if(cab.type === 'mirror'){
+    // A recessed mirror shows the reveal it sits in, so the elevation says it is
+    // let into the wall rather than hung on it.
+    if(o.recess > 0){
+      const r = Math.min(18, Math.max(4, o.recess * 0.25)) * s;
+      d.rect(x - r, y - r, W + r*2, H + r*2, '#F3F5F5', COL.ink3, LW.hairline);
+    }
     d.rect(x, y, W, H, SAN.mirror, stroke, lw);
     // The conventional corner strokes that say "this is glass, not a panel".
     for(let i = 1; i <= 3; i++){
@@ -8026,8 +8064,16 @@ function drawPlan(d, area, view, opts){
       const wallFill = state.finish.color || '#F4F2EC';
       // Fridge-wall sits OFFSET from the wall by cab.config.wallOffset mm
       const _fwOff = (cab.type === 'fridge-wall' && cab.config && cab.config.wallOffset) ? cab.config.wallOffset : 0;
+      // A recessed unit starts inside the wall: its footprint runs from -recess
+      // to depth-recess, so a flush one sits entirely within the wall band.
+      const _rec = cabTakesRecess(cab) ? cabRecess(cab) : 0;
       let _corners;
-      if(_fwOff > 0){
+      if(_rec > 0){
+        const _wEdge = isSel ? COL.selected : COL.ink;
+        const _wLW = isSel ? LW.medium : LW.thin;
+        _corners = planBandOnWall(d, w.id, u, cab.W, -_rec, wd - _rec, plan,
+          wallFill, _wEdge, _wLW);
+      } else if(_fwOff > 0){
         // Custom polygon: cab footprint pushed out from the wall by _fwOff
         const _c4 = [
           planMap(w.id, u,           _fwOff,         plan),
@@ -9399,7 +9445,8 @@ function drawElevation(d, area, wallId, opts){
     };
     if(isSanitary(cab)){
       drawAccessoryOnElevation(d, cab, x, y, s,
-        { outlineCol: isSel ? COL.selected : COL.ink, outlineLW: isSel ? LW.medium : LW.thin });
+        { outlineCol: isSel ? COL.selected : COL.ink, outlineLW: isSel ? LW.medium : LW.thin,
+          recess: cabTakesRecess(cab) ? cabRecess(cab) : 0 });
       recordHit(view, cab.id, x, y, x + cab.W*s, y + cab.H*s, wallId);
       wu += cab.W;
       _rightAdjWall();
@@ -11581,7 +11628,47 @@ function renderEditPanel(){
   }
   editor.appendChild(rng('Width', 'W', minWidthFor(cab.type), maxWidthFor(cab.type), 10));
   editor.appendChild(rng('Height', 'H', 200, 2700, 10));
-  editor.appendChild(rng('Depth', 'D', 200, 800, 10));
+  editor.appendChild(rng('Depth', 'D', minDepthFor(cab.type), maxDepthFor(cab.type), 5));
+
+  // ----- RECESS — let into the wall rather than hung on it.
+  if(cabTakesRecess(cab)){
+    const c = cab.config || (cab.config = {});
+    editor.appendChild(el('h3', {}, 'Set into the wall'));
+    const bar = el('div', { class:'pillbar' });
+    const flush = isFlushRecessed(cab);
+    const some = cabRecess(cab) > 0 && !flush;
+    [['0', 'Surface mounted', () => { c.recess = 0; }],
+     ['part', 'Recessed', () => { c.recess = Math.round((cab.D || 150) / 2); }],
+     ['flush', 'Flush with the wall', () => { c.recess = cab.D || 0; }],
+    ].forEach(([key, lb, set])=>{
+      const on = (key === '0' && !cabRecess(cab)) || (key === 'part' && some) || (key === 'flush' && flush);
+      const p = el('div', { class:'pill' + (on ? ' on' : '') }, lb);
+      p.addEventListener('click', ()=>{ set(); renderEditPanel(); renderActive(); });
+      bar.appendChild(p);
+    });
+    editor.appendChild(el('div', { class:'ctrl' }, bar));
+    if(cabRecess(cab) > 0){
+      const wrap = el('div', { class:'ctrl' });
+      const inp = el('input', { class:'valInp', type:'number', min:'0', max:String(cab.D || 0),
+        step:'5', value:String(cabRecess(cab)) });
+      inp.addEventListener('input', ()=>{
+        const v = parseFloat(inp.value);
+        if(!isFinite(v)) return;
+        c.recess = v; renderActive();
+      });
+      wrap.appendChild(el('label', {}, 'Depth into wall', el('span', { class:'val' }, inp, ' mm')));
+      editor.appendChild(wrap);
+      // A 150 mm cabinet does not go into a 90 mm stud wall without help, and
+      // that is a framing decision someone has to make before it is drawn.
+      const wallT = (state.room && state.room.wallT) || 90;
+      if(cabRecess(cab) > wallT){
+        const warn = el('div', { class:'compliance' });
+        warn.innerHTML = '<b>Deeper than the wall.</b> ' + Math.round(cabRecess(cab)) +
+          ' mm into a ' + wallT + ' mm wall — needs a thickened wall, a bulkhead or a stud change.';
+        editor.appendChild(warn);
+      }
+    }
+  }
 
   // ----- MOUNTING — on a kick, or hung off the wall with a clear space under.
   if(cabTakesKick(cab)){
