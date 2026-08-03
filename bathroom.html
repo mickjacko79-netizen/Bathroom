@@ -5712,45 +5712,35 @@ function drawTapOnPlan(d, wallId, plan, u, v, style){
   d.circle(a0[0], a0[1], Math.max(0.6, (T.base/2)*sc), TAP_BODY, COL.ink, LW.hairline);
   d.circle(a0[0], a0[1], Math.max(0.3, (T.base/2)*sc*0.45), TAP_DARK, null, 0);
 }
-// Plan: a wall mixer is its escutcheon held against the tiles with the lever
-// standing out into the room — the same parts as the tap above, seen from over
-// the top. It used to be two rings of a fixed size on the page, so it came out
-// the same blob whatever the drawing was scaled to, and its label was pushed
-// up the sheet, which buried it in the wall on three walls out of four.
-function drawShowerMixerOnPlan(d, wallId, plan, u, M, label){
+// Plan: a wall mixer lies flat on the wall. Its escutcheon is a disc held
+// against the tiles, so from over the top it is a bar along the wall with the
+// body standing out of it — not a circle. A circle is what the basin tap above
+// draws, and rightly: that one is a deck mixer, its plate lies flat on the
+// benchtop, and from over the top you are looking straight down onto the face
+// of it. Borrowing that symbol for this stood the mixer on its side.
+// It carries no label. A line of type at this scale is the better part of a
+// hundred millimetres tall on the floor: tucked in by the wall it climbs into
+// it, and far enough out to clear it, it is under the floor waste. The basin
+// tap goes unlabelled for the same reason and is no harder to read for it.
+function drawShowerMixerOnPlan(d, wallId, plan, u, M){
   const P = (uu, vv)=> planMap(wallId, uu, vv, plan);
   // Page-mm per real mm, off the map itself — same as the tap.
   const a0 = P(u, 0), a1 = P(u + 10, 0);
   const sc = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) / 10 || (plan && plan.s) || 1;
-  // True to scale, but never allowed to shrink to a dot on a small plan.
-  const r = Math.max(((M && M.plate) || 68) / 2, 2.2 / Math.max(sc, 1e-6));
-  const cv = r * 0.95;                       // just clear of the wall face
-  // The lever is laid over to one side. Straight out into the room it lands
-  // under the arm running back from the rainhead, which is on the same centre
-  // by default, and the two together read as one long stalk.
-  const th = -0.72, du = Math.sin(th), dv = Math.cos(th);
-  // Measured from the plate's edge, not its centre — from the centre the plate
-  // covers the first radius of it and what is left reads as a stub.
-  const len = r + r * 1.9;
-  const eu = u + du*len, ev = cv + dv*len;
-  const nu = dv, nv = -du;                   // across the lever
-  const wA = r * 0.34, wB = r * 0.20;
-  const ring = (cu, cvv, rr, steps)=> mapUV(wallId, 0, ellipseUV(cu, cvv, rr, rr, steps), plan);
-  // Lever first, so the plate reads over the top of it. It tapers to a blunt
-  // end — capped with a ball it read as a lollipop rather than a handle.
-  d.polygon([P(u + nu*wA, cv + nv*wA), P(u - nu*wA, cv - nv*wA),
-             P(eu - nu*wB, ev - nv*wB), P(eu + nu*wB, ev + nv*wB)],
+  const plate = (M && M.plate) || 68;
+  // True to scale, but grown as one piece if the plate would come out under
+  // about four page-mm — below that it is a smudge rather than a fitting.
+  const g = Math.max(1, (4.4 / Math.max(sc, 1e-6)) / plate);
+  const hw = (plate / 2) * g;        // half the escutcheon, along the wall
+  const pt = 11 * g;                 // how far it stands off the tiles
+  const bw = plate * 0.40 * g;       // half the body
+  const bl = 62 * g;                 // how far the body reaches into the room
+  const shape = pts => mapUV(wallId, 0, pts, plan);
+  // Body first, so the escutcheon reads over it where the two meet.
+  d.polygon(shape(roundRectUV(u - bw, pt, u + bw, pt + bl, bw * 0.45)),
     TAP_BODY, COL.ink2, LW.hairline);
-  // Escutcheon, then the spindle at its centre.
-  d.polygon(ring(u, cv, r, 24), TAP_BODY, COL.ink, LW.thin);
-  d.polygon(ring(u, cv, r * 0.30, 14), TAP_DARK, null, 0);
-  if(label){
-    // Beside the plate, on the side the lever is not laid over, and close in to
-    // the wall — that is where the tile is clear. Out in front it lands on the
-    // floor waste, which on a linear grate runs the whole width of the tray.
-    const lp = P(u + r * 1.35, cv + r * 0.45);
-    d.text(lp[0], lp[1], label, { size:4.2, color:COL.muted });
-  }
+  d.polygon(shape(roundRectUV(u - hw, 0, u + hw, pt, pt * 0.35)),
+    TAP_BODY, COL.ink, LW.thin);
 }
 // Elevation: drawn in profile, which is how a tap is read on a kitchen
 // elevation — square on it would be a vertical stick and say nothing.
@@ -7018,7 +7008,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       // it belongs on the plan and not only on the elevation.
       (function(){
         const M = showerMixer(cab);
-        drawShowerMixerOnPlan(d, wallId, plan, uOff + M.u, M, 'MIXER');
+        drawShowerMixerOnPlan(d, wallId, plan, uOff + M.u, M);
       })();
       // The rail, on the wall, where there is one.
       if(R.rail){
