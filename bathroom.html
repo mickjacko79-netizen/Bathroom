@@ -586,6 +586,19 @@ header .project-label .dot.dirty{background:#F7C04A}
         </div>
         <div class="ctrl" id="floorGaugeReadout" style="font-size:11px;color:var(--muted);margin-top:-2px;line-height:1.55"></div>
         <button class="btn small ghost" id="floorReset" style="width:100%;margin-top:4px">Reset to material defaults</button>
+
+        <div style="font-size:10.5px;color:var(--muted);margin:14px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Floor wastes</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:0">
+          For the open floor, separate from the shower's own waste. Drop one with
+          <b>Place</b> and click the plan, then drag it to move it.
+        </div>
+        <div class="cab-list" id="floorWasteList"></div>
+        <div class="add-row" style="grid-template-columns:1fr auto auto">
+          <select id="addFloorWasteType"></select>
+          <button class="btn small" id="addFloorWaste" title="Add one in the middle of the room">＋</button>
+          <button class="btn small" id="placeFloorWaste" title="Click on the plan to drop it">Place</button>
+        </div>
+        <div id="floorWasteEditor"></div>
       </div>
 
       <div class="group">
@@ -1696,6 +1709,32 @@ const CEILING_LIGHT_TYPES = {
 };
 function ceilingLightDef(t){ return CEILING_LIGHT_TYPES[t] || CEILING_LIGHT_TYPES['downlight']; }
 
+// Floor wastes, drawn on the floor plan. Sizes are the grate, in mm.
+const FLOOR_WASTE_TYPES = {
+  'square':      { label:'Floor waste — square grate',   sym:'square', size:100 },
+  'round':       { label:'Floor waste — round grate',    sym:'round',  size:100 },
+  'tile-insert': { label:'Floor waste — tile insert',    sym:'tile',   size:100 },
+  'linear':      { label:'Strip drain',                  sym:'strip',  size:70, linear:true, len:900 },
+};
+function floorWasteDef(t){ return FLOOR_WASTE_TYPES[t] || FLOOR_WASTE_TYPES['square']; }
+function makeFloorWaste(type, opts={}){
+  const def = floorWasteDef(type);
+  return { id:'fw' + (_nextElecId++), type,
+    x: opts.x ?? 0, y: opts.y ?? 0,
+    size: opts.size ?? def.size,
+    length: opts.length ?? (def.linear ? def.len : 0),
+    rot: opts.rot ?? 0,
+    falls: opts.falls !== undefined ? opts.falls : true,
+    fallFrom: opts.fallFrom ?? 900,
+    note: opts.note || '' };
+}
+// The list for a room — the bathroom itself, or one of the adjoining rooms.
+function floorWastesOf(roomObj){
+  const src = roomObj || state.room;
+  if(!Array.isArray(src.floorWastes)) src.floorWastes = [];
+  return src.floorWastes;
+}
+
 let _nextElecId = 1;
 function makeElecItem(kind, type, opts={}){
   const o = { id:'e' + (_nextElecId++), kind, type,
@@ -2000,6 +2039,7 @@ const state = {
   room:    { W:2400, L:2700, H:2700, wallT:90, wallMaterial:'plaster', wallColorOverride:null, wallHatchOverride:null,
              layerHatch: false,
              lights: [], internalWalls: [],
+             floorWastes: [],
              floor:{ material:'tile-600', colorOverride:null, hatchOverride:null,
                      jointColorOverride:null, size:null, size2:null, angle:null,
                      // Which wall gets the full tile when the room does not
@@ -5940,6 +5980,75 @@ function drawCeilingLightsOnPlan(d, lights, pox, poy, s, view, roomId){
     }
   });
 }
+// Floor wastes on the plan. The grate at its real size, the FW tag a plumber
+// looks for, and — where asked for — the falls running in to it, drawn the same
+// light dashed way as the falls in a shower so the two read as one convention.
+function drawFloorWastesOnPlan(d, list, pox, poy, s, view, roomId){
+  if(!Array.isArray(list) || !list.length) return;
+  const sel = state.ui.selectedFitId;
+  const room = roomId ? roomById(roomId) : null;
+  const rx = room ? room.x : 0, ry = room ? room.y : 0;
+  list.forEach(F=>{
+    const def = floorWasteDef(F.type);
+    const cx = pox + (rx + F.x) * s, cy = poy + (ry + F.y) * s;
+    const half = ((F.size || def.size) / 2) * s;
+    const horiz = ((F.rot || 0) % 180) === 0;
+    const hx = def.linear ? ((F.length || def.len) / 2) * s : half;
+    const ex = horiz ? hx : half, ey = horiz ? half : hx;
+
+    if(F.falls){
+      const reach = Math.max(200, F.fallFrom || 900) * s;
+      d.dashed(true);
+      [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx, sy])=>{
+        const k = reach / Math.SQRT2;
+        const ax = cx + sx*k, ay = cy + sy*k;
+        const stop = 0.22;                       // stop clear of the grate
+        const bx = cx + sx*k*stop, by = cy + sy*k*stop;
+        d.line(ax, ay, bx, by, COL.ink4, LW.hairline);
+        d.dashed(false);
+        const ux = (bx-ax), uy = (by-ay), ul = Math.hypot(ux,uy) || 1;
+        const nx = ux/ul, ny = uy/ul, px = -ny, py = nx;
+        d.line(bx, by, bx - nx*3 + px*1.6, by - ny*3 + py*1.6, COL.ink4, LW.hairline);
+        d.line(bx, by, bx - nx*3 - px*1.6, by - ny*3 - py*1.6, COL.ink4, LW.hairline);
+        d.dashed(true);
+      });
+      d.dashed(false);
+    }
+
+    if(def.sym === 'round'){
+      d.circle(cx, cy, half, '#E7ECEE', COL.ink2, LW.thin);
+      d.circle(cx, cy, half*0.45, null, COL.ink3, LW.hairline);
+    } else {
+      d.rect(cx - ex, cy - ey, ex*2, ey*2, '#E7ECEE', COL.ink2, LW.thin);
+      if(def.sym === 'tile'){
+        d.line(cx - ex, cy - ey, cx + ex, cy + ey, COL.ink3, LW.hairline);
+        d.line(cx - ex, cy + ey, cx + ex, cy - ey, COL.ink3, LW.hairline);
+      } else {
+        // Grate bars, along the long axis.
+        const nBar = Math.max(2, Math.round((horiz ? ex : ey) / (1.2)) );
+        if(nBar < 60){
+          for(let i = 1; i < nBar; i++){
+            const t = -1 + (2*i)/nBar;
+            if(horiz) d.line(cx + t*ex, cy - ey, cx + t*ex, cy + ey, COL.ink3, LW.hairline);
+            else      d.line(cx - ex, cy + t*ey, cx + ex, cy + t*ey, COL.ink3, LW.hairline);
+          }
+        }
+      }
+    }
+    d.text(cx, cy + Math.max(ey, half) + 4.4, 'FW', { align:'center', size:4, color:COL.muted });
+
+    if(view){
+      const px = Math.max(2.4, ex), py = Math.max(2.4, ey);
+      recordFitHit(view, { kind:'fw', id:F.id, roomId: roomId || null,
+        bounds:[cx - px, cy - py, cx + px, cy + py] });
+      if(sel === F.id){
+        d.dashed(true);
+        d.rect(cx - px - 1, cy - py - 1, px*2 + 2, py*2 + 2, null, COL.selected, LW.thin);
+        d.dashed(false);
+      }
+    }
+  });
+}
 // Counts every light in the job by type, for the plan legend.
 function ceilingLightTally(){
   const tally = {};
@@ -8248,6 +8357,8 @@ function drawPlan(d, area, view, opts){
   }
 
   // CEILING LIGHTING — kitchen here; each room draws its own with its joinery.
+  try { drawFloorWastesOnPlan(d, state.room.floorWastes, ox, oy, s, V, null); }
+  catch(e){ console.warn('[Bathroom] floor wastes failed', e.message); }
   try { drawCeilingLightsOnPlan(d, state.room.lights, ox, oy, s, V, null); }
   catch(e){ console.warn('[Bathroom] kitchen lighting failed', e.message); }
 
@@ -11131,8 +11242,8 @@ function wireViewport(canvas){
       const fd = state.ui.fitDrag;
       state.ui.fitDrag = null;
       canvas.style.cursor = '';
-      if(fd.moved){ pushHistory(); renderElecPanel(); renderActive(); }
-      else { renderElecPanel(); renderView(); }
+      if(fd.moved){ pushHistory(); renderElecPanel(); try { renderFloorWastePanel(); } catch(_){} renderActive(); }
+      else { renderElecPanel(); try { renderFloorWastePanel(); } catch(_){} renderView(); }
       e.preventDefault();
       return;
     }
@@ -13270,6 +13381,36 @@ function _drawPreview(canvasId, kind, drawFn, mmAcross){
 }
 // The floor setout controls. Kept beside the pattern they act on, and wired
 // once — the pill bars and the nudges all just re-render the sheet.
+// Add and place. A waste added from the button lands in the middle of the room
+// so it is always visible; Place drops it where you click.
+(function(){
+  const sel = document.getElementById('addFloorWasteType');
+  if(sel){
+    Object.entries(FLOOR_WASTE_TYPES).forEach(([k, v])=>{
+      const o = document.createElement('option');
+      o.value = k; o.textContent = v.label;
+      sel.appendChild(o);
+    });
+  }
+  const add = document.getElementById('addFloorWaste');
+  if(add) add.addEventListener('click', ()=>{
+    const roomObj = state.ui.roomEdit ? roomById(state.ui.roomEdit) : null;
+    const list = floorWastesOf(roomObj);
+    const W = roomObj ? roomObj.W : state.room.W, L = roomObj ? roomObj.L : state.room.L;
+    pushHistory();
+    const F = makeFloorWaste(sel ? sel.value : 'square',
+      { x: Math.round(W / 2 / 10) * 10, y: Math.round(L / 2 / 10) * 10 });
+    list.push(F);
+    state.ui.selectedFitId = F.id;
+    renderFloorWastePanel(); renderActive();
+  });
+  const place = document.getElementById('placeFloorWaste');
+  if(place) place.addEventListener('click', ()=>{
+    const on = state.ui.placeMode && state.ui.placeMode.kind === 'fw';
+    setPlaceMode(on ? null : 'fw', on ? null : (sel ? sel.value : 'square'));
+    renderView();
+  });
+})();
 (function(){
   const bind = (id, apply)=>{
     const el = document.getElementById(id);
@@ -13295,6 +13436,89 @@ function _drawPreview(canvasId, kind, drawFn, mmAcross){
   bind('floorOffsetX', v => state.room.floor.offsetX = v);
   bind('floorOffsetY', v => state.room.floor.offsetY = v);
 })();
+// Floor wastes: the list for the room the sidebar is editing, each row opening
+// the settings that matter on site — the grate, its size, and whether the falls
+// to it are drawn.
+function renderFloorWastePanel(){
+  const host = document.getElementById('floorWasteList');
+  if(!host) return;
+  const roomObj = state.ui.roomEdit ? roomById(state.ui.roomEdit) : null;
+  const list = floorWastesOf(roomObj);
+  host.innerHTML = '';
+  if(!list.length){
+    const empty = document.createElement('div');
+    empty.className = 'cab-row empty';
+    empty.textContent = 'None — the shower has its own.';
+    host.appendChild(empty);
+  }
+  list.forEach((F, i)=>{
+    const def = floorWasteDef(F.type);
+    const row = document.createElement('div');
+    row.className = 'cab-row' + (state.ui.selectedFitId === F.id ? ' sel' : '');
+    row.style.gridTemplateColumns = '18px 1fr auto auto';
+    row.innerHTML = `<span class="idx">${i + 1}</span>` +
+      `<span class="lbl">${def.label}</span>` +
+      `<span class="w">${Math.round(F.x)},${Math.round(F.y)}</span>`;
+    const del = document.createElement('button');
+    del.className = 'del'; del.textContent = '×'; del.title = 'Remove';
+    del.addEventListener('click', e=>{
+      e.stopPropagation();
+      pushHistory();
+      list.splice(i, 1);
+      if(state.ui.selectedFitId === F.id) state.ui.selectedFitId = null;
+      renderFloorWastePanel(); renderActive();
+    });
+    row.appendChild(del);
+    row.addEventListener('click', ()=>{
+      state.ui.selectedFitId = (state.ui.selectedFitId === F.id) ? null : F.id;
+      renderFloorWastePanel(); renderActive();
+    });
+    host.appendChild(row);
+  });
+
+  // Settings for the selected one.
+  const ed = document.getElementById('floorWasteEditor');
+  if(!ed) return;
+  ed.innerHTML = '';
+  const F = list.find(o => o.id === state.ui.selectedFitId);
+  if(!F) return;
+  const def = floorWasteDef(F.type);
+  const num = (label, key, min, max, step)=>{
+    const row = document.createElement('div');
+    row.className = 'ctrl';
+    row.innerHTML = `<label>${label} <span class="val"><input class="valInp" type="number" min="${min}" max="${max}" step="${step}" value="${F[key] ?? ''}"> mm</span></label>`;
+    const inp = row.querySelector('input');
+    inp.addEventListener('input', ()=>{
+      const v = parseFloat(inp.value);
+      if(!isFinite(v)) return;
+      F[key] = v; renderActive();
+    });
+    ed.appendChild(row);
+  };
+  num('Grate size', 'size', 50, 400, 5);
+  if(def.linear){
+    num('Length', 'length', 300, 2400, 10);
+    const rot = document.createElement('div');
+    rot.className = 'ctrl';
+    rot.innerHTML = '<label>Direction</label><div class="pillbar">' +
+      `<div class="pill${(F.rot || 0) % 180 === 0 ? ' on' : ''}" data-v="0">Across</div>` +
+      `<div class="pill${(F.rot || 0) % 180 !== 0 ? ' on' : ''}" data-v="90">Along</div></div>`;
+    rot.addEventListener('click', e=>{
+      const t = e.target.closest('.pill'); if(!t) return;
+      F.rot = parseInt(t.dataset.v, 10); renderFloorWastePanel(); renderActive();
+    });
+    ed.appendChild(rot);
+  }
+  const fall = document.createElement('label');
+  fall.className = 'toggle';
+  fall.style.margin = '6px 0';
+  fall.innerHTML = '<input type="checkbox"' + (F.falls ? ' checked' : '') + '> <span>Draw the falls to it</span>';
+  fall.querySelector('input').addEventListener('change', e=>{
+    F.falls = e.target.checked; renderFloorWastePanel(); renderActive();
+  });
+  ed.appendChild(fall);
+  if(F.falls) num('Falls drawn from', 'fallFrom', 200, 3000, 50);
+}
 function renderFloorPanel(){
   const f = state.room.floor;
   if(!f) return;
@@ -13309,6 +13533,7 @@ function renderFloorPanel(){
     setPills('floorGaugeY', f.gaugeY);
     setFieldValue('floorOffsetX', f.offsetX || 0);
     setFieldValue('floorOffsetY', f.offsetY || 0);
+      try { renderFloorWastePanel(); } catch(_){}
     const out = document.getElementById('floorGaugeReadout');
     if(!out) return;
     if(spec.angle){
@@ -15560,6 +15785,10 @@ function fittingById(rec){
     const arr = rec.roomId ? ((roomById(rec.roomId) || {}).lights || []) : (state.room.lights || []);
     return { obj: arr.find(o => o.id === rec.id) || null, arr };
   }
+  if(rec.kind === 'fw'){
+    const arr = floorWastesOf(rec.roomId ? roomById(rec.roomId) : null);
+    return { obj: arr.find(o => o.id === rec.id) || null, arr };
+  }
   const walls = rec.roomId ? ((roomById(rec.roomId) || {}).walls || []) : (state.walls || []);
   const wall = walls.find(w => w.id === rec.wallId);
   const arr = (wall && wall.electrical) || [];
@@ -15575,9 +15804,17 @@ function placeFittingAt(view, px, py){
   const pm = state.ui.placeMode;
   if(!pm) return false;
   if(isPlanView(view)){
-    if(pm.kind !== 'light') return false;
+    if(pm.kind !== 'light' && pm.kind !== 'fw') return false;
     const at = planPointToRoom(px, py);
     if(!at) return false;
+    if(pm.kind === 'fw'){
+      const arr = floorWastesOf(at.roomId ? roomById(at.roomId) : null);
+      const F = makeFloorWaste(pm.type, { x:_snap10(at.x), y:_snap10(at.y) });
+      arr.push(F);
+      state.ui.selectedFitId = F.id;
+      pushHistory();
+      return true;
+    }
     const arr = at.roomId ? (roomById(at.roomId).lights ||= []) : (state.room.lights ||= []);
     const L = makeCeilingLight(pm.type, { x:_snap10(at.x), y:_snap10(at.y) });
     arr.push(L);
@@ -15632,18 +15869,22 @@ function dragFittingTo(view, px, py){
 function setPlaceMode(kind, type){
   state.ui.placeMode = (kind && type) ? { kind, type } : null;
   const on = !!state.ui.placeMode;
-  document.querySelectorAll('#placeElec, #placeCabLight, #placeLight').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('#placeElec, #placeCabLight, #placeLight, #placeFloorWaste')
+    .forEach(b => b.classList.remove('on'));
   if(on){
     const btn = document.getElementById(
-      kind === 'light' ? 'placeLight' : kind === 'cablight' ? 'placeCabLight' : 'placeElec');
+      kind === 'light' ? 'placeLight' : kind === 'cablight' ? 'placeCabLight'
+        : kind === 'fw' ? 'placeFloorWaste' : 'placeElec');
     if(btn) btn.classList.add('on');
   }
   document.querySelectorAll('.viewer canvas').forEach(c => c.classList.toggle('placing', on));
   const hint = document.getElementById('viewHint');
   if(hint && on){
     const label = kind === 'light' ? ceilingLightDef(type).label
+      : kind === 'fw' ? floorWasteDef(type).label
       : (kind === 'gpo' ? gpoDef(type).label : cabLightDef(type).label);
-    hint.textContent = `Click on the ${kind === 'light' ? 'plan' : 'elevation'} to drop a ${label} · Esc to stop`;
+    const onPlan = (kind === 'light' || kind === 'fw');
+    hint.textContent = `Click on the ${onPlan ? 'plan' : 'elevation'} to drop a ${label} · Esc to stop`;
   } else if(hint && !on){
     try { showView(state.ui.view); } catch(_){}
   }
@@ -16722,10 +16963,12 @@ function loadDesign(snap){
   if(!Array.isArray(state.room.lights)) state.room.lights = [];
   // Keep the id generator ahead of anything already in the job.
   const _bumpElecId = arr => (arr || []).forEach(o=>{
-    const n = parseInt(String(o && o.id || '').replace(/^[el]/, ''), 10);
+    const n = parseInt(String(o && o.id || '').replace(/^[a-z]+/, ''), 10);
     if(!isNaN(n) && n >= _nextElecId) _nextElecId = n + 1;
   });
+  if(!Array.isArray(state.room.floorWastes)) state.room.floorWastes = [];
   _bumpElecId(state.room.lights);
+  _bumpElecId(state.room.floorWastes);
   (state.walls || []).forEach(w=>{
     if(!Array.isArray(w.electrical)) w.electrical = [];
     _bumpElecId(w.electrical);
@@ -16765,7 +17008,9 @@ function loadDesign(snap){
       else r.walls = [makeWall('A'), makeWall('B'), makeWall('C'), makeWall('D')];
     }
     if(!Array.isArray(r.lights)) r.lights = [];
+    if(!Array.isArray(r.floorWastes)) r.floorWastes = [];
     _bumpElecId(r.lights);
+    _bumpElecId(r.floorWastes);
     r.walls.forEach(w=>{
       if(!w.openings) w.openings = [];
       if(!Array.isArray(w.electrical)) w.electrical = [];
@@ -17396,9 +17641,13 @@ document.addEventListener('keydown', e=>{
     e.preventDefault();
     const id = state.ui.selectedFitId;
     const drop = arr => { const i = (arr || []).findIndex(o => o.id === id); if(i >= 0){ arr.splice(i, 1); return true; } return false; };
-    let gone = drop(state.room.lights) || (state.walls || []).some(w => drop(w.electrical));
-    if(!gone) gone = roomsList().some(r => drop(r.lights) || (r.walls || []).some(w => drop(w.electrical)));
-    if(gone){ pushHistory(); state.ui.selectedFitId = null; renderElecPanel(); renderActive(); }
+    let gone = drop(state.room.lights) || drop(state.room.floorWastes)
+            || (state.walls || []).some(w => drop(w.electrical));
+    if(!gone) gone = roomsList().some(r => drop(r.lights) || drop(r.floorWastes)
+                                        || (r.walls || []).some(w => drop(w.electrical)));
+    if(gone){ pushHistory(); state.ui.selectedFitId = null;
+      renderElecPanel(); try { renderFloorWastePanel(); } catch(_){}
+      renderActive(); }
     return;
   }
   if((e.key === 'Delete' || e.key === 'Backspace') && state.ui.selectedCabId){
