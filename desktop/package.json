@@ -1,0 +1,63 @@
+{
+  "name": "bathroom",
+  "version": "1.0.0",
+  "description": "Bathroom — architectural drawing set for bathrooms, ensuites and wet areas",
+  "main": "main.js",
+  "author": "Mike J · Joinery Studio",
+  "license": "ISC",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "bundle": "node sync-bundle.js",
+    "build": "npm run bundle && electron-builder --win portable",
+    "build:installer": "npm run bundle && electron-builder --win nsis",
+    "build:all": "npm run bundle && electron-builder --win portable nsis"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron@43.2.0": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "build": {
+    "appId": "com.joinerystudio.bathroom",
+    "productName": "Bathroom",
+    "copyright": "Mike J · Joinery Studio",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "icon.ico",
+      "icon.png",
+      "bundled/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "Bathroom-${version}-portable.exe"
+    },
+    "nsis": {
+      "artifactName": "Bathroom-${version}-setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Bathroom",
+      "uninstallDisplayName": "Bathroom ${version}",
+      "menuCategory": "Joinery Studio",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
