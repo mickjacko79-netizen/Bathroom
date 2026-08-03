@@ -1844,7 +1844,11 @@ const CONST_BASE = { KICK_H_DEFAULT:150, KICK_RECESS:60, GAP:3, FRONT_PROJ:18 };
 const CONST = new Proxy(CONST_BASE, {
   get(obj, key){
     if(key === 'KICK_H') {
-      try { return (state && state.kick && state.kick.height) || CONST_BASE.KICK_H_DEFAULT; }
+      try {
+        const own = (typeof cabKickH === 'function') ? cabKickH(_kickCab) : null;
+        if(own !== null && own !== undefined) return own;
+        return (state && state.kick && state.kick.height) || CONST_BASE.KICK_H_DEFAULT;
+      }
       catch(e) { return CONST_BASE.KICK_H_DEFAULT; }
     }
     return obj[key];
@@ -2527,6 +2531,12 @@ let nextCabId = 1;
 // flat 300 mm floor that used to apply to everything silently widened them —
 // including the catalogue's own 50 mm defaults and the auto-inserted spacer in
 // "add wall cab snapped right".
+// Sanitaryware is not cabinetry: a 1700 bath, a 1200 shower and a vanity mirror
+// running the full length of the wall are all ordinary, so those types are
+// capped where they actually stop rather than at a cabinet's 1200.
+function maxWidthFor(type){
+  return (typeof SANITARY_TYPES !== 'undefined' && SANITARY_TYPES.indexOf(type) >= 0) ? 2400 : 1200;
+}
 function minWidthFor(type){ return /^filler-/.test(type) ? 10 : 300; }
 function makeCab(type, opts={}){
   const def = CATALOG[type];
@@ -2535,9 +2545,7 @@ function makeCab(type, opts={}){
   return {
     id: _uniqueId,
     type,
-    // Sanitaryware is not cabinetry: a 1700 bath and a 1200 shower are ordinary,
-    // so the fixture types are capped where they actually stop.
-    W: Math.max(minWidthFor(type), Math.min(SANITARY_TYPES.indexOf(type) >= 0 ? 2400 : 1200, opts.W ?? def.defaultW)),
+    W: Math.max(minWidthFor(type), Math.min(maxWidthFor(type), opts.W ?? def.defaultW)),
     H: opts.H ?? def.H, D: opts.D ?? def.D,
     config: { ...def.defaultConfig, ...(opts.config||{}) },
     // each cabinet inherits project handle by default; nulls mean "use project default"
@@ -4482,6 +4490,33 @@ function frontStyleLabel(cab){
 // front knows its own style without every one of the twenty door sites having
 // to pass it down.
 let _curFrontCab = null;
+// The cabinet whose kick is being drawn. CONST.KICK_H reads this, so a cabinet
+// with its own kick height — or none at all, because it is wall hung — gets it
+// everywhere the drawing asks, without every call site having to know.
+let _kickCab = null;
+// Clear height under a wall-hung unit: the gap you can get a mop under.
+function cabFloatH(cab){
+  const c = (cab && cab.config) || {};
+  return (typeof c.floatH === 'number') ? Math.max(0, c.floatH) : 200;
+}
+// What a cabinet's kick actually measures. A wall-hung unit has none — the
+// space under it is clear — so its "kick" is the float, and nothing is drawn
+// in it.
+function cabKickH(cab){
+  const c = (cab && cab.config) || {};
+  if(c.mount === 'wall-hung') return cabFloatH(cab);
+  if(typeof c.kickH === 'number') return Math.max(0, c.kickH);
+  return null;                      // fall through to the project default
+}
+function isWallHung(cab){ return !!(cab && cab.config && cab.config.mount === 'wall-hung'); }
+// The kick's fill. Nothing under a wall-hung unit, so nothing is painted there.
+function kickFill(){ return isWallHung(_kickCab) ? null : state.kick.color; }
+// Which types are joinery that stands on a kick in the first place.
+function cabTakesKick(cab){
+  if(!cab || isSanitary(cab)) return false;
+  const def = CATALOG[cab.type];
+  return !!def && def.row === 'base';
+}
 // Drawn over a front that has already been laid down in the finish colour.
 function drawFrontStyle(d, x, y, w, h, styleKey, s, orientation){
   const st = DOOR_STYLES[styleKey];
@@ -4617,6 +4652,10 @@ function drawCarcassVoid(d, x, yTop, W, H, s, T, hasKick, kickH){
 // outline through the kick zone so adjacent kicks read as one continuous strip.
 // A freestanding machine keeps the full outline.
 function drawCabOutline(d, x, yTop, wPx, hPx, color, lw, cab){
+  if(isWallHung(cab) && cab.H){
+    // hPx spans the whole cabinet including the float; trim it to the carcass.
+    hPx = Math.max(0, hPx - cabFloatH(cab) * (hPx / cab.H));
+  }
   // Appliances that stand on the floor keep their full outline — there is no
   // kick strip for the run to read through.
   const isDW = cab && (cab.type === 'laundry-appliance' && !(cab.config && cab.config.showKick));
@@ -4656,7 +4695,7 @@ function drawDrawerOpen(d, x, y, w, h){
 }
 function drawAdjElevBase(d, x, oy, Hm, s, w, cabH, kind, finishCol){
   if(kind === 'space') return;
-  d.rect(x, oy + (Hm-CONST.KICK_H)*s, w*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+  d.rect(x, oy + (Hm-CONST.KICK_H)*s, w*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
   const fH = cabH - CONST.KICK_H;
   const fx = x, fy = oy + (Hm - cabH + CONST.GAP)*s, fw = w*s, fh = (fH - 2*CONST.GAP)*s;
   d.rect(fx, fy, fw, fh, finishCol, kind === 'panel' ? COL.accent : COL.ink2, LW.hairline);
@@ -8446,7 +8485,7 @@ function drawIslandElevation(d, area){
   hatchRect(d, _xL, floorY, _xR - _xL, 4, { angle:Math.PI/4, spacing:1.2, color:COL.ink3, lw:LW.hairline });
 
   // KICK
-  d.rect(ox, oy + (Hm - CONST.KICK_H)*s, wL*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+  d.rect(ox, oy + (Hm - CONST.KICK_H)*s, wL*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
   // Cabs along the bar (including adjacent fillers + finish panels)
   let u = 0;
   (isl.baseRow || []).forEach((cab, idx)=>{
@@ -8679,6 +8718,7 @@ function drawElevation(d, area, wallId, opts){
     { size:6.5, color:COL.muted });
   d.line(area.x, area.y + 17, area.x + area.w, area.y + 17, COL.accent, LW.thin);
 
+  _kickCab = null;
   // FLOOR + CEILING
   d.line(ox - 10, oy + Hm*s, ox + wL*s + 10, oy + Hm*s, COL.ink, LW.medium);
   hatchRect(d, ox - 10, oy + Hm*s, wL*s + 20, 4, { angle:Math.PI/4, spacing:1.2, color:COL.ink3, lw:LW.hairline });
@@ -8728,9 +8768,11 @@ function drawElevation(d, area, wallId, opts){
   // benchtop, which is painted after the cabinets, so drawing one in the loop
   // put it behind the bench and the splashback.
   const _taps = [];
+  _kickCab = null;
   let u = startU;
   wall.baseRow.forEach((cab, idx)=>{
     _curFrontCab = cab;
+    _kickCab = cab;
     if(cab.adj?.left?.filler > 0){
       drawAdjElevBase(d, ox + u*s, oy, Hm, s, cab.adj.left.filler, cab.H, cab.adj.left.kind === 'space' ? 'space' : 'filler', finishCol);
       u += cab.adj.left.filler;
@@ -8767,7 +8809,7 @@ function drawElevation(d, area, wallId, opts){
         d.text(x + cab.W*s/2, yTop + cab.H*s - 20*s, `${cab.W} × ${cab.H}`, { align:'center', size:5.5, color:COL.muted });
       }
     }  else if(cab.type === 'tall'){
-      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
       const doors = cab.config.doors;
       const doorH = cab.H - CONST.KICK_H - 2*CONST.GAP - doorTrim(handle);
       const dW = (cab.W - CONST.GAP*(doors+1)) / doors;
@@ -8831,7 +8873,7 @@ function drawElevation(d, area, wallId, opts){
         }
       })();
     } else if(cab.type === 'base-drawer'){
-      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
       const faceH = cab.H - CONST.KICK_H;
       // Shark-nosed fronts are set out to leave a finger gap between them, so
       // the fronts themselves are shorter — the gap is part of the setting out,
@@ -8862,7 +8904,7 @@ function drawElevation(d, area, wallId, opts){
       drawCabOutline(d, x, yTop, cab.W*s, cab.H*s, outlineCol, outlineLW, cab);
       drawCarcassVoid(d, x, yTop, cab.W, cab.H, s, state.carcass.T, true, CONST.KICK_H);
     } else if(cab.type === 'base-door' || cab.type === 'corner-base'){
-      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
       const doorH = cab.H - CONST.KICK_H - 2*CONST.GAP - doorTrim(handle);
       const dyDoor = oy + (Hm - CONST.KICK_H - CONST.GAP - doorH)*s;
       const innerYBottom = CONST.KICK_H + T;
@@ -8968,7 +9010,7 @@ function drawElevation(d, area, wallId, opts){
       const kickH = showKick ? CONST.KICK_H : 0;
       const bodyH = cab.H - kickH;
       const yT = oy + (Hm - cab.H)*s;
-      if(showKick) d.rect(x, oy + (Hm - kickH)*s, cab.W*s, kickH*s, state.kick.color, state.kick.color, LW.hairline);
+      if(showKick) d.rect(x, oy + (Hm - kickH)*s, cab.W*s, kickH*s, kickFill(), kickFill(), LW.hairline);
       const nameFor = m => (m === 'dryer') ? (applianceTitle(cab, 'dryer') || 'DRYER')
                                            : (applianceTitle(cab, 'washer') || 'WASHING MACHINE');
       if(integrated){
@@ -9004,7 +9046,7 @@ function drawElevation(d, area, wallId, opts){
       drawCabOutline(d, x, yT, cab.W*s, cab.H*s, outlineCol, outlineLW, cab);
     }  else if(isSinkCab(cab)){
       // SINK BASE: false-drawer top + doors below
-      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
       const dummyH = cab.config.dummyDrawer ? (cab.config.dummyDrawerH || 140) : 0;
       if(dummyH > 0){
         const dyDum = oy + (Hm - cab.H + doorTopGap(handle))*s;
@@ -9096,7 +9138,7 @@ function drawElevation(d, area, wallId, opts){
       drawCarcassVoid(d, x, yTop, cab.W, cab.H, s, state.carcass.T, true, CONST.KICK_H);
     } else if(cab.type === 'filler-base'){
       // BASE-HEIGHT FILLER (sits on kick, bench passes over)
-      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
       const fH = cab.H - CONST.KICK_H;
       const fx = x, fy = oy + (Hm - cab.H + CONST.GAP)*s, fw = cab.W*s, fh = (fH - 2*CONST.GAP)*s;
       d.rect(fx, fy, fw, fh, finishCol, COL.ink2, LW.hairline);
@@ -9104,7 +9146,7 @@ function drawElevation(d, area, wallId, opts){
       drawCabOutline(d, x, yTop, cab.W*s, cab.H*s, outlineCol, outlineLW, cab);
     } else if(cab.type === 'filler-tall'){
       // FULL-HEIGHT FILLER (kick + full face up to top)
-      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, state.kick.color, state.kick.color, LW.hairline);
+      d.rect(x, oy + (Hm-CONST.KICK_H)*s, cab.W*s, CONST.KICK_H*s, kickFill(), kickFill(), LW.hairline);
       const fx = x, fy = oy + (Hm - cab.H + CONST.GAP)*s, fw = cab.W*s, fh = (cab.H - CONST.KICK_H - 2*CONST.GAP)*s;
       d.rect(fx, fy, fw, fh, finishCol, COL.ink2, LW.hairline);
       if(cab.W >= 30) d.text(fx + fw/2, fy + fh/2, 'TALL FILLER', { align:'center', baseline:'middle', size:4, color:COL.muted, italic:true, angle:-Math.PI/2 });
@@ -9112,6 +9154,7 @@ function drawElevation(d, area, wallId, opts){
     }   else if(isSanitary(cab)){
       drawSanitaryOnElevation(d, cab, x, s, oy, Hm, { outlineCol, outlineLW, tileCol: finishCol });
     }
+    _kickCab = null;
     // Hit registration: cabinet bbox in page-mm
     recordHit(view, cab.id, x, yTop, x + cab.W*s, yTop + cab.H*s, wallId);
     u += cab.W;
@@ -9201,7 +9244,7 @@ function drawElevation(d, area, wallId, opts){
         } else {
           const cyTop = oy + (Hm - srcCab.H) * s;
           const kH = CONST.KICK_H;
-          d.rect(cx, oy + (Hm - kH)*s, leg*s, kH*s, state.kick.color, state.kick.color, LW.hairline);
+          d.rect(cx, oy + (Hm - kH)*s, leg*s, kH*s, kickFill(), kickFill(), LW.hairline);
           const fH = srcCab.H - kH;
           const fy = oy + (Hm - srcCab.H + G)*s, fh = (fH - 2*G)*s;
           // Door/panel on the EXTENSION (far from corner) — fill only
@@ -11485,9 +11528,48 @@ function renderEditPanel(){
     wrap.appendChild(labelEl); wrap.appendChild(inp);
     return wrap;
   }
-  editor.appendChild(rng('Width', 'W', minWidthFor(cab.type), 1200, 10));
+  editor.appendChild(rng('Width', 'W', minWidthFor(cab.type), maxWidthFor(cab.type), 10));
   editor.appendChild(rng('Height', 'H', 200, 2700, 10));
   editor.appendChild(rng('Depth', 'D', 200, 800, 10));
+
+  // ----- MOUNTING — on a kick, or hung off the wall with a clear space under.
+  if(cabTakesKick(cab)){
+    editor.appendChild(el('h3', {}, 'Mounting'));
+    const c = cab.config || (cab.config = {});
+    const bar = el('div', { class:'pillbar' });
+    [['floor','On a kick'], ['wall-hung','Wall hung']].forEach(([v, lb])=>{
+      const p = el('div', { class:'pill' + (((c.mount || 'floor') === v) ? ' on' : '') }, lb);
+      p.addEventListener('click', ()=>{
+        c.mount = v; renderEditPanel(); renderActive();
+      });
+      bar.appendChild(p);
+    });
+    editor.appendChild(el('div', { class:'ctrl' }, bar));
+    const numRow = (label, key, min, max, step, dflt)=>{
+      const wrap = el('div', { class:'ctrl' });
+      const inp = el('input', { class:'valInp', type:'number', min:String(min), max:String(max),
+        step:String(step), value:String(c[key] ?? dflt) });
+      inp.addEventListener('input', ()=>{
+        const v = parseFloat(inp.value);
+        if(!isFinite(v)) return;
+        c[key] = v; renderActive();
+      });
+      wrap.appendChild(el('label', {}, label, el('span', { class:'val' }, inp, ' mm')));
+      editor.appendChild(wrap);
+    };
+    if((c.mount || 'floor') === 'wall-hung'){
+      numRow('Clear under', 'floatH', 0, 900, 5, 200);
+      editor.appendChild(el('div', { class:'ctrl',
+        style:'font-size:11px;color:var(--muted);margin-top:-6px' },
+        'Nothing is drawn under it — the floor tiling runs through.'));
+    } else {
+      numRow('Kick height', 'kickH', 0, 300, 5,
+        (state.kick && state.kick.height) || CONST_BASE.KICK_H_DEFAULT);
+      editor.appendChild(el('div', { class:'ctrl',
+        style:'font-size:11px;color:var(--muted);margin-top:-6px' },
+        'This unit only. The job default is in the Carcass panel.'));
+    }
+  }
 
   // ----- GROUP — cabs sharing the same group ID move together on drag
   // Collect existing group names from all cabs
