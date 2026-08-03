@@ -561,6 +561,30 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl" id="floorSizeRow"><label>Board / tile width <span class="val"><input class="valInp" id="floorSizeVal" type="number" min="20" max="3000" step="10" value="180"> mm</span></label><input id="floorSize" type="range" min="20" max="3000" step="10" value="180"></div>
         <div class="ctrl" id="floorSize2Row"><label>Board length / tile height <span class="val"><input class="valInp" id="floorSize2Val" type="number" min="20" max="4000" step="10" value="1800"> mm</span></label><input id="floorSize2" type="range" min="20" max="4000" step="10" value="1800"></div>
         <div class="ctrl" id="floorAngleRow"><label>Laying angle <span class="val"><input class="valInp" id="floorAngleVal" type="number" min="0" max="90" step="5" value="0"> °</span></label><input id="floorAngle" type="range" min="0" max="90" step="5" value="0"></div>
+        <div style="font-size:10.5px;color:var(--muted);margin:14px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Setout</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:0">
+          A room rarely divides by the tile. Say which wall keeps the full tile and
+          which one takes the cut — or split it so both ends match.
+        </div>
+        <div class="ctrl"><label>Across the room <span style="font-weight:400;color:var(--muted);font-size:10.5px">— wall D to wall B</span></label>
+          <div class="pillbar" id="floorGaugeX">
+            <div class="pill on" data-v="start">Full at D</div>
+            <div class="pill" data-v="end">Full at B</div>
+            <div class="pill" data-v="both">Split both</div>
+          </div>
+        </div>
+        <div class="ctrl"><label>Along the room <span style="font-weight:400;color:var(--muted);font-size:10.5px">— wall A to wall C</span></label>
+          <div class="pillbar" id="floorGaugeY">
+            <div class="pill on" data-v="start">Full at A</div>
+            <div class="pill" data-v="end">Full at C</div>
+            <div class="pill" data-v="both">Split both</div>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="ctrl"><label>Nudge across <span class="val"><input class="valInp" id="floorOffsetX" type="number" step="5" value="0"> mm</span></label></div>
+          <div class="ctrl"><label>Nudge along <span class="val"><input class="valInp" id="floorOffsetY" type="number" step="5" value="0"> mm</span></label></div>
+        </div>
+        <div class="ctrl" id="floorGaugeReadout" style="font-size:11px;color:var(--muted);margin-top:-2px;line-height:1.55"></div>
         <button class="btn small ghost" id="floorReset" style="width:100%;margin-top:4px">Reset to material defaults</button>
       </div>
 
@@ -1967,7 +1991,10 @@ const state = {
              layerHatch: false,
              lights: [], internalWalls: [],
              floor:{ material:'tile-600', colorOverride:null, hatchOverride:null,
-                     jointColorOverride:null, size:null, size2:null, angle:null } },
+                     jointColorOverride:null, size:null, size2:null, angle:null,
+                     // Which wall gets the full tile when the room does not
+                     // divide by it, per direction, plus a manual nudge.
+                     gaugeX:'start', gaugeY:'start', offsetX:0, offsetY:0 } },
   // fillerDepth: how far a filler reaches back from the front face of the run.
   // 0 means all the way to the wall, which is how they were always drawn.
   carcass: { T:16, substrate:'HMR white melamine', fillerDepth:0 },
@@ -3786,12 +3813,18 @@ function _cline(d, x1, y1, x2, y2, rect, color, lw){
 }
 // A rotated pattern frame over a rectangle: map(u,v) -> page coords, plus the
 // u/v extents needed to cover the whole rectangle at that rotation.
+let _patOrigin = null;    // page-mm; when set, patterns course from here
 function _patFrame(rect, angleDeg){
   const a = (angleDeg || 0) * Math.PI / 180;
   const ca = Math.cos(a), sa = Math.sin(a);
-  const map = (u, v) => [rect.x + u*ca - v*sa, rect.y + u*sa + v*ca];
+  const ox = _patOrigin ? _patOrigin.x : rect.x;
+  const oy = _patOrigin ? _patOrigin.y : rect.y;
+  const map = (u, v) => [ox + u*ca - v*sa, oy + u*sa + v*ca];
   let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
-  [[0,0],[rect.w,0],[rect.w,rect.h],[0,rect.h]].forEach(([px, py])=>{
+  // Extents are taken from the rectangle's corners measured from the origin, so
+  // moving the origin re-phases the pattern without uncovering a strip of floor.
+  const dx = rect.x - ox, dy = rect.y - oy;
+  [[dx,dy],[dx+rect.w,dy],[dx+rect.w,dy+rect.h],[dx,dy+rect.h]].forEach(([px, py])=>{
     const u =  px*ca + py*sa;
     const v = -px*sa + py*ca;
     u0 = Math.min(u0, u); u1 = Math.max(u1, u);
@@ -4607,6 +4640,32 @@ function floorSpec(){
     angle: (typeof f.angle === 'number') ? f.angle : (pd.angle || 0),
   };
 }
+// How the floor tiles gauge out across a room, in one direction.
+//   'start'  full tile at the first wall, the cut at the far one
+//   'end'    full tile at the far wall, the cut at the first one
+//   'both'   the cut split evenly, so both walls get the same part tile
+// The offset shifts the whole setout, for lining a joint up with something.
+function floorGauge(run, module, mode, offset){
+  const m = Math.max(1, module || 0);
+  const full = Math.floor(run / m + 1e-6);
+  const cut = Math.round((run - full * m) * 10) / 10;
+  let shift = offset || 0;
+  if(cut > 0.5){
+    if(mode === 'end')       shift -= cut;
+    else if(mode === 'both') shift -= cut / 2;
+  }
+  return { full, cut, shift, module: m, run };
+}
+// Both directions at once, for the room the floor is being drawn in.
+function floorSetout(W, L){
+  const f = state.room.floor || {};
+  const spec = floorSpec();
+  return {
+    x: floorGauge(W, spec.size,  f.gaugeX || 'start', f.offsetX || 0),
+    y: floorGauge(L, spec.size2, f.gaugeY || 'start', f.offsetY || 0),
+    angled: !!spec.angle,
+  };
+}
 function drawFloor(d, ox, oy, W, L, s, poly){
   const spec = floorSpec();
   const rect = { x:ox, y:oy, w:W*s, h:L*s };
@@ -4619,9 +4678,14 @@ function drawFloor(d, ox, oy, W, L, s, poly){
   // room that leaves pattern outside the walls, so the wall poché is painted
   // over the top afterwards to trim it back.
   d.save(); d.clip(rect.x, rect.y, rect.w, rect.h);
+  // A laying angle turns the gauge into a different problem — the courses no
+  // longer run wall to wall — so the setout only applies to a square-laid floor.
+  const _set = spec.angle ? null : floorSetout(W, L);
+  if(_set) _patOrigin = { x: ox + _set.x.shift * s, y: oy + _set.y.shift * s };
   try {
     spec.pat.draw(d, rect, { s, line:spec.line, color:spec.color, size:spec.size, size2:spec.size2, angle:spec.angle });
   } catch(e){ console.warn('[Bathroom] floor pattern failed', spec.key, e.message); }
+  finally { _patOrigin = null; }
   d.restore();
 }
 // A four-point axis-aligned loop is the plain rectangle every existing job has,
@@ -6553,9 +6617,17 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   if(cab.type === 'shower'){
     // Tray, then the fall arrows, then the screen — the screen is the heaviest
     // line on the fixture because it is the thing you walk into.
-    d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), '#FFFFFF', COL.ink3, LW.hairline);
+    //
+    // A tiled base is floor, so the floor tiling has to run through it and be
+    // seen to: filling the tray hid the setout in the one place it is most
+    // often argued about. An acrylic or stone base is a manufactured tray and
+    // does read as its own object, so that one still fills.
+    const _tiledBase = (c.base || 'tiled') === 'tiled';
+    d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), _tiledBase ? null : '#FFFFFF', COL.ink3, LW.hairline);
     if(c.hob !== false){
-      d.polygon(P([[0,D-(c.hobH||40)],[W,D-(c.hobH||40)],[W,D],[0,D]]), '#EFEFEC', COL.ink2, LW.thin);
+      // The hob is a kerb, so it is outlined rather than filled over the tiling.
+      d.polygon(P([[0,D-(c.hobH||40)],[W,D-(c.hobH||40)],[W,D],[0,D]]),
+        _tiledBase ? null : '#EFEFEC', COL.ink2, LW.thin);
     }
     // Waste.
     if((c.waste || 'linear') === 'linear'){
@@ -13109,9 +13181,64 @@ function _drawPreview(canvasId, kind, drawFn, mmAcross){
   catch(e){ console.warn('[Bathroom] preview failed', kind, e.message); }
   ctx.setTransform(1,0,0,1,0,0);
 }
+// The floor setout controls. Kept beside the pattern they act on, and wired
+// once — the pill bars and the nudges all just re-render the sheet.
+(function(){
+  const bind = (id, apply)=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    if(el.classList.contains('pillbar')){
+      el.addEventListener('click', e=>{
+        const t = e.target.closest('.pill'); if(!t) return;
+        el.querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));
+        t.classList.add('on');
+        apply(t.dataset.v);
+        renderActive(); renderFloorPanel();
+      });
+    } else {
+      el.addEventListener('input', ()=>{
+        const v = parseFloat(el.value);
+        if(!isFinite(v)) return;
+        apply(v); renderActive(); renderFloorPanel();
+      });
+    }
+  };
+  bind('floorGaugeX',  v => state.room.floor.gaugeX = v);
+  bind('floorGaugeY',  v => state.room.floor.gaugeY = v);
+  bind('floorOffsetX', v => state.room.floor.offsetX = v);
+  bind('floorOffsetY', v => state.room.floor.offsetY = v);
+})();
 function renderFloorPanel(){
   const f = state.room.floor;
   if(!f) return;
+  (function(){
+    const spec = floorSpec();
+    const setPills = (id, val)=>{
+      const bar = document.getElementById(id);
+      if(bar) bar.querySelectorAll('.pill').forEach(p =>
+        p.classList.toggle('on', p.dataset.v === (val || 'start')));
+    };
+    setPills('floorGaugeX', f.gaugeX);
+    setPills('floorGaugeY', f.gaugeY);
+    setFieldValue('floorOffsetX', f.offsetX || 0);
+    setFieldValue('floorOffsetY', f.offsetY || 0);
+    const out = document.getElementById('floorGaugeReadout');
+    if(!out) return;
+    if(spec.angle){
+      out.textContent = 'Laid at an angle — the courses do not run wall to wall, so there is no gauge to set out.';
+      return;
+    }
+    const set = floorSetout(state.room.W, state.room.L);
+    // first is the wall the setout starts from, last the far one.
+    const phrase = (g, mode, first, last)=> g.cut <= 0.5
+      ? `${g.full} × ${g.module} — exact.`
+      : (mode === 'both'
+          ? `${g.full} × ${g.module} + ${Math.round(g.cut / 2 * 10) / 10} mm cut at ${first} and ${last}.`
+          : `${g.full} × ${g.module} + ${g.cut} mm cut at ${mode === 'end' ? first : last}.`);
+    out.innerHTML =
+      'Across: ' + phrase(set.x, f.gaugeX || 'start', 'D', 'B') + '<br>' +
+      'Along: '  + phrase(set.y, f.gaugeY || 'start', 'A', 'C');
+  })();
   const def = floorMaterial(f.material);
   _fillPatternSelect('floorMaterial',
     Object.entries(FLOOR_MATERIALS).map(([k, v]) => [k, v.label]), f.material,
