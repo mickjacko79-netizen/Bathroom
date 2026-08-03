@@ -1016,7 +1016,7 @@ const CATALOG = {
                     sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100, panelSide:'',
                     base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40,
                     mixerH:1050, railH:1800, roseH:2050, roseType:'overhead',
-                    roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450,
+                    roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450, mixerU:0,
                     labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1000, edge:'polished', ledFrame:false, labelText:'' } },
@@ -1058,17 +1058,35 @@ const SCREEN_FINISHES = {
 // Where the rose sits, in fixture-local millimetres. u across the shower, v out
 // from the wall it is fixed to. A wall arm reaches out by its own length; a
 // ceiling rose is wherever it is set out to; a rail sits on the wall.
+// The outlets a shower can have. A rainhead is the big overhead — on a wall arm
+// or dropped from the ceiling — and it is routinely paired with a handheld on a
+// rail off the same mixer, which is a twin outlet and gets scheduled as one.
+const SHOWER_OUTLETS = {
+  'overhead':  { label:'Rainhead on a wall arm',      rain:true,  rail:false, ceiling:false },
+  'ceiling':   { label:'Rainhead from the ceiling',   rain:true,  rail:false, ceiling:true  },
+  'rail':      { label:'Rail shower, handheld',       rain:false, rail:true,  ceiling:false },
+  'rail-rain': { label:'Rail + rainhead, twin outlet',rain:true,  rail:true,  ceiling:false },
+  'rail-ceil': { label:'Rail + ceiling rainhead',     rain:true,  rail:true,  ceiling:true  },
+};
+function showerOutlet(t){ return SHOWER_OUTLETS[t] || SHOWER_OUTLETS['overhead']; }
 function showerRose(cab){
   const c = cab.config || {};
   const type = c.roseType || 'overhead';
   const u = (c.roseU > 0) ? Math.min(cab.W, c.roseU) : cab.W / 2;
   const dia = Math.max(80, c.roseDia || 250);
+  const def = showerOutlet(type);
   let v;
-  if(type === 'ceiling')    v = Math.max(60, Math.min(cab.D, c.roseV || 450));
-  else if(type === 'rail')  v = 60;
-  else                      v = Math.max(80, Math.min(cab.D, c.roseArm || 400));
-  return { type, u, v, dia, shape: c.roseShape || 'round',
+  if(def.ceiling)      v = Math.max(60, Math.min(cab.D, c.roseV || 450));
+  else if(!def.rain)   v = 60;                       // only a rail on the wall
+  else                 v = Math.max(80, Math.min(cab.D, c.roseArm || 400));
+  return { type, def, u, v, dia, shape: c.roseShape || 'round',
+           rain: def.rain, rail: def.rail, ceiling: def.ceiling,
            h: c.roseH || 2050 };
+}
+function showerMixer(cab){
+  const c = cab.config || {};
+  const u = (c.mixerU > 0) ? Math.min(cab.W, c.mixerU) : cab.W / 2;
+  return { u, h: c.mixerH || 1050, plate: 68 };
 }
 function screenInk(cab){
   const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
@@ -1829,7 +1847,10 @@ function applianceRolesFor(cab){
     case 'toilet':          return ['toilet'];
     case 'basin-fs':        return ['basin','tap'];
     case 'bath':            return ['bath','tap'];
-    case 'shower':          return (c.screen === 'none') ? ['shower','tap'] : ['shower','screen','tap'];
+    // screenTypeOf, not c.screen: the legacy field stopped being written when
+    // the screen became a configuration, so testing it scheduled a screen for
+    // every shower including the walk-ins.
+    case 'shower':          return (screenTypeOf(cab) === 'none') ? ['shower','tap'] : ['shower','screen','tap'];
     case 'mirror':          return ['mirror-unit'];
     case 'towel-rail':      return ['towelrail'];
     case 'shower-niche':    return ['niche'];
@@ -6953,8 +6974,27 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       const R = showerRose(cab);
       const half = R.dia / 2;
       const cp = planMap(wallId, uOff + R.u, R.v, plan);
-      // The arm back to the wall, for anything fixed to it.
-      if(R.type !== 'ceiling'){
+      // The mixer, on the wall face — it is the set-out a plumber works to, so
+      // it belongs on the plan and not only on the elevation.
+      (function(){
+        const M = showerMixer(cab);
+        const mp = planMap(wallId, uOff + M.u, 30, plan);
+        d.circle(mp[0], mp[1], 3.0, '#F2F2F0', COL.ink2, LW.thin);
+        d.circle(mp[0], mp[1], 1.2, SAN.metal, COL.ink2, LW.hairline);
+        d.text(mp[0], mp[1] - 4.8, 'MIX', { align:'center', size:3.4, color:COL.muted });
+      })();
+      // The rail, on the wall, where there is one.
+      if(R.rail){
+        const ru = R.u + (R.rain ? Math.min(280, cab.W * 0.22) : 0);
+        const a = planMap(wallId, uOff + ru - 90, 55, plan);
+        const b = planMap(wallId, uOff + ru + 90, 55, plan);
+        d.line(a[0], a[1], b[0], b[1], COL.ink2, LW.thin);
+        d.circle((a[0]+b[0])/2, (a[1]+b[1])/2, 1.4, SAN.metal, COL.ink2, LW.hairline);
+        d.text((a[0]+b[0])/2, (a[1]+b[1])/2 + 5.2, 'RAIL', { align:'center', size:3.4, color:COL.muted });
+      }
+      if(!R.rain) return;
+      // The arm back to the wall, for a rainhead fixed to one.
+      if(!R.ceiling){
         const wp = planMap(wallId, uOff + R.u, 0, plan);
         d.line(wp[0], wp[1], cp[0], cp[1], COL.ink3, LW.hairline);
       }
@@ -6963,9 +7003,9 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
         : P(ellipseUV(R.u, R.v, half, half, 24));
       // A ceiling rose is above everything, so it is dashed the way anything
       // overhead is on a plan.
-      if(R.type === 'ceiling') d.dashed(true);
+      if(R.ceiling) d.dashed(true);
       d.polygon(pts, null, COL.ink2, LW.thin);
-      if(R.type === 'ceiling') d.dashed(false);
+      if(R.ceiling) d.dashed(false);
       // The spray, so it reads as a head rather than a hole.
       for(let i = 0; i < 4; i++){
         const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
@@ -6973,8 +7013,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
                                    R.v + Math.sin(a) * half * 0.42, plan);
         d.circle(p1[0], p1[1], 0.5, COL.ink3, COL.ink3, LW.hairline);
       }
-      d.text(cp[0], cp[1] - half * 0 - 4.6,
-        R.type === 'ceiling' ? 'CEIL' : (R.type === 'rail' ? 'RAIL' : 'SHR HD'),
+      d.text(cp[0], cp[1] - 4.6, R.ceiling ? 'RAINHEAD · CEIL' : 'RAINHEAD',
         { align:'center', size:3.6, color:COL.muted });
     })();
     drawShowerScreenOnPlan(d, wallId, uOff, cab, plan);
@@ -7262,30 +7301,35 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
         String(Math.round(L.height)), { align: _hOnLeft ? 'left' : 'right', size:4, color:COL.muted });
     })();
     // Mixer, rail and rose.
-    const mixH = c.mixerH || 1050;
-    d.circle(X(cu), Y(mixH), 34*s, '#F2F2F0', COL.ink2, LW.thin);
-    d.circle(X(cu), Y(mixH), 12*s, SAN.metal, COL.ink2, LW.hairline);
-    if((c.roseType || 'overhead') === 'ceiling'){
-      // Dropped from the ceiling on a rod, so the drop is drawn to the slab.
+    const _M = showerMixer(cab);
+    d.circle(X(_M.u), Y(_M.h), (_M.plate / 2)*s, '#F2F2F0', COL.ink2, LW.thin);
+    d.circle(X(_M.u), Y(_M.h), 12*s, SAN.metal, COL.ink2, LW.hairline);
+    (function(){
       const R2 = showerRose(cab);
-      const top = Math.max(R2.h + 60, Hm);
-      R(cu - 11, R2.h, cu + 11, top, SAN.metal, COL.ink2, LW.hairline);
-      R(cu - R2.dia/2, R2.h - 26, cu + R2.dia/2, R2.h, SAN.metal, COL.ink2, LW.thin);
-      d.dashed(true);
-      [-70, 0, 70].forEach(dx => d.line(X(cu + dx), Y(R2.h - 26), X(cu + dx*1.6), Y(hobH + 250), COL.ink3, LW.hairline));
-      d.dashed(false);
-    } else if((c.roseType || 'overhead') === 'rail'){
-      R(cu-9, c.railH ? (c.railH - 700) : 1100, cu+9, c.roseH || 2050, SAN.metal, COL.ink2, LW.hairline);
-      poly([[cu, c.railH||1800],[cu+150, (c.railH||1800)+40],[cu+150, (c.railH||1800)-10]], SAN.metal, COL.ink2, LW.hairline);
-    } else {
-      const rh = c.roseH || 2050;
-      R(cu-9, rh, cu+9, rh+30, SAN.metal, COL.ink2, LW.hairline);            // drop
-      R(cu-115, rh-26, cu+115, rh, SAN.metal, COL.ink2, LW.thin);            // rose
+      // A twin outlet puts the rail beside the rainhead rather than under it,
+      // so the two do not draw over each other.
+      const railU = R2.rail && R2.rain ? cu + Math.min(280, cab.W * 0.22) : cu;
+      const rainU = R2.rail && R2.rain ? cu - Math.min(140, cab.W * 0.11) : cu;
+      if(R2.rail){
+        R(railU - 9, (c.railH || 1800) - 700, railU + 9, R2.h, SAN.metal, COL.ink2, LW.hairline);
+        poly([[railU, c.railH || 1800],[railU + 150, (c.railH || 1800) + 40],
+              [railU + 150, (c.railH || 1800) - 10]], SAN.metal, COL.ink2, LW.hairline);
+      }
+      if(!R2.rain) return;
+      const half = R2.dia / 2;
+      if(R2.ceiling){
+        // Dropped from the ceiling on a rod, so the drop is drawn to the slab.
+        R(rainU - 11, R2.h, rainU + 11, Math.max(R2.h + 60, Hm), SAN.metal, COL.ink2, LW.hairline);
+      } else {
+        R(rainU - 9, R2.h, rainU + 9, R2.h + 30, SAN.metal, COL.ink2, LW.hairline);
+      }
+      R(rainU - half, R2.h - 26, rainU + half, R2.h, SAN.metal, COL.ink2, LW.thin);
       // Water, dashed, so the drawing says which way the thing points.
       d.dashed(true);
-      [-70, 0, 70].forEach(dx=> d.line(X(cu+dx), Y(rh-26), X(cu+dx*1.6), Y(hobH+250), COL.ink3, LW.hairline));
+      [-0.55, 0, 0.55].forEach(f => d.line(X(rainU + half*f), Y(R2.h - 26),
+        X(rainU + half*f*1.6), Y(hobH + 250), COL.ink3, LW.hairline));
       d.dashed(false);
-    }
+    })();
     d.text(X(cu), Y(hobH + 120), (c.labelText || 'SHOWER'), { align:'center', baseline:'middle', size:4.5, color:COL.muted, italic:true });
     return;
   }
@@ -10686,9 +10730,22 @@ function handleLabelFor(cab){
 }
 // Short human note describing the cabinet's internal make-up.
 // What a shower screen line on the schedule should read.
+// How the outlet reads on a schedule.
+function showerOutletNote(cab){
+  const R = showerRose(cab);
+  const parts = [];
+  if(R.rain) parts.push(`${R.shape} rainhead ${Math.round(R.dia)} ` +
+                        `${R.ceiling ? 'ceiling mounted' : 'on a wall arm'} at ${Math.round(R.h)}`);
+  if(R.rail) parts.push('handheld on a rail');
+  if(!parts.length) return '';
+  return parts.join(' + ') + (R.rain && R.rail ? ' (twin outlet)' : '');
+}
 function screenScheduleNote(cab){
   const L = screenLayout(cab);
-  if(L.type === 'none') return 'Walk-in, no screen';
+  if(L.type === 'none'){
+    const o = showerOutletNote(cab);
+    return 'Walk-in, no screen' + (o ? ' · ' + o : '');
+  }
   const bits = [screenDef(L.type).label, `${L.t} mm toughened`, `${Math.round(L.height)} H`];
   if(L.entry > 0) bits.push(`${Math.round(L.entry)} clear opening`);
   if(screenDef(L.type).ret) bits.push(`${Math.round(L.ret)} return`);
@@ -10697,11 +10754,7 @@ function screenScheduleNote(cab){
     bits.push(L.swing === 'in' ? 'opens in' : 'opens out');
   }
   if(L.blade) bits.push(`${L.blade.t} blade wall ${L.blade.side === 'R' ? 'RH' : 'LH'} (built, tiled)`);
-  {
-    const R = showerRose(cab);
-    bits.push(`${R.type === 'ceiling' ? 'ceiling' : R.type === 'rail' ? 'rail' : 'wall arm'} ` +
-              `${R.shape} rose ${Math.round(R.dia)} at ${Math.round(R.h)}`);
-  }
+  { const o = showerOutletNote(cab); if(o) bits.push(o); }
   const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
   if(f) bits.push(f.label.toLowerCase());
   return bits.join(' · ');
@@ -12246,14 +12299,18 @@ function renderEditPanel(){
       num('Hob height', 'hobH', 0, 150, 5);
       num('Screen height', 'screenH', 1200, 2700, 10);
       num('Mixer height', 'mixerH', 700, 1600, 10);
-      pick('Outlet', 'roseType',
-        [['overhead','Overhead rose, off the wall'],['ceiling','Ceiling rose'],['rail','Rail shower']]);
-      pick('Rose shape', 'roseShape', [['round','Round'],['square','Square']]);
-      num('Rose height', 'roseH', 1600, 2800, 10);
-      num('Rose size', 'roseDia', 80, 600, 10);
-      if((c.roseType || 'overhead') === 'ceiling') num('Rose out from wall', 'roseV', 60, 2000, 10);
-      else if((c.roseType || 'overhead') !== 'rail') num('Arm reach', 'roseArm', 80, 800, 10);
-      num('Rose across (0 = centred)', 'roseU', 0, 2400, 10);
+      num('Mixer across (0 = centred)', 'mixerU', 0, 2400, 10);
+      pick('Outlet', 'roseType', Object.entries(SHOWER_OUTLETS).map(([k, v]) => [k, v.label]));
+      const _od = showerOutlet(c.roseType || 'overhead');
+      if(_od.rain){
+        pick('Rainhead shape', 'roseShape', [['round','Round'],['square','Square']]);
+        num('Rainhead size', 'roseDia', 80, 600, 10);
+        num('Rainhead height', 'roseH', 1600, 2800, 10);
+        if(_od.ceiling) num('Rainhead out from wall', 'roseV', 60, 2000, 10);
+        else            num('Arm reach', 'roseArm', 80, 800, 10);
+        num('Rainhead across (0 = centred)', 'roseU', 0, 2400, 10);
+      }
+      if(_od.rail) num('Rail top', 'railH', 1200, 2400, 10);
     } else if(cab.type === 'mirror'){
       num('Bottom above floor', 'cabBottomY', 400, 2200, 10);
       pick('Edge', 'edge', [['polished','Polished edge'],['bevelled','Bevelled'],['framed','Framed']]);
