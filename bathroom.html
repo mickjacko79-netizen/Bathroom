@@ -969,7 +969,10 @@ const CATALOG = {
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
     defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050, wasteEnd:'L', labelText:'' } },
   'shower':      { label:'Shower',                  defaultW:900, H:2000, D:900, row:'base', hasShelves:false,
-    defaultConfig:{ screen:'fixed-panel', screenH:2000, base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40, mixerH:1050, railH:1800, roseH:2050, roseType:'overhead', labelText:'' } },
+    defaultConfig:{ screenType:'panel-door', glassT:10, screenH:2000, frame:'frameless',
+                    screenFinish:'matt-black', entryW:600, returnW:400, hinge:'R', swing:'out',
+                    base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40,
+                    mixerH:1050, railH:1800, roseH:2050, roseType:'overhead', labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1000, edge:'polished', ledFrame:false, labelText:'' } },
   'towel-rail':  { label:'Towel rail',              defaultW:600, H:120,  D:110, row:'wall', hasShelves:false,
@@ -977,6 +980,61 @@ const CATALOG = {
   'shower-niche':{ label:'Shower niche',            defaultW:600, H:300,  D:100, row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1100, shelf:false, labelText:'' } },
 };
+// Shower screens, as they are actually ordered: what is fixed, what opens, and
+// which way. `opening` says whether the type leaves a clear entry to dimension.
+const SHOWER_SCREENS = {
+  'none':        { label:'Walk-in — no screen',            opening:false },
+  'panel':       { label:'Fixed panel — walk-in entry',    opening:true  },
+  'panel-door':  { label:'Fixed panel + hinged door',      opening:true, door:'hinged' },
+  'door':        { label:'Hinged door only',               opening:true, door:'hinged' },
+  'pivot':       { label:'Pivot door',                     opening:true, door:'pivot'  },
+  'sliding':     { label:'Sliding — two panels',           opening:true, door:'slide'  },
+  'return-panel':{ label:'Fixed panel + return',           opening:true, ret:true      },
+  'corner':      { label:'Corner — return + hinged door',  opening:true, door:'hinged', ret:true },
+};
+function screenDef(k){ return SHOWER_SCREENS[k] || SHOWER_SCREENS['panel-door']; }
+// Jobs made before the screen was configurable carry the old single-value
+// field; map it forward so their drawings do not change under them.
+const LEGACY_SCREEN = { 'fixed-panel':'panel', 'full-panel':'panel', 'return':'return-panel',
+                        'door-pivot':'pivot', 'none':'none' };
+function screenTypeOf(cab){
+  const c = (cab && cab.config) || {};
+  if(c.screenType) return c.screenType;
+  return LEGACY_SCREEN[c.screen] || 'panel-door';
+}
+// The glass finish only shows on the drawing as the colour of the edge line.
+const SCREEN_FINISHES = {
+  'matt-black':     { label:'Matt black',      ink:'#2A2A2C' },
+  'brushed-brass':  { label:'Brushed brass',   ink:'#8A7040' },
+  'brushed-nickel': { label:'Brushed nickel',  ink:'#7C8288' },
+  'chrome':         { label:'Chrome',          ink:'#7C8288' },
+  'clear':          { label:'Frameless — no hardware colour', ink:'#7C949E' },
+};
+function screenInk(cab){
+  const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
+  return (f && f.ink) || '#7C949E';
+}
+// Panel widths for a shower of a given size. The clear opening is what the
+// customer walks through and what the screen is ordered to; the fixed panel
+// takes whatever is left.
+function screenLayout(cab){
+  const c = cab.config || {};
+  const type = screenTypeOf(cab);
+  const def = screenDef(type);
+  const W = cab.W, D = cab.D;
+  const t = Math.max(6, c.glassT || 10);
+  const ret = Math.max(0, Math.min(D - 50, c.returnW || 400));
+  let entry = Math.max(0, Math.min(W - 100, c.entryW || 600));
+  if(type === 'none') entry = 0;
+  if(type === 'panel') entry = Math.max(0, Math.min(W - 100, c.entryW || 600));
+  if(type === 'door' || type === 'pivot') entry = W;              // the whole face opens
+  if(type === 'sliding') entry = Math.round(W / 2);               // one leaf slides past the other
+  const fixed = Math.max(0, W - entry);
+  return { type, def, t, ret, entry, fixed, W, D,
+           hinge: c.hinge || 'R', swing: c.swing || 'out',
+           height: c.screenH || 2000, frame: c.frame || 'frameless' };
+}
+
 // The sanitary fixtures are boxes, not carcasses — no fronts, no hardware, no
 // benchtop over them. One predicate keeps every "is this joinery?" test honest.
 const SANITARY_TYPES = ['toilet','basin-fs','bath','shower','mirror','towel-rail','shower-niche'];
@@ -6410,6 +6468,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   // Caroma publishes, rather than the app's generic symbol.
   const traced = productOutline(cab, 'plan');
   if(traced){
+    if(sel) d.polygon(P(traced), null, COL.selected, LW.medium);
     d.polygon(P(traced), SAN.china, line, lw);
     if(cab.type === 'toilet'){
       const tp = planMap(wallId, uOff + cu, (c.panD || cab.D) + 70, plan);
@@ -6518,32 +6577,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       d.line(b[0], b[1], b[0]-2, b[1]+4, COL.ink3, LW.hairline);
       d.line(b[0], b[1], b[0]+2, b[1]+4, COL.ink3, LW.hairline);
     });
-    const screen = c.screen || 'fixed-panel';
-    if(screen !== 'none'){
-      const panelW = (screen === 'full-panel') ? W : W * 0.62;
-      const sp = P([[0, D],[panelW, D]]);
-      d.line(sp[0][0], sp[0][1], sp[1][0], sp[1][1], SAN.glassLine, LW.medium);
-      if(screen === 'return'){
-        const rp = P([[W, D],[W, D - Math.min(400, D)]]);
-        d.line(rp[0][0], rp[0][1], rp[1][0], rp[1][1], SAN.glassLine, LW.medium);
-      }
-      if(screen === 'door-pivot'){
-        // Leaf shown open at 90°, the way a door is shown on the plan.
-        const hinge = [panelW, D];
-        const leafL = Math.min(600, W - panelW);
-        const lp = P([hinge, [panelW, D + leafL]]);
-        d.line(lp[0][0], lp[0][1], lp[1][0], lp[1][1], SAN.glassLine, LW.thin);
-        const arc = [];
-        for(let i = 0; i <= 10; i++){
-          const a = (i/10) * (Math.PI/2);
-          arc.push([panelW + leafL*Math.sin(a), D + leafL*Math.cos(a)]);
-        }
-        const ap = P(arc);
-        d.dashed(true);
-        for(let i = 1; i < ap.length; i++) d.line(ap[i-1][0], ap[i-1][1], ap[i][0], ap[i][1], COL.ink3, LW.hairline);
-        d.dashed(false);
-      }
-    }
+    drawShowerScreenOnPlan(d, wallId, uOff, cab, plan);
     const lp = planMap(wallId, uOff + cu, D*0.42, plan);
     d.text(lp[0], lp[1], (c.labelText || 'SHR'), { align:'center', baseline:'middle', size:4.5, color:COL.muted, italic:true });
     return;
@@ -6564,6 +6598,84 @@ function drawWallSpout(d, X, Y, s, opts){
     d.circle(X + 180*s, Y, 26*s, '#F2F2F0', COL.ink2, LW.hairline);
   }
 }
+// Shower screen on the plan. Glass is drawn at its real thickness — two close
+// parallel lines is how it reads on a drawing, and it is the thickness that is
+// ordered — and a door is shown open with its swing, like any other door.
+function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
+  const L = screenLayout(cab);
+  if(L.type === 'none') return;
+  const ink = screenInk(cab);
+  const P = (pts)=> mapUV(wallId, uOff, pts, plan);
+  const half = L.t / 2;
+  // A pane lying along the front face of the tray, between u0 and u1.
+  const paneU = (u0, u1)=> d.polygon(P([[u0, L.D-half],[u1, L.D-half],[u1, L.D+half],[u0, L.D+half]]),
+    SAN.glass, ink, LW.thin);
+  // A pane running back from the front face at a given u.
+  const paneV = (u, v0, v1)=> d.polygon(P([[u-half, v0],[u+half, v0],[u+half, v1],[u-half, v1]]),
+    SAN.glass, ink, LW.thin);
+  // A hinged leaf, shown open, with its arc.
+  const leaf = (hu, len, dir, angle)=>{
+    const a = (angle === undefined ? 82 : angle) * Math.PI / 180;
+    const ex = hu + dir * len * Math.cos(a), ev = L.D + len * Math.sin(a);
+    const nx = -Math.sin(a) * half * dir, nv = Math.cos(a) * half;
+    d.polygon(P([[hu + nx, L.D + nv],[ex + nx, ev + nv],[ex - nx, ev - nv],[hu - nx, L.D - nv]]),
+      SAN.glass, ink, LW.thin);
+    const arc = [];
+    for(let i = 0; i <= 12; i++){
+      const t = (i / 12) * a;
+      arc.push([hu + dir * len * Math.cos(t), L.D + len * Math.sin(t)]);
+    }
+    const ap = P(arc);
+    d.dashed(true);
+    for(let i = 1; i < ap.length; i++) d.line(ap[i-1][0], ap[i-1][1], ap[i][0], ap[i][1], COL.ink3, LW.hairline);
+    d.dashed(false);
+    // Hinge, as a short bar on the jamb.
+    const hp = planMap(wallId, uOff + hu, L.D, plan);
+    d.circle(hp[0], hp[1], 0.85, ink, ink, LW.hairline);
+  };
+
+  const hingeRight = (L.hinge === 'R');
+  if(L.type === 'return-panel' || L.type === 'corner'){
+    paneV(hingeRight ? L.W : 0, L.D - L.ret, L.D);
+  }
+  if(L.fixed > 0 && L.type !== 'sliding'){
+    // The fixed pane sits on the side away from the entry.
+    if(hingeRight) paneU(0, L.fixed); else paneU(L.W - L.fixed, L.W);
+  }
+  if(L.type === 'sliding'){
+    // Two panes on separate tracks, one shown offset, with the travel arrow.
+    paneU(0, L.W / 2 + 40);
+    d.polygon(P([[L.W/2 - 40, L.D + L.t*0.9],[L.W, L.D + L.t*0.9],
+                 [L.W, L.D + L.t*1.9],[L.W/2 - 40, L.D + L.t*1.9]]), SAN.glass, ink, LW.thin);
+    const a = planMap(wallId, uOff + L.W*0.30, L.D + 95, plan);
+    const b = planMap(wallId, uOff + L.W*0.70, L.D + 95, plan);
+    d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
+    [[a, 1], [b, -1]].forEach(([p, s])=>{
+      d.line(p[0], p[1], p[0] + 3*s, p[1] - 1.6, COL.ink3, LW.hairline);
+      d.line(p[0], p[1], p[0] + 3*s, p[1] + 1.6, COL.ink3, LW.hairline);
+    });
+  } else if(L.def.door){
+    const len = (L.type === 'door' || L.type === 'pivot') ? L.W : L.entry;
+    const hu = hingeRight ? (L.W - (L.type === 'door' || L.type === 'pivot' ? 0 : 0)) - 0 : 0;
+    // Hinged on the entry side: the leaf swings off the far end of the fixed pane.
+    const hingeU = hingeRight ? L.W : 0;
+    const dir = hingeRight ? -1 : 1;
+    if(L.type === 'pivot'){
+      // A pivot hangs on a spindle set in from the jamb, so it swings both ways.
+      const pu = hingeRight ? L.W - len * 0.15 : len * 0.15;
+      leaf(pu, len * 0.85, dir, 78);
+    } else {
+      leaf(hingeU, len, dir, 82);
+    }
+  }
+  // The clear opening, which is what the screen is ordered to.
+  if(L.def.opening && L.entry > 0){
+    const mid = hingeRight ? L.W - L.entry / 2 : L.entry / 2;
+    const tp = planMap(wallId, uOff + mid, L.D + 175, plan);
+    d.text(tp[0], tp[1], Math.round(L.entry) + ' clear', { align:'center', size:4, color:COL.muted });
+  }
+}
+
 // ---- ELEVATION ---------------------------------------------------------
 // x is the fixture's left edge in page-mm; heights come off the floor, which is
 // at oy + Hm*s.
@@ -6670,11 +6782,29 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
   if(cab.type === 'shower'){
     const hobH = (c.hob === false) ? 0 : (c.hobH || 40);
     if(hobH > 0) R(0, 0, cab.W, hobH, '#EFEFEC', stroke, lw);
-    // Screen edge — the vertical the eye reads the enclosure from.
-    if((c.screen || 'fixed-panel') !== 'none'){
-      const sh = c.screenH || 2000;
-      R(cab.W-14, hobH, cab.W, sh, SAN.glass, SAN.glassLine, LW.thin);
-    }
+    // Screen — edge on, so it is the glass arris and the door's leading edge.
+    (function(){
+      const L = screenLayout(cab);
+      if(L.type === 'none') return;
+      const ink = screenInk(cab);
+      const hingeRight = (L.hinge === 'R');
+      const edgeU = hingeRight ? cab.W - L.t : 0;
+      R(edgeU, hobH, edgeU + L.t, L.height, SAN.glass, ink, LW.thin);
+      // The leading edge of an opening leaf, dashed: it is in front of the wall
+      // being drawn, not on it.
+      if(L.def.door && L.entry > 0 && L.entry < cab.W){
+        const du = hingeRight ? cab.W - L.entry : L.entry;
+        d.dashed(true);
+        d.line(X(du), Y(hobH), X(du), Y(L.height), COL.ink3, LW.hairline);
+        d.dashed(false);
+      }
+      if(L.frame === 'framed'){
+        R(0, L.height, cab.W, L.height + 40, '#EFEFEC', ink, LW.hairline);   // header
+      }
+      // Height is the thing an installer asks for.
+      d.text(X(edgeU + (hingeRight ? -30 : 30)), Y(L.height - 90),
+        String(Math.round(L.height)), { align: hingeRight ? 'right' : 'left', size:4, color:COL.muted });
+    })();
     // Mixer, rail and rose.
     const mixH = c.mixerH || 1050;
     d.circle(X(cu), Y(mixH), 34*s, '#F2F2F0', COL.ink2, LW.thin);
@@ -7226,7 +7356,9 @@ function drawPlan(d, area, view, opts){
         u += cab.adj.left.panel;
       }
       let fill = COL.finishGrey, stroke = COL.ink2;
-      if(isSanitary(cab)) fill = '#FFFFFF';
+      // Sanitaryware supplies its own fill inside its own outline; a footprint
+      // fill would show as a square patch of white around a moulded object.
+      if(isSanitary(cab)) fill = null;
       else if(cab.type==='fridge-gap') fill = '#EEEFF1';
       else if(cab.type==='oven-tower') fill = '#E5E0D2';
       else if(cab.type==='filler-base' || cab.type==='filler-tall') fill = '#F4F0E1';
@@ -7234,16 +7366,21 @@ function drawPlan(d, area, view, opts){
       const _isFill = (cab.type==='filler-base' || cab.type==='filler-tall');
       // A filler cabinet is scribed at the front too: its depth runs back from
       // the run's front face rather than forward from the wall.
+      // Sanitaryware draws its own outline, so its footprint contributes the
+      // fill and the pick target and nothing else — no box around the object.
+      const _san = isSanitary(cab);
+      const _edge = _san ? null : (isSel ? COL.selected : stroke);
+      const _edgeW = _san ? 0 : (isSel ? LW.medium : LW.thin);
       const corners = _isFill
         ? (function(){ const b = fillerBand(baseDepth, Math.min(cab.D + CONST.FRONT_PROJ, baseDepth));
-            return planBandOnWall(d, w.id, u, cab.W, b.v0, b.v1, plan, fill, isSel ? COL.selected : stroke, isSel ? LW.medium : LW.thin); })()
-        : planRectOnWall(d, w.id, u, cab.W, cab.D, plan, fill, isSel ? COL.selected : stroke, isSel ? LW.medium : LW.thin);
+            return planBandOnWall(d, w.id, u, cab.W, b.v0, b.v1, plan, fill, _edge, _edgeW); })()
+        : planRectOnWall(d, w.id, u, cab.W, cab.D, plan, fill, _edge, _edgeW);
       const xs = corners.map(c=>c[0]); const ys = corners.map(c=>c[1]);
       const bbox = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
       recordHit(V, cab.id, bbox[0], bbox[1], bbox[2], bbox[3], w.id);
       const cx = (bbox[0]+bbox[2])/2, cy = (bbox[1]+bbox[3])/2;
       // Cab number label — suppressed on tall pantry per user preference
-      if(cab.type !== 'tall'){
+      if(cab.type !== 'tall' && !isSanitary(cab)){
         if(!compact) d.text(cx, cy + 1.4, `${wallLetter(null, w.id)}.${idx+1}`, { align:'center', size:5.5, color:COL.ink3, bold:true });
       }
       // Tall pantry — draw side panels (end panels) on plan when enabled.
@@ -7577,9 +7714,11 @@ function drawPlan(d, area, view, opts){
         d.polygon(_c4, wallFill, isSel ? COL.selected : COL.ink, isSel ? LW.medium : LW.thin);
         _corners = _c4;
       } else {
+        const _wEdge = isSel ? COL.selected : COL.ink;
+        const _wLW = isSel ? LW.medium : LW.thin;
         _corners = _wFillBand
-          ? planBandOnWall(d, w.id, u, cab.W, _wFillBand.v0, _wFillBand.v1, plan, wallFill, isSel ? COL.selected : COL.ink, isSel ? LW.medium : LW.thin)
-          : planRectOnWall(d, w.id, u, cab.W, wd, plan, wallFill, isSel ? COL.selected : COL.ink, isSel ? LW.medium : LW.thin);
+          ? planBandOnWall(d, w.id, u, cab.W, _wFillBand.v0, _wFillBand.v1, plan, wallFill, _wEdge, _wLW)
+          : planRectOnWall(d, w.id, u, cab.W, wd, plan, wallFill, _wEdge, _wLW);
       }
       // Register hit area so wall cabs are clickable on plan
       if(_corners){
@@ -10039,6 +10178,18 @@ function handleLabelFor(cab){
   return fin ? `${st} · ${fin}` : st;
 }
 // Short human note describing the cabinet's internal make-up.
+// What a shower screen line on the schedule should read.
+function screenScheduleNote(cab){
+  const L = screenLayout(cab);
+  if(L.type === 'none') return 'Walk-in, no screen';
+  const bits = [screenDef(L.type).label, `${L.t} mm toughened`, `${Math.round(L.height)} H`];
+  if(L.entry > 0) bits.push(`${Math.round(L.entry)} clear opening`);
+  if(screenDef(L.type).ret) bits.push(`${Math.round(L.ret)} return`);
+  if(screenDef(L.type).door) bits.push(`hinge ${L.hinge === 'R' ? 'RH' : 'LH'}`);
+  const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
+  if(f) bits.push(f.label.toLowerCase());
+  return bits.join(' · ');
+}
 function scheduleNoteFor(cab){
   const c = cab.config || {};
   const bits = [];
@@ -11405,7 +11556,32 @@ function renderEditPanel(){
       num('Hob width', 'hobW', 0, 300, 5);
       num('Tap height above floor', 'tapH', 600, 1600, 10);
     } else if(cab.type === 'shower'){
-      pick('Screen', 'screen', [['fixed-panel','Fixed panel + walk-in'],['full-panel','Full panel'],['return','Panel + return'],['door-pivot','Pivot door'],['none','Open / no screen']]);
+      // ---- Screen. Its own group, because it is ordered as its own item.
+      editor.appendChild(el('h3', {}, 'Screen'));
+      if(!c.screenType) c.screenType = screenTypeOf(cab);
+      pick('Configuration', 'screenType', Object.entries(SHOWER_SCREENS).map(([k, v]) => [k, v.label]));
+      const sd = screenDef(c.screenType);
+      if(sd.opening !== false){
+        pick('Fixed panel / hinge side', 'hinge', [['R','Right'],['L','Left']]);
+        if(c.screenType !== 'door' && c.screenType !== 'pivot' && c.screenType !== 'sliding')
+          num('Clear opening', 'entryW', 400, 1400, 10);
+      }
+      if(sd.ret) num('Return panel', 'returnW', 150, 1200, 10);
+      if(sd.door === 'hinged') pick('Swing', 'swing', [['out','Outwards'],['in','Inwards']]);
+      pick('Framing', 'frame', [['frameless','Frameless'],['semi-frameless','Semi-frameless'],['framed','Fully framed']]);
+      pick('Hardware finish', 'screenFinish', Object.entries(SCREEN_FINISHES).map(([k, v]) => [k, v.label]));
+      num('Glass thickness', 'glassT', 6, 12, 1);
+      num('Screen height', 'screenH', 1200, 2700, 10);
+      {
+        const L = screenLayout(cab);
+        editor.appendChild(el('div', { class:'ctrl',
+          style:'font-size:11px;color:var(--muted);margin-top:-6px;line-height:1.5' },
+          L.type === 'none' ? 'Walk-in — nothing to order.'
+            : `${L.fixed > 0 ? Math.round(L.fixed) + ' fixed + ' : ''}${Math.round(L.entry)} clear` +
+              `  ·  ${L.t} mm glass  ·  ${Math.round(L.height)} high` +
+              (screenDef(L.type).ret ? `  ·  ${Math.round(L.ret)} return` : '')));
+      }
+      editor.appendChild(el('h3', {}, 'Tray and outlet'));
       pick('Base', 'base', [['tiled','Tiled, on-site'],['acrylic','Acrylic base'],['stone','Stone base']]);
       pick('Waste', 'waste', [['linear','Linear / strip drain'],['point','Point / square grate']]);
       pick('Waste position', 'wasteAt', [['wall','At the wall'],['entry','At the entry']]);
