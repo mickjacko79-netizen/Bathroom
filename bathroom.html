@@ -1015,7 +1015,9 @@ const CATALOG = {
                     // A blade wall is a built return: tiled, not glass.
                     sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100, panelSide:'',
                     base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40,
-                    mixerH:1050, railH:1800, roseH:2050, roseType:'overhead', labelText:'' } },
+                    mixerH:1050, railH:1800, roseH:2050, roseType:'overhead',
+                    roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450,
+                    labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1000, edge:'polished', ledFrame:false, labelText:'' } },
   'towel-rail':  { label:'Towel rail',              defaultW:600, H:120,  D:110, row:'wall', hasShelves:false,
@@ -1053,6 +1055,21 @@ const SCREEN_FINISHES = {
   'chrome':         { label:'Chrome',          ink:'#7C8288' },
   'clear':          { label:'Frameless — no hardware colour', ink:'#7C949E' },
 };
+// Where the rose sits, in fixture-local millimetres. u across the shower, v out
+// from the wall it is fixed to. A wall arm reaches out by its own length; a
+// ceiling rose is wherever it is set out to; a rail sits on the wall.
+function showerRose(cab){
+  const c = cab.config || {};
+  const type = c.roseType || 'overhead';
+  const u = (c.roseU > 0) ? Math.min(cab.W, c.roseU) : cab.W / 2;
+  const dia = Math.max(80, c.roseDia || 250);
+  let v;
+  if(type === 'ceiling')    v = Math.max(60, Math.min(cab.D, c.roseV || 450));
+  else if(type === 'rail')  v = 60;
+  else                      v = Math.max(80, Math.min(cab.D, c.roseArm || 400));
+  return { type, u, v, dia, shape: c.roseShape || 'round',
+           h: c.roseH || 2050 };
+}
 function screenInk(cab){
   const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
   return (f && f.ink) || '#7C949E';
@@ -1060,6 +1077,14 @@ function screenInk(cab){
 // Panel widths for a shower of a given size. The clear opening is what the
 // customer walks through and what the screen is ordered to; the fixed panel
 // takes whatever is left.
+// The colour a floor waste is drawn in: the floor's own, so a tile-insert grate
+// reads as the tile it is set in rather than as a grey plate.
+function wasteFill(){
+  try {
+    const f = floorSpec();
+    return (f && f.color) || '#E7ECEE';
+  } catch(_) { return '#E7ECEE'; }
+}
 function screenLayout(cab){
   const c = cab.config || {};
   const type = screenTypeOf(cab);
@@ -6132,10 +6157,10 @@ function drawFloorWastesOnPlan(d, list, pox, poy, s, view, roomId){
     }
 
     if(def.sym === 'round'){
-      d.circle(cx, cy, half, '#E7ECEE', COL.ink2, LW.thin);
+      d.circle(cx, cy, half, wasteFill(), COL.ink2, LW.thin);
       d.circle(cx, cy, half*0.45, null, COL.ink3, LW.hairline);
     } else {
-      d.rect(cx - ex, cy - ey, ex*2, ey*2, '#E7ECEE', COL.ink2, LW.thin);
+      d.rect(cx - ex, cy - ey, ex*2, ey*2, wasteFill(), COL.ink2, LW.thin);
       if(def.sym === 'tile'){
         d.line(cx - ex, cy - ey, cx + ex, cy + ey, COL.ink3, LW.hairline);
         d.line(cx - ex, cy + ey, cx + ex, cy - ey, COL.ink3, LW.hairline);
@@ -6887,13 +6912,13 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
     // Waste.
     if((c.waste || 'linear') === 'linear'){
       const wv = (c.wasteAt === 'entry') ? D - 120 : 90;
-      d.polygon(P([[110,wv-25],[W-110,wv-25],[W-110,wv+25],[110,wv+25]]), '#E7ECEE', COL.ink2, LW.thin);
+      d.polygon(P([[110,wv-25],[W-110,wv-25],[W-110,wv+25],[110,wv+25]]), wasteFill(), COL.ink2, LW.thin);
       for(let g = 130; g < W-130; g += 45){
         const a = planMap(wallId, uOff+g, wv-25, plan), b = planMap(wallId, uOff+g, wv+25, plan);
         d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
       }
     } else {
-      d.polygon(P(roundRectUV(cu-50, D/2-50, cu+50, D/2+50, 8)), '#E7ECEE', COL.ink2, LW.thin);
+      d.polygon(P(roundRectUV(cu-50, D/2-50, cu+50, D/2+50, 8)), wasteFill(), COL.ink2, LW.thin);
     }
     // Falls. One from each corner of the tray to the waste, which is how the
     // grade is actually set out and how a waterproofer reads it. Kept light and
@@ -6923,6 +6948,34 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
         d.dashed(true);
       });
       d.dashed(false);
+    })();
+    (function(){
+      const R = showerRose(cab);
+      const half = R.dia / 2;
+      const cp = planMap(wallId, uOff + R.u, R.v, plan);
+      // The arm back to the wall, for anything fixed to it.
+      if(R.type !== 'ceiling'){
+        const wp = planMap(wallId, uOff + R.u, 0, plan);
+        d.line(wp[0], wp[1], cp[0], cp[1], COL.ink3, LW.hairline);
+      }
+      const pts = (R.shape === 'square')
+        ? P(roundRectUV(R.u - half, R.v - half, R.u + half, R.v + half, half * 0.12))
+        : P(ellipseUV(R.u, R.v, half, half, 24));
+      // A ceiling rose is above everything, so it is dashed the way anything
+      // overhead is on a plan.
+      if(R.type === 'ceiling') d.dashed(true);
+      d.polygon(pts, null, COL.ink2, LW.thin);
+      if(R.type === 'ceiling') d.dashed(false);
+      // The spray, so it reads as a head rather than a hole.
+      for(let i = 0; i < 4; i++){
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        const p1 = planMap(wallId, uOff + R.u + Math.cos(a) * half * 0.42,
+                                   R.v + Math.sin(a) * half * 0.42, plan);
+        d.circle(p1[0], p1[1], 0.5, COL.ink3, COL.ink3, LW.hairline);
+      }
+      d.text(cp[0], cp[1] - half * 0 - 4.6,
+        R.type === 'ceiling' ? 'CEIL' : (R.type === 'rail' ? 'RAIL' : 'SHR HD'),
+        { align:'center', size:3.6, color:COL.muted });
     })();
     drawShowerScreenOnPlan(d, wallId, uOff, cab, plan);
     const lp = planMap(wallId, uOff + cu, D*0.42, plan);
@@ -7061,7 +7114,7 @@ function drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D){
   // drawn clear of the fixture and tagged the way a plumber reads it.
   if(c.floorWaste){
     const fp = planMap(wallId, uOff + bathFloorWasteU(cab), D + 150, plan);
-    d.circle(fp[0], fp[1], 3.4, '#E7ECEE', COL.ink2, LW.thin);
+    d.circle(fp[0], fp[1], 3.4, wasteFill(), COL.ink2, LW.thin);
     d.circle(fp[0], fp[1], 1.5, null, COL.ink3, LW.hairline);
     d.text(fp[0], fp[1] + 7.5, 'FW', { align:'center', size:4, color:COL.muted });
   }
@@ -7212,7 +7265,16 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
     const mixH = c.mixerH || 1050;
     d.circle(X(cu), Y(mixH), 34*s, '#F2F2F0', COL.ink2, LW.thin);
     d.circle(X(cu), Y(mixH), 12*s, SAN.metal, COL.ink2, LW.hairline);
-    if((c.roseType || 'overhead') === 'rail'){
+    if((c.roseType || 'overhead') === 'ceiling'){
+      // Dropped from the ceiling on a rod, so the drop is drawn to the slab.
+      const R2 = showerRose(cab);
+      const top = Math.max(R2.h + 60, Hm);
+      R(cu - 11, R2.h, cu + 11, top, SAN.metal, COL.ink2, LW.hairline);
+      R(cu - R2.dia/2, R2.h - 26, cu + R2.dia/2, R2.h, SAN.metal, COL.ink2, LW.thin);
+      d.dashed(true);
+      [-70, 0, 70].forEach(dx => d.line(X(cu + dx), Y(R2.h - 26), X(cu + dx*1.6), Y(hobH + 250), COL.ink3, LW.hairline));
+      d.dashed(false);
+    } else if((c.roseType || 'overhead') === 'rail'){
       R(cu-9, c.railH ? (c.railH - 700) : 1100, cu+9, c.roseH || 2050, SAN.metal, COL.ink2, LW.hairline);
       poly([[cu, c.railH||1800],[cu+150, (c.railH||1800)+40],[cu+150, (c.railH||1800)-10]], SAN.metal, COL.ink2, LW.hairline);
     } else {
@@ -10635,6 +10697,11 @@ function screenScheduleNote(cab){
     bits.push(L.swing === 'in' ? 'opens in' : 'opens out');
   }
   if(L.blade) bits.push(`${L.blade.t} blade wall ${L.blade.side === 'R' ? 'RH' : 'LH'} (built, tiled)`);
+  {
+    const R = showerRose(cab);
+    bits.push(`${R.type === 'ceiling' ? 'ceiling' : R.type === 'rail' ? 'rail' : 'wall arm'} ` +
+              `${R.shape} rose ${Math.round(R.dia)} at ${Math.round(R.h)}`);
+  }
   const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
   if(f) bits.push(f.label.toLowerCase());
   return bits.join(' · ');
@@ -12179,8 +12246,14 @@ function renderEditPanel(){
       num('Hob height', 'hobH', 0, 150, 5);
       num('Screen height', 'screenH', 1200, 2700, 10);
       num('Mixer height', 'mixerH', 700, 1600, 10);
-      num('Rose height', 'roseH', 1600, 2600, 10);
-      pick('Outlet', 'roseType', [['overhead','Overhead rose'],['rail','Rail shower']]);
+      pick('Outlet', 'roseType',
+        [['overhead','Overhead rose, off the wall'],['ceiling','Ceiling rose'],['rail','Rail shower']]);
+      pick('Rose shape', 'roseShape', [['round','Round'],['square','Square']]);
+      num('Rose height', 'roseH', 1600, 2800, 10);
+      num('Rose size', 'roseDia', 80, 600, 10);
+      if((c.roseType || 'overhead') === 'ceiling') num('Rose out from wall', 'roseV', 60, 2000, 10);
+      else if((c.roseType || 'overhead') !== 'rail') num('Arm reach', 'roseArm', 80, 800, 10);
+      num('Rose across (0 = centred)', 'roseU', 0, 2400, 10);
     } else if(cab.type === 'mirror'){
       num('Bottom above floor', 'cabBottomY', 400, 2200, 10);
       pick('Edge', 'edge', [['polished','Polished edge'],['bevelled','Bevelled'],['framed','Framed']]);
