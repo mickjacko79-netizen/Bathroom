@@ -979,7 +979,7 @@ const CATALOG = {
   'base-drawer': { label:'Vanity — drawers',      defaultW:900, H:720,  D:460, row:'base', hasShelves:false, defaultConfig:{ drawers:2, split:'equal' } },
   'base-door':   { label:'Vanity — door + shelves', defaultW:600, H:720, D:460, row:'base', hasShelves:true,  defaultConfig:{ doors:1, hingeSide:'L', shelves:2, shelfMode:'equal', shelfPositions:[] } },
   'tall':        { label:'Linen tower / tallboy', defaultW:450, H:2100, D:460, row:'base', hasShelves:true,  defaultConfig:{ doors:2, hingeSide:'L', shelves:5, shelfMode:'equal', shelfPositions:[] } },
-  'wall':        { label:'Shaving / wall cabinet', defaultW:900, H:750,  D:150, row:'wall', hasShelves:true,  defaultConfig:{ cabBottomY:1000, doors:1, hingeSide:'L', shelves:2, shelfMode:'equal', shelfPositions:[], wallDoorMode:'side' } },
+  'wall':        { label:'Shaving / wall cabinet', defaultW:900, H:750,  D:150, row:'wall', hasShelves:true,  defaultConfig:{ cabBottomY:1000, mirrorFront:true, doors:1, hingeSide:'L', shelves:2, shelfMode:'equal', shelfPositions:[], wallDoorMode:'side' } },
   'filler-base': { label:'Filler — vanity (720H)', defaultW:50,  H:720,  D:460, row:'base', hasShelves:false, defaultConfig:{} },
   'filler-tall': { label:'Filler — tall (2100H)',  defaultW:50,  H:2100, D:460, row:'base', hasShelves:false, defaultConfig:{} },
   'filler-wall': { label:'Filler — wall (750H)',   defaultW:50,  H:750,  D:150, row:'wall', hasShelves:false, defaultConfig:{} },
@@ -1078,7 +1078,8 @@ function screenLayout(cab){
         d: Math.max(100, Math.min(D, c.bladeD || 600)), h: Math.max(300, c.bladeH || 2100) }
     : null;
   return { type, def, t, ret, entry, fixed, W, D, blade,
-           hinge: c.hinge || 'R', swing: c.swing || 'out',
+           // The blade is what the door hangs on, so it decides the hinge side.
+           hinge: blade ? blade.side : (c.hinge || 'R'), swing: c.swing || 'out',
            height: c.screenH || 2000, frame: c.frame || 'frameless' };
 }
 
@@ -4539,6 +4540,11 @@ function cabRecess(cab){
   return Math.max(0, Math.min(cab.D || 0, c.recess));
 }
 // Which items can be let into a wall at all.
+// A shaving cabinet is normally mirror-fronted — that is what makes it a
+// shaving cabinet rather than a cupboard — so its fronts draw as glass.
+function mirrorFrontOf(cab){
+  return !!(cab && cab.type === 'wall' && cab.config && cab.config.mirrorFront);
+}
 function cabTakesRecess(cab){
   return !!cab && ['mirror', 'wall', 'filler-wall'].indexOf(cab.type) >= 0;
 }
@@ -6921,24 +6927,27 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
   // A pane running back from the front face at a given u.
   const paneV = (u, v0, v1)=> d.polygon(P([[u-half, v0],[u+half, v0],[u+half, v1],[u-half, v1]]),
     SAN.glass, ink, LW.thin);
-  // A hinged leaf, shown open, with its arc.
-  const leaf = (hu, len, dir, angle)=>{
+  // A hinged leaf, shown open, with its arc. hv is the depth the hinge sits at:
+  // the front face of the tray normally, or the end of the blade where the door
+  // hangs off one.
+  const leaf = (hu, len, dir, angle, hv)=>{
     const a = (angle === undefined ? 82 : angle) * Math.PI / 180;
-    const ex = hu + dir * len * Math.cos(a), ev = L.D + len * Math.sin(a);
+    const v0 = (hv === undefined) ? L.D : hv;
+    const ex = hu + dir * len * Math.cos(a), ev = v0 + len * Math.sin(a);
     const nx = -Math.sin(a) * half * dir, nv = Math.cos(a) * half;
-    d.polygon(P([[hu + nx, L.D + nv],[ex + nx, ev + nv],[ex - nx, ev - nv],[hu - nx, L.D - nv]]),
+    d.polygon(P([[hu + nx, v0 + nv],[ex + nx, ev + nv],[ex - nx, ev - nv],[hu - nx, v0 - nv]]),
       SAN.glass, ink, LW.thin);
     const arc = [];
     for(let i = 0; i <= 12; i++){
       const t = (i / 12) * a;
-      arc.push([hu + dir * len * Math.cos(t), L.D + len * Math.sin(t)]);
+      arc.push([hu + dir * len * Math.cos(t), v0 + len * Math.sin(t)]);
     }
     const ap = P(arc);
     d.dashed(true);
     for(let i = 1; i < ap.length; i++) d.line(ap[i-1][0], ap[i-1][1], ap[i][0], ap[i][1], COL.ink3, LW.hairline);
     d.dashed(false);
     // Hinge, as a short bar on the jamb.
-    const hp = planMap(wallId, uOff + hu, L.D, plan);
+    const hp = planMap(wallId, uOff + hu, v0, plan);
     d.circle(hp[0], hp[1], 0.85, ink, ink, LW.hairline);
   };
 
@@ -6977,17 +6986,20 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
       d.line(p[0], p[1], p[0] + 3*s, p[1] + 1.6, COL.ink3, LW.hairline);
     });
   } else if(L.def.door){
-    const len = (L.type === 'door' || L.type === 'pivot') ? L.W : L.entry;
-    const hu = hingeRight ? (L.W - (L.type === 'door' || L.type === 'pivot' ? 0 : 0)) - 0 : 0;
-    // Hinged on the entry side: the leaf swings off the far end of the fixed pane.
-    const hingeU = hingeRight ? L.W : 0;
+    const bl = L.blade;
+    // Off the blade's inside face, at the end of the blade. Without a blade it
+    // is the jamb at the front face of the tray, as before.
+    const hingeU = bl ? (hingeRight ? L.W - bl.t : bl.t) : (hingeRight ? L.W : 0);
+    const hingeV = bl ? bl.d : L.D;
+    const span = bl ? (L.W - bl.t) : L.W;
+    const len = (L.type === 'door' || L.type === 'pivot') ? span : Math.min(L.entry, span);
     const dir = hingeRight ? -1 : 1;
     if(L.type === 'pivot'){
       // A pivot hangs on a spindle set in from the jamb, so it swings both ways.
-      const pu = hingeRight ? L.W - len * 0.15 : len * 0.15;
-      leaf(pu, len * 0.85, dir, 78);
+      const pu = hingeU + dir * len * 0.15;
+      leaf(pu, len * 0.85, dir, 78, hingeV);
     } else {
-      leaf(hingeU, len, dir, 82);
+      leaf(hingeU, len, dir, 82, hingeV);
     }
   }
   // The clear opening, which is what the screen is ordered to.
@@ -8771,7 +8783,7 @@ function drawElevation(d, area, wallId, opts){
   if(!state._viewOrigin) state._viewOrigin = {};
   state._viewOrigin[view] = { ox, s, wL, crop:_crop };
   const oy = area.y + RES_T + Math.max(0, (area.h - RES_T - RES_B - Hm*s)/2);
-  const finishCol = state.finish.color;
+  let finishCol = state.finish.color;
   const benchT = benchDefOf(state.bench.material).thick;
   // Bench top is the user-set bench height (mm above floor).
   const benchTopY = (state.bench && state.bench.height) || (CONST.KICK_H + 720 + benchT);
@@ -9389,7 +9401,9 @@ function drawElevation(d, area, wallId, opts){
     if(openingIsWindow(op)) drawOpeningOnElevation(d, op, ox, oy, Hm, s);
   });
 
-  // WALL ROW
+  // WALL ROW. The front colour is the project's, except where a cabinet is
+  // mirror fronted — set per item and put back once the run is drawn.
+  const _projFrontCol = finishCol;
   const wallBottomY = benchTopY + state.bench.splashback;
   // Wall row uses its own startU (accounts for corner-WALL on previous wall),
   // independent of the base row's startU.
@@ -9409,6 +9423,7 @@ function drawElevation(d, area, wallId, opts){
   let wu = wallStartU;
   wall.wallRow.forEach((cab, idx)=>{
     _curFrontCab = cab;
+    finishCol = mirrorFrontOf(cab) ? SAN.mirror : _projFrontCol;
     if(cab.adj?.left?.filler > 0){
       drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.left.filler, cab.H, cab.adj.left.kind === 'space' ? 'space' : 'filler', finishCol);
       wu += cab.adj.left.filler;
@@ -9755,6 +9770,18 @@ function drawElevation(d, area, wallId, opts){
     if(cab.adj?.right?.filler > 0){
       drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol);
       wu += cab.adj.right.filler;
+    }
+  });
+
+  finishCol = _projFrontCol;
+  // Mirror fronts read as glass, so they take the same corner strokes the
+  // mirror fixture uses. Drawn after the run, or the doors would cover them.
+  wallRowLayout(wall, ox, oy, Hm, s, wallStartU, wallBottomY).forEach(it=>{
+    if(!mirrorFrontOf(it.cab)) return;
+    const W2 = it.wPx, H2 = it.hPx;
+    for(let i = 1; i <= 3; i++){
+      const t = i * Math.min(W2, H2) * 0.16;
+      d.line(it.x + 2*s, it.y + t, it.x + t, it.y + 2*s, '#FFFFFF', LW.hairline);
     }
   });
 
@@ -11630,6 +11657,18 @@ function renderEditPanel(){
   editor.appendChild(rng('Height', 'H', 200, 2700, 10));
   editor.appendChild(rng('Depth', 'D', minDepthFor(cab.type), maxDepthFor(cab.type), 5));
 
+  // ----- MIRROR FRONT — what makes a shaving cabinet a shaving cabinet.
+  if(cab.type === 'wall'){
+    const c = cab.config || (cab.config = {});
+    editor.appendChild(el('h3', {}, 'Fronts'));
+    const lab = el('label', { class:'toggle' });
+    const box = el('input', { type:'checkbox' });
+    box.checked = !!c.mirrorFront;
+    box.addEventListener('change', ()=>{ c.mirrorFront = box.checked; renderActive(); });
+    lab.appendChild(box); lab.appendChild(el('span', {}, 'Mirror fronts'));
+    editor.appendChild(el('div', { class:'ctrl' }, lab));
+  }
+
   // ----- RECESS — let into the wall rather than hung on it.
   if(cabTakesRecess(cab)){
     const c = cab.config || (cab.config = {});
@@ -12052,7 +12091,13 @@ function renderEditPanel(){
       pick('Configuration', 'screenType', Object.entries(SHOWER_SCREENS).map(([k, v]) => [k, v.label]));
       const sd = screenDef(c.screenType);
       if(sd.opening !== false){
-        pick('Fixed panel / hinge side', 'hinge', [['R','Right'],['L','Left']]);
+        if(c.sideWall === 'blade'){
+          editor.appendChild(el('div', { class:'ctrl',
+            style:'font-size:11px;color:var(--muted)' },
+            'The door hangs off the blade wall, so the blade side sets the hinge.'));
+        } else {
+          pick('Fixed panel / hinge side', 'hinge', [['R','Right'],['L','Left']]);
+        }
         if(c.screenType !== 'door' && c.screenType !== 'pivot' && c.screenType !== 'sliding')
           num('Clear opening', 'entryW', 400, 1400, 10);
       }
