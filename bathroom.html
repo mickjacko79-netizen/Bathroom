@@ -5712,6 +5712,46 @@ function drawTapOnPlan(d, wallId, plan, u, v, style){
   d.circle(a0[0], a0[1], Math.max(0.6, (T.base/2)*sc), TAP_BODY, COL.ink, LW.hairline);
   d.circle(a0[0], a0[1], Math.max(0.3, (T.base/2)*sc*0.45), TAP_DARK, null, 0);
 }
+// Plan: a wall mixer is its escutcheon held against the tiles with the lever
+// standing out into the room — the same parts as the tap above, seen from over
+// the top. It used to be two rings of a fixed size on the page, so it came out
+// the same blob whatever the drawing was scaled to, and its label was pushed
+// up the sheet, which buried it in the wall on three walls out of four.
+function drawShowerMixerOnPlan(d, wallId, plan, u, M, label){
+  const P = (uu, vv)=> planMap(wallId, uu, vv, plan);
+  // Page-mm per real mm, off the map itself — same as the tap.
+  const a0 = P(u, 0), a1 = P(u + 10, 0);
+  const sc = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) / 10 || (plan && plan.s) || 1;
+  // True to scale, but never allowed to shrink to a dot on a small plan.
+  const r = Math.max(((M && M.plate) || 68) / 2, 2.2 / Math.max(sc, 1e-6));
+  const cv = r * 0.95;                       // just clear of the wall face
+  // The lever is laid over to one side. Straight out into the room it lands
+  // under the arm running back from the rainhead, which is on the same centre
+  // by default, and the two together read as one long stalk.
+  const th = -0.72, du = Math.sin(th), dv = Math.cos(th);
+  // Measured from the plate's edge, not its centre — from the centre the plate
+  // covers the first radius of it and what is left reads as a stub.
+  const len = r + r * 1.9;
+  const eu = u + du*len, ev = cv + dv*len;
+  const nu = dv, nv = -du;                   // across the lever
+  const wA = r * 0.34, wB = r * 0.20;
+  const ring = (cu, cvv, rr, steps)=> mapUV(wallId, 0, ellipseUV(cu, cvv, rr, rr, steps), plan);
+  // Lever first, so the plate reads over the top of it. It tapers to a blunt
+  // end — capped with a ball it read as a lollipop rather than a handle.
+  d.polygon([P(u + nu*wA, cv + nv*wA), P(u - nu*wA, cv - nv*wA),
+             P(eu - nu*wB, ev - nv*wB), P(eu + nu*wB, ev + nv*wB)],
+    TAP_BODY, COL.ink2, LW.hairline);
+  // Escutcheon, then the spindle at its centre.
+  d.polygon(ring(u, cv, r, 24), TAP_BODY, COL.ink, LW.thin);
+  d.polygon(ring(u, cv, r * 0.30, 14), TAP_DARK, null, 0);
+  if(label){
+    // Beside the plate, on the side the lever is not laid over, and close in to
+    // the wall — that is where the tile is clear. Out in front it lands on the
+    // floor waste, which on a linear grate runs the whole width of the tray.
+    const lp = P(u + r * 1.35, cv + r * 0.45);
+    d.text(lp[0], lp[1], label, { size:4.2, color:COL.muted });
+  }
+}
 // Elevation: drawn in profile, which is how a tap is read on a kitchen
 // elevation — square on it would be a vertical stick and say nothing.
 function drawTapOnElevation(d, cx, benchY, s, style){
@@ -6978,10 +7018,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       // it belongs on the plan and not only on the elevation.
       (function(){
         const M = showerMixer(cab);
-        const mp = planMap(wallId, uOff + M.u, 30, plan);
-        d.circle(mp[0], mp[1], 3.0, '#F2F2F0', COL.ink2, LW.thin);
-        d.circle(mp[0], mp[1], 1.2, SAN.metal, COL.ink2, LW.hairline);
-        d.text(mp[0], mp[1] - 4.8, 'MIX', { align:'center', size:3.4, color:COL.muted });
+        drawShowerMixerOnPlan(d, wallId, plan, uOff + M.u, M, 'MIXER');
       })();
       // The rail, on the wall, where there is one.
       if(R.rail){
@@ -6990,7 +7027,10 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
         const b = planMap(wallId, uOff + ru + 90, 55, plan);
         d.line(a[0], a[1], b[0], b[1], COL.ink2, LW.thin);
         d.circle((a[0]+b[0])/2, (a[1]+b[1])/2, 1.4, SAN.metal, COL.ink2, LW.hairline);
-        d.text((a[0]+b[0])/2, (a[1]+b[1])/2 + 5.2, 'RAIL', { align:'center', size:3.4, color:COL.muted });
+        // Into the room, not up the page — up the page is inside the wall on
+        // three walls out of the four.
+        const rl = planMap(wallId, uOff + ru, 130, plan);
+        d.text(rl[0], rl[1], 'RAIL', { align:'center', size:3.4, color:COL.muted });
       }
       if(!R.rain) return;
       // The arm back to the wall, for a rainhead fixed to one.
