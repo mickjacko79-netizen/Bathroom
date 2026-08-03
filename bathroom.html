@@ -2206,7 +2206,7 @@ const state = {
   viewports: {}, // per-view: {zoom, panX, panY}
   lastElev: {},  // per-view elevation transform, for dragging fittings
   library: { projects: [], currentProjectId: null, currentJobId: null, dirty: false },
-  drawStyle: { lineScale: 0.05, lineColor: '#111111', dimScale: 0.05, dimColor: '#3C3C3C', dimTextSize: 6, showPerCabDims: true, showOverallDims: true, showCabDoorSwings: true, cabDoorSwingAngle: 40, showDrawerLines: true, showHiddenCarcass: true, showHeightDims: true, showOverheadDims: true, showWallCabsOnPlan: true },
+  drawStyle: { snapTol: 50, lineScale: 0.05, lineColor: '#111111', dimScale: 0.05, dimColor: '#3C3C3C', dimTextSize: 6, showPerCabDims: true, showOverallDims: true, showCabDoorSwings: true, cabDoorSwingAngle: 40, showDrawerLines: true, showHiddenCarcass: true, showHeightDims: true, showOverheadDims: true, showWallCabsOnPlan: true },
   island: { enabled: false, x: 2100, y: 1500, length: 1800, depth: 600, angle: 0, mirror: false, barBack: true, overhang: 300, bench: { material: null, colorOverride: null, hatchOverride: null, thickness: null }, leftEnd: { enabled: false, thickness: 18, waterfall: false, mitre: true }, rightEnd: { enabled: false, thickness: 18, waterfall: false, mitre: true }, baseRow: [] },
 };
 // ============================================================
@@ -7457,7 +7457,7 @@ function recordHit(view, cabId, x1, y1, x2, y2, wallId){
   hitRegistry[view] = hitRegistry[view] || [];
   hitRegistry[view].push({ cabId, wallId, bounds:[Math.min(x1,x2), Math.min(y1,y2), Math.max(x1,x2), Math.max(y1,y2)] });
 }
-function clearHits(view){ hitRegistry[view] = []; dimHitRegistry[view] = []; fitHitRegistry[view] = []; drawerHitRegistry[view] = []; openingHitRegistry[view] = []; }
+function clearHits(view){ hitRegistry[view] = []; dimHitRegistry[view] = []; fitHitRegistry[view] = []; drawerHitRegistry[view] = []; openingHitRegistry[view] = []; clearCabHandles(view); }
 function clearCropHits(view){ if(view) cropHitRegistry[view] = []; }
 // Individual drawer fronts, so one front in a bank can be picked out — the
 // cabinet registry only knows the box as a whole.
@@ -7754,8 +7754,10 @@ function drawPlan(d, area, view, opts){
   // TITLE
   if(!compact){
   const _planMeta = sheetFor(V);
+  // The heading comes from the sheet register, so it cannot say one thing here
+  // and another in the title block — it used to carry the kitchen's own wording.
   d.text(area.x + 2, area.y + 8,
-    `${_planMeta ? _planMeta.no : '01'} · ${V === 'plan-base' ? 'FLOOR PLAN — WITH WALL CUPBOARDS' : 'FLOOR PLAN — BASE ONLY'}`,
+    `${_planMeta ? _planMeta.no : '01'} · ${(_planMeta && _planMeta.title) || 'FLOOR PLAN'}`,
     { size:11, bold:true, color:COL.brand });
   d.text(area.x + 2, area.y + 13, `${state.project.name}  ·  Room ${W} × ${L} × ${state.room.H} mm  ·  Scale ${scaleLabelFor(V)}`, { size:6.5, color:COL.muted });
   d.line(area.x, area.y + 17, area.x + area.w, area.y + 17, COL.accent, LW.thin);
@@ -7893,6 +7895,7 @@ function drawPlan(d, area, view, opts){
       const xs = corners.map(c=>c[0]); const ys = corners.map(c=>c[1]);
       const bbox = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
       recordHit(V, cab.id, bbox[0], bbox[1], bbox[2], bbox[3], w.id);
+      if(!compact && state.ui.selectedCabId === cab.id) _planHandles.push({ id: cab.id, bbox });
       const cx = (bbox[0]+bbox[2])/2, cy = (bbox[1]+bbox[3])/2;
       // Cab number label — suppressed on tall pantry per user preference
       if(cab.type !== 'tall' && !isSanitary(cab)){
@@ -8193,6 +8196,7 @@ function drawPlan(d, area, view, opts){
   });
 
   // WALL CABINETS — drawn LAST so they sit on top of the fixtures below them.
+  // (handles are collected as we go and drawn after everything — see below)
   // Styled like floor cabs: finish-colour fill, solid thin outline, door swing arcs.
   if(state.drawStyle.showWallCabsOnPlan !== false) state.walls.forEach(w=>{
     const start = runStartOffset(w, 'wall');
@@ -8246,7 +8250,9 @@ function drawPlan(d, area, view, opts){
       // Register hit area so wall cabs are clickable on plan
       if(_corners){
         const xs = _corners.map(c=>c[0]), ys = _corners.map(c=>c[1]);
-        recordHit(V, cab.id, Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), w.id);
+        const _bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        recordHit(V, cab.id, _bb[0], _bb[1], _bb[2], _bb[3], w.id);
+        if(!compact && state.ui.selectedCabId === cab.id) _planHandles.push({ id: cab.id, bbox: _bb });
       }
       // Fridge-wall side panels (end panels) shown on plan view.
     
@@ -8648,6 +8654,20 @@ function drawPlan(d, area, view, opts){
     const p2 = planMap(wallId, ds.hoverU, wallDepthIndicator, plan);
     d.line(p1[0], p1[1], p2[0], p2[1], COL.selected, LW.medium);
   }
+  // Grab handles, over the top of everything, and the drag indicator.
+  _planHandles.forEach(h => drawCabDragHandleOnPlan(d, V, h.id, h.bbox));
+  _planHandles.length = 0;
+  if(state.ui.drag && state.ui.drag.active && state.ui.drag.pending && !compact){
+    const ds = state.ui.drag;
+    const tU = (ds.targetU != null) ? ds.targetU : (ds.hoverU - (ds.pending.grabDU || 0));
+    const cab = findCabById(ds.pending.cabId);
+    const dep = (ds.pending.row === 'wallRow' ? 320 : 560) + CONST.FRONT_PROJ;
+    [tU, tU + (cab ? cab.W : 0)].forEach((uu, i)=>{
+      const p1 = planMap(ds.pending.wallId, uu, 0, plan);
+      const p2 = planMap(ds.pending.wallId, uu, dep, plan);
+      d.line(p1[0], p1[1], p2[0], p2[1], COL.selected, i ? LW.thin : LW.medium);
+    });
+  }
   if(!compact) drawMeasurements(d, V);
   return { ox, oy, s };
 }
@@ -8700,9 +8720,9 @@ function drawIslandElevation(d, area){
 
   // TITLE — the island sheet previously had no heading at all, unlike every
   // other sheet in the set.
-  d.text(area.x + 2, area.y + 8, '06 · ELEVATION E · KITCHEN ISLAND', { size:11, bold:true, color:COL.brand });
+  d.text(area.x + 2, area.y + 8, '06 · ELEVATION E · FREESTANDING VANITY', { size:11, bold:true, color:COL.brand });
   d.text(area.x + 2, area.y + 13,
-    `${state.project.name}  ·  Island ${isl.length} × ${isl.depth} mm  ·  Scale ${scaleLabelFor('elev-island')}`,
+    `${state.project.name}  ·  Vanity ${isl.length} × ${isl.depth} mm  ·  Scale ${scaleLabelFor('elev-island')}`,
     { size:6.5, color:COL.muted });
   d.line(area.x, area.y + 17, area.x + area.w, area.y + 17, COL.accent, LW.thin);
 
@@ -9383,6 +9403,8 @@ function drawElevation(d, area, wallId, opts){
       drawSanitaryOnElevation(d, cab, x, s, oy, Hm, { outlineCol, outlineLW, tileCol: finishCol });
     }
     _kickCab = null;
+    // The grab handle, for the one that is selected.
+    if(state.ui.selectedCabId === cab.id) drawCabDragHandle(d, x, yTop, cab.W*s, view, cab.id);
     // Hit registration: cabinet bbox in page-mm
     recordHit(view, cab.id, x, yTop, x + cab.W*s, yTop + cab.H*s, wallId);
     u += cab.W;
@@ -9603,12 +9625,14 @@ function drawElevation(d, area, wallId, opts){
       drawAccessoryOnElevation(d, cab, x, y, s,
         { outlineCol: isSel ? COL.selected : COL.ink, outlineLW: isSel ? LW.medium : LW.thin,
           recess: cabTakesRecess(cab) ? cabRecess(cab) : 0 });
+      if(isSel) drawCabDragHandle(d, x, y, cab.W*s, view, cab.id);
       recordHit(view, cab.id, x, y, x + cab.W*s, y + cab.H*s, wallId);
       wu += cab.W;
       _rightAdjWall();
       return;
     }
     d.rect(x, y, cab.W*s, cab.H*s, finishCol, isSel ? COL.selected : COL.ink, isSel ? LW.medium : LW.thin);
+    if(isSel) drawCabDragHandle(d, x, y, cab.W*s, view, cab.id);
     // Pelmets are collected here and drawn as one board per run once the wall is
     // laid out — see _pelmetBands below.
     collectPelmets(_pelmetBands, cab, x, y, cab.W*s, cab.H*s, s);
@@ -9925,6 +9949,28 @@ function drawElevation(d, area, wallId, opts){
       d.line(it.x + 2*s, it.y + t, it.x + t, it.y + 2*s, '#FFFFFF', LW.hairline);
     }
   });
+
+  // Where the item being dragged is going: the line marks its left edge, not
+  // the cursor — those differ the moment it is grabbed anywhere but its end.
+  if(state.ui.drag && state.ui.drag.active && state.ui.drag.pending
+     && state.ui.drag.pending.view === view){
+    const ds = state.ui.drag;
+    const tU = (ds.targetU != null) ? ds.targetU : (ds.hoverU - (ds.pending.grabDU || 0));
+    const xL = ox + tU*s;
+    d.line(xL, oy, xL, oy + Hm*s, COL.selected, LW.medium);
+    const cab = findCabById(ds.pending.cabId);
+    const _r = dragRowOf(ds.pending);
+    if(cab){
+      d.line(xL + cab.W*s, oy, xL + cab.W*s, oy + Hm*s, COL.selected, LW.thin);
+      if(_r){
+        const i = _r.arr.indexOf(cab);
+        const gap = (i >= 0) ? Math.round(tU - runUpTo(_r.arr, i, _r.startOff)) : 0;
+        const txt = Math.round(tU) + ' mm' + (gap > 0 ? '   ·   ' + gap + ' gap' : '   ·   flush');
+        d.rect(xL + 2, oy + 2, textWidthMM(txt, 6) + 4, 8, '#FFFFFF', COL.selected, LW.thin);
+        d.text(xL + 4, oy + 7.4, txt, { size:6, color:COL.selected, bold:true });
+      }
+    }
+  }
 
   // Taps last of all — nothing on this wall stands in front of one. In a
   // bathroom that includes the mirror: the mirror is behind the basin tap, so
@@ -11035,8 +11081,8 @@ const SHEETS_HEAD = [
   { view:'draw',        title:'DRAW',                              canvas:null,          indexTitle:'Site measure', noSheet:true },
   { view:'cover',       title:'COVER',                             canvas:'cCover',      indexTitle:'Cover' },
   { view:'summary',     title:'PROJECT SUMMARY',                   canvas:'cSummary',    indexTitle:'Summary' },
-  { view:'plan',        title:'FLOOR PLAN — FIXTURES', canvas:'cPlan',       indexTitle:'Floor plan — base only' },
-  { view:'plan-base',   title:'FLOOR PLAN — with wall units & mirrors',  canvas:'cPlanBase',   indexTitle:'Floor plan — with wall cupboards' },
+  { view:'plan',        title:'FLOOR PLAN — FIXTURES', canvas:'cPlan',       indexTitle:'Floor plan — fixtures' },
+  { view:'plan-base',   title:'FLOOR PLAN — with wall units & mirrors',  canvas:'cPlanBase',   indexTitle:'Floor plan — with wall units & mirrors' },
 ];
 // The kitchen's elevations are generated from its wall list, so a plan traced
 // from a site measure gets one sheet per wall however many it has. The four
@@ -11056,7 +11102,7 @@ function kitchenElevSheets(){
       wallId: w.id,
     };
   });
-  out.push({ view:'elev-island', title:'KITCHEN ISLAND', canvas:'cElevIsland',
+  out.push({ view:'elev-island', title:'FREESTANDING VANITY', canvas:'cElevIsland',
              indexTitle:'Freestanding vanity elevation', needsIsland:true });
   return out;
 }
@@ -11282,58 +11328,172 @@ function clientToPageMM(canvas, clientX, clientY){
   return { x: xm, y: ym };
 }
 
+// How close a dragged item has to come before its gap closes up.
+function snapTolerance(){
+  const v = state.drawStyle ? state.drawStyle.snapTol : undefined;
+  return (v === undefined || v === null) ? 50 : Math.max(0, v);
+}
+// Where a run has got to by the time it reaches index idx.
+function runUpTo(arr, idx, startOff){
+  let u = startOff || 0;
+  for(let k = 0; k < idx; k++){
+    const a = arr[k].adj || {};
+    u += ((a.left  && ((a.left.filler  || 0) + (a.left.panel  || 0))) || 0)
+       + arr[k].W
+       + ((a.right && ((a.right.filler || 0) + (a.right.panel || 0))) || 0);
+  }
+  return u;
+}
+// The left edge of an item's carcass along the wall — what a drag moves to, so
+// it is also what a grab is measured against.
+function cabLeftU(cab, arr, startOff){
+  const i = (arr || []).indexOf(cab);
+  if(i < 0) return startOff || 0;
+  const L = (cab.adj && cab.adj.left) || {};
+  return runUpTo(arr, i, startOff) + (L.filler || 0) + (L.panel || 0);
+}
+// Where a point on a view falls along the wall, in millimetres.
+function viewUAt(view, wallId, px, py){
+  if(view && view.startsWith('elev-')){
+    const o = state._viewOrigin ? state._viewOrigin[view] : null;
+    return o ? Math.max(0, (px - o.ox) / o.s) : 0;
+  }
+  return computeWallU(wallId, px, py);
+}
+// The row a drag is working on, where it starts, and where it has to stop.
+function dragRowOf(pending){
+  if(!pending) return null;
+  if(pending.wallId === 'island'){
+    return { arr: (state.island && state.island.baseRow) || [], startOff: 0,
+             endOff: (state.island && state.island.length) || null };
+  }
+  const fw = findWallForCab(pending.cabId);
+  const w = fw ? fw.wall : getWall(pending.wallId);
+  if(!w) return null;
+  return { arr: w[pending.row] || [],
+           startOff: runStartOffset(w, pending.row === 'wallRow' ? 'wall' : 'base'),
+           endOff: wallLength(w.id) };
+}
+// Put an item down where it was dropped, keeping the gap in front of it, and
+// closing that gap only when it comes within the snap distance. Returns how far
+// it moved, so anything grouped with it can follow.
+function positionCabAt(cab, arr, startOff, hoverU, endOff){
+  if(!cab || !Array.isArray(arr)) return 0;
+  const i = arr.indexOf(cab);
+  if(i < 0) return 0;
+  if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
+  if(!cab.adj.left) cab.adj.left = { filler:0, panel:0 };
+  const panel = cab.adj.left.panel || 0;
+  const before = runUpTo(arr, i, startOff);
+  let gap = Math.round(hoverU - before - panel);
+  if(gap < snapTolerance()) gap = 0;
+  gap = Math.max(0, gap);
+  // It cannot be dragged off the end of the wall it is standing on.
+  if(endOff != null) gap = Math.min(gap, Math.max(0, endOff - before - panel - cab.W));
+  const was = cab.adj.left.filler || 0;
+  cab.adj.left.filler = gap;
+  // A break is a gap, not a filler panel to be made. A scribe set by hand keeps
+  // its kind — dragging is not the place to reclassify it.
+  if(gap > 0 && cab.adj.left.kind !== 'filler') cab.adj.left.kind = 'space';
+  return gap - was;
+}
+// Anything grouped with it slides the same distance.
+function slideGroupBy(cab, delta){
+  if(!cab || !cab.groupId || !delta) return;
+  const seen = new Set([cab]);
+  const slide = rowArr => (rowArr || []).forEach(c=>{
+    if(seen.has(c) || c.groupId !== cab.groupId) return;
+    seen.add(c);
+    if(!c.adj) c.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
+    if(!c.adj.left) c.adj.left = { filler:0, panel:0 };
+    c.adj.left.filler = Math.max(0, (c.adj.left.filler || 0) + delta);
+    if(c.adj.left.kind !== 'filler') c.adj.left.kind = 'space';
+  });
+  allWallSets().forEach(({ walls })=> (walls || []).forEach(w=>{ slide(w.baseRow); slide(w.wallRow); }));
+  if(state.island && state.island.baseRow) slide(state.island.baseRow);
+}
+// Grab handles for the selected item, so it can be taken hold of at a known
+// point rather than wherever the cursor happened to land on it.
+const cabHandleRegistry = {};
+// Plan handles are gathered while the rows draw and painted at the end, so a
+// later row cannot cover the handle of an earlier one.
+const _planHandles = [];
+function recordCabHandle(view, cabId, x, y, w, h){
+  if(!view) return;
+  (cabHandleRegistry[view] = cabHandleRegistry[view] || [])
+    .push({ cabId, b:[x, y, x + w, y + h] });
+}
+function clearCabHandles(view){ if(view) cabHandleRegistry[view] = []; }
+function findCabHandleAt(view, x, y){
+  const list = cabHandleRegistry[view] || [];
+  for(let i = list.length - 1; i >= 0; i--){
+    const b = list[i].b;
+    if(x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return list[i];
+  }
+  return null;
+}
+// The grab bar itself. Only the selected item gets one, so the sheet is not
+// littered with them — and the selection is cleared before a PDF is made, so it
+// never reaches the drawing.
+const DRAG_HANDLE_W = 26, DRAG_HANDLE_H = 6;
+function drawCabDragHandle(d, x, y, w, view, cabId){
+  const hw = Math.min(DRAG_HANDLE_W, Math.max(10, w * 0.6));
+  const hx = x + (w - hw)/2, hy = y - DRAG_HANDLE_H - 1.5;
+  d.rect(hx, hy, hw, DRAG_HANDLE_H, '#FFFFFF', COL.selected, LW.thin);
+  for(let i = -1; i <= 1; i++){
+    const gx = hx + hw/2 + i*3;
+    d.line(gx, hy + 1.6, gx, hy + DRAG_HANDLE_H - 1.6, COL.selected, LW.thin);
+  }
+  // A generous target — the bar is small on a busy sheet.
+  recordCabHandle(view, cabId, hx - 3, hy - 3, hw + 6, DRAG_HANDLE_H + 6);
+}
+// On the plan a wall can run at any angle, so the handle goes at the middle of
+// the item's own footprint rather than above it.
+function drawCabDragHandleOnPlan(d, view, cabId, bbox){
+  const cx = (bbox[0] + bbox[2]) / 2, cy = (bbox[1] + bbox[3]) / 2;
+  const hw = DRAG_HANDLE_W * 0.62, hh = DRAG_HANDLE_H * 1.15;
+  d.rect(cx - hw/2, cy - hh/2, hw, hh, '#FFFFFF', COL.selected, LW.thin);
+  for(let i = -1; i <= 1; i++)
+    d.line(cx + i*3, cy - hh/2 + 1.4, cx + i*3, cy + hh/2 - 1.4, COL.selected, LW.thin);
+  recordCabHandle(view, cabId, cx - hw/2 - 3, cy - hh/2 - 3, hw + 6, hh + 6);
+}
 // Live reorder during drag — splices the cab to the slot under cursor on every mousemove
 // so the cab visibly moves with the cursor.
 function _liveReorderCab(){
   const ds = state.ui.drag;
   if(!ds || !ds.active || !ds.pending) return;
-  let arr, startOff = 0;
-  if(ds.pending.wallId === 'island'){
-    arr = (state.island && state.island.baseRow) || [];
-  } else {
-    // Resolve via the cabinet, so a pantry cab is found in the pantry's walls.
-    const _fw = findWallForCab(ds.pending.cabId);
-    const w = _fw ? _fw.wall : getWall(ds.pending.wallId);
-    if(w){ arr = w[ds.pending.row]; startOff = runStartOffset(w, ds.pending.row === 'wallRow' ? 'wall' : 'base'); }
-  }
+  const _row = dragRowOf(ds.pending);
+  if(!_row) return;
+  const arr = _row.arr, startOff = _row.startOff;
   if(!arr || !arr.length) return;
   // Find by REFERENCE first (most robust), then by ID as fallback.
   let oldIdx = ds.pending.cabRef ? arr.indexOf(ds.pending.cabRef) : -1;
   if(oldIdx < 0) oldIdx = arr.findIndex(c => c.id === ds.pending.cabId);
   if(oldIdx < 0) return;
   const cab = arr[oldIdx];
+  // Where its left edge is being asked to go, allowing for where it was taken
+  // hold of.
+  const targetU = ds.hoverU - (ds.pending.grabDU || 0);
   arr.splice(oldIdx, 1);
   let u = startOff;
   let newIdx = arr.length;
+  // It changes places with another when its own middle passes that one's
+  // middle — comparing the cursor against them made the order flip early or
+  // late depending on where the item had been grabbed.
+  const mid = targetU + cab.W/2;
   for(let i = 0; i < arr.length; i++){
     const lf = (arr[i].adj?.left?.filler || 0) + (arr[i].adj?.left?.panel || 0);
     const rt = (arr[i].adj?.right?.filler || 0) + (arr[i].adj?.right?.panel || 0);
     const slotMid = u + lf + arr[i].W/2;
-    if(ds.hoverU < slotMid){ newIdx = i; break; }
+    if(mid < slotMid){ newIdx = i; break; }
     u += lf + arr[i].W + rt;
   }
   arr.splice(newIdx, 0, cab);
-
-  if(isSanitary(cab)){
-    // Where everything before it ends.
-    let prevEnd = startOff;
-    for(let i = 0; i < newIdx; i++){
-      const a = arr[i].adj || {};
-      prevEnd += (a.left?.filler || 0) + (a.left?.panel || 0) + arr[i].W
-               + (a.right?.filler || 0) + (a.right?.panel || 0);
-    }
-    if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
-    if(!cab.adj.left) cab.adj.left = { filler:0, panel:0 };
-    const panel = cab.adj.left.panel || 0;
-    // Centre it on the cursor, then keep it on the wall and clear of its
-    // neighbour — the gap can open but it cannot go negative.
-    const wallLen = (ds.pending.wallId === 'island')
-      ? ((state.island && state.island.length) || 0) : wallLength(ds.pending.wallId);
-    const want = ds.hoverU - cab.W / 2;
-    const maxGap = Math.max(0, wallLen - prevEnd - panel - cab.W);
-    cab.adj.left.filler = Math.round(Math.max(0, Math.min(maxGap, want - prevEnd - panel)) / 5) * 5;
-    cab.adj.left.kind = 'space';
-  }
+  // And leave it where the cursor actually is, so a gap opens up as it is
+  // dragged rather than snapping shut the moment the order settles. This is
+  // what lets a lone bath move at all — there is nothing to swap it with.
+  slideGroupBy(cab, positionCabAt(cab, arr, startOff, targetU, _row.endOff));
+  ds.targetU = targetU;
 }
 
 // Commit cab drag — live reorder already placed the cab. Just clear drag state.
@@ -11342,7 +11502,7 @@ function _commitCabDrag(){
   if(!ds || !ds.active || !ds.pending) return false;
   // One last reorder pass at the final cursor position (safety net).
   _liveReorderCab();
-  ds.pending = null; ds.active = false;
+  ds.pending = null; ds.active = false; ds.targetU = null;
   return true;
 }
 // Window-level mouseup catches releases outside any canvas.
@@ -11435,12 +11595,27 @@ function wireViewport(canvas){
         const cab = findCabById(dh.cabId);
         if(cab){ e.preventDefault(); showDimNoteEditor(canvas, cab, (dh.bbox[0]+dh.bbox[2])/2, dh.bbox[1]); return; }
       }
-      const hit = findCabAt(_view, p.x, p.y);
+      // The grab handle on the selected item comes first: it sits over the
+      // item, where a click would otherwise fall through to whatever is under.
+      const gh = findCabHandleAt(_view, p.x, p.y);
+      const hit = gh ? (findCabAt(_view, p.x, p.y) || { cabId: gh.cabId, wallId: state.ui.activeWall })
+                     : findCabAt(_view, p.x, p.y);
+      if(gh && hit) hit.cabId = gh.cabId;
+      // Where the last drag finished is nothing to do with this one. Left set,
+      // it puts the indicator line at the previous item's resting place until
+      // the first mousemove works out the real one.
+      state.ui.drag.targetU = null;
       if(hit){
         if(hit.wallId === 'island'){
           const arr = (state.island && state.island.baseRow) || [];
           const cabRef = arr.find(c => c.id === hit.cabId);
-          if(cabRef) state.ui.drag.pending = { cabId: hit.cabId, cabRef, wallId: 'island', row: 'islandRow', startX: e.clientX, startY: e.clientY, view: _view };
+          if(cabRef){
+            const pend = { cabId: hit.cabId, cabRef, wallId: 'island', row: 'islandRow',
+              startX: e.clientX, startY: e.clientY, view: _view };
+            const _r = dragRowOf(pend);
+            if(_r) pend.grabDU = viewUAt(_view, 'island', p.x, p.y) - cabLeftU(cabRef, _r.arr, _r.startOff);
+            state.ui.drag.pending = pend;
+          }
         } else {
           const _fw = findWallForCab(hit.cabId);
           const w = _fw ? _fw.wall : getWall(hit.wallId);
@@ -11448,7 +11623,20 @@ function wireViewport(canvas){
             let row = null, cabRef = null;
             if(w.baseRow.find(c=>c.id===hit.cabId)){ row = 'baseRow'; cabRef = w.baseRow.find(c=>c.id===hit.cabId); }
             else if(w.wallRow.find(c=>c.id===hit.cabId)){ row = 'wallRow'; cabRef = w.wallRow.find(c=>c.id===hit.cabId); }
-            if(row && cabRef){ state.ui.drag.pending = { cabId: hit.cabId, cabRef, wallId: hit.wallId, row, startX: e.clientX, startY: e.clientY, view: _view }; }
+            if(row && cabRef){
+              const pend = { cabId: hit.cabId, cabRef, wallId: hit.wallId, row,
+                startX: e.clientX, startY: e.clientY, view: _view };
+              // Keep hold of the point that was grabbed, so the item moves with
+              // the cursor instead of leaping its left edge to it. Taking it by
+              // the handle grabs it dead centre.
+              const _r = dragRowOf(pend);
+              if(_r){
+                const uAt = gh ? (cabLeftU(cabRef, _r.arr, _r.startOff) + cabRef.W/2)
+                               : viewUAt(_view, hit.wallId, p.x, p.y);
+                pend.grabDU = uAt - cabLeftU(cabRef, _r.arr, _r.startOff);
+              }
+              state.ui.drag.pending = pend;
+            }
           }
         }
       }
@@ -11589,22 +11777,26 @@ function wireViewport(canvas){
         const oldIdx = arr.indexOf(ds.pending.cabRef);
         const cab = oldIdx >= 0 ? arr[oldIdx] : null;
         if(cab){
-          // SWAP MODE: if there are other cabs in the row, reorder by index swap.
-          // POSITION MODE: if this is the only cab in the row, treat the drag as a
-          // free position adjustment — update cab.adj.left.filler so it sits at hoverU.
-          if(arr.length > 1){
+          // Order first — an item dragged past another changes places with it —
+          // then position, so it comes to rest where it was dropped rather than
+          // being sucked flush against its neighbour.
+          const _tU = ds.hoverU - (ds.pending.grabDU || 0);
+          if(arr.length >= 1){
             arr.splice(oldIdx, 1);
             let u = startOff;
             let newIdx = arr.length;
+            const _mid = _tU + cab.W/2;
             for(let i = 0; i < arr.length; i++){
               const lf = (arr[i].adj?.left?.filler || 0) + (arr[i].adj?.left?.panel || 0);
               const rt = (arr[i].adj?.right?.filler || 0) + (arr[i].adj?.right?.panel || 0);
               const slotMid = u + lf + arr[i].W/2;
-              if(ds.hoverU < slotMid){ newIdx = i; break; }
+              if(_mid < slotMid){ newIdx = i; break; }
               u += lf + arr[i].W + rt;
             }
             arr.splice(newIdx, 0, cab);
-          } else {
+            const _r2 = dragRowOf(ds.pending);
+            slideGroupBy(cab, positionCabAt(cab, arr, startOff, _tU, _r2 ? _r2.endOff : null));
+          } else if(false){
             // Solo cab — position via INVISIBLE gap (no filler panel drawn).
             if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
             if(!cab.adj.left) cab.adj.left = { filler:0, panel:0 };
@@ -11635,7 +11827,7 @@ function wireViewport(canvas){
       } catch(err){
         console.error('[Bathroom drag] mouseup error', err);
       }
-      ds.pending = null; ds.active = false;
+      ds.pending = null; ds.active = false; ds.targetU = null;
       canvas.style.cursor = '';
       renderCabinetList(); renderActive();
       return;
@@ -17170,30 +17362,38 @@ function reseedIdCounters(){
   // Pantry cabinets share the same id space as the kitchen's.
   const _pantryWalls = roomsList().reduce((a, r) => a.concat(r.walls || []), []);
   const _islandCabs = (state.island && Array.isArray(state.island.baseRow)) ? state.island.baseRow : [];
+  // An id is minted as 'c' + a decimal count + '_' + a random suffix, so it is
+  // read back the same way. Read base 36 — as this once did — and the count
+  // climbs every time a drawing is opened and saved: c12_ab comes back as 38,
+  // then 116, then 1338, until it passes what a whole number can hold and stops
+  // counting up at all.
+  const idNum = (id, prefix) => {
+    const m = String(id || '').match(new RegExp('^' + prefix + '(\\d+)'));
+    if(!m) return NaN;
+    return parseInt(m[1], 10);
+  };
   (state.walls || []).concat(_pantryWalls).forEach(w => {
     [w.baseRow, w.wallRow].forEach(arr => (arr || []).forEach(c => {
-      const m = String(c.id || '').match(/^c(.*)$/);
-      if(m){
-        const n = parseInt(m[1], 36);
-        if(!isNaN(n)) maxC = Math.max(maxC, n);
-      }
+      const n = idNum(c.id, 'c');
+      if(!isNaN(n)) maxC = Math.max(maxC, n);
     }));
     (w.openings || []).forEach(op => {
-      const m = String(op.id || '').match(/^op(.*)$/);
-      if(m){
-        const n = parseInt(m[1], 36);
-        if(!isNaN(n)) maxOp = Math.max(maxOp, n);
-      }
+      const n = idNum(op.id, 'op');
+      if(!isNaN(n)) maxOp = Math.max(maxOp, n);
     });
   });
   // Scan island cabs too so nextCabId is above any existing island IDs
   _islandCabs.forEach(c => {
-    const m = String(c.id || '').match(/^c(.*)$/);
-    if(m){
-      const n = parseInt(m[1], 36);
-      if(!isNaN(n)) maxC = Math.max(maxC, n);
-    }
+    const n = idNum(c.id, 'c');
+    if(!isNaN(n)) maxC = Math.max(maxC, n);
   });
+  // A drawing saved while the count was runaway carries an unusable number in
+  // its ids. Start again from the number of items there are — the ids in the
+  // file keep their own text, and the dedupe pass below settles any clash.
+  if(!Number.isSafeInteger(maxC)) maxC = 0;
+  if(!Number.isSafeInteger(maxOp)) maxOp = 0;
+  if(!Number.isSafeInteger(nextCabId)) nextCabId = 1;
+  if(!Number.isSafeInteger(nextOpId)) nextOpId = 1;
   nextCabId = Math.max(nextCabId || 1, maxC + 1);
   nextOpId  = Math.max(nextOpId  || 1, maxOp + 1);
   // Dedupe any duplicate IDs already in state.
