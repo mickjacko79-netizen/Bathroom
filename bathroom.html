@@ -1402,6 +1402,12 @@ function drawWallTiling(d, ox, oy, wL, Hm, s){
       { size:3.8, color:COL.muted, align:'right' });
   }
 }
+// True when the wall is already tiled edge to edge, so a band over the bench
+// would only lay a second grid over the first.
+function wallAlreadyTiled(){
+  const sp = state.splashback || {};
+  return sp.fullWalls !== false && !!sp.type && sp.type !== 'none';
+}
 function drawSplashbackBand(d, x, y, w, h){
   if(h <= 0) return;
   const sp = state.splashback || {};
@@ -6515,6 +6521,7 @@ function bathTapU(cab){
   const c = cab.config || {};
   const end = c.tapEnd || ((c.wasteEnd === 'L' || c.wasteEnd === 'R') ? c.wasteEnd : 'L');
   const inset = (c.style === 'freestanding') ? 205 : (c.hobW || 75) + 130;
+  if(end === 'C') return cab.W / 2;
   return end === 'R' ? cab.W - inset : inset;
 }
 // The floor waste that goes in beside a bath, as a fraction along its length.
@@ -6617,7 +6624,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       d.polygon(P(ellipseUV(cu, 40 + bd/2, 90, 90)), null, COL.ink3, LW.hairline);
       d.dashed(false);
     }
-    if((c.tapMode || 'deck') === 'deck') d.circle(...planMap(wallId, uOff + cu, 55, plan), 2.6, SAN.metal, COL.ink2, LW.hairline);
+    if((c.tapMode || 'deck') === 'deck') drawTapOnPlan(d, wallId, plan, uOff + cu, 62, 'gooseneck');
     return;
   }
 
@@ -6663,15 +6670,35 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
     } else {
       d.polygon(P(roundRectUV(cu-50, D/2-50, cu+50, D/2+50, 8)), '#E7ECEE', COL.ink2, LW.thin);
     }
-    // Fall arrows towards the waste.
-    const fallV = ((c.waste||'linear') === 'linear' && c.wasteAt !== 'entry') ? 90 : D/2;
-    [0.28, 0.72].forEach(f=>{
-      const a = planMap(wallId, uOff + W*f, D - 140, plan);
-      const b = planMap(wallId, uOff + W*f, fallV + 60, plan);
-      d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
-      d.line(b[0], b[1], b[0]-2, b[1]+4, COL.ink3, LW.hairline);
-      d.line(b[0], b[1], b[0]+2, b[1]+4, COL.ink3, LW.hairline);
-    });
+    // Falls. One from each corner of the tray to the waste, which is how the
+    // grade is actually set out and how a waterproofer reads it. Kept light and
+    // dashed so they sit behind the fixture rather than competing with it.
+    (function(){
+      const linear = (c.waste || 'linear') === 'linear';
+      const wasteV = linear ? ((c.wasteAt === 'entry') ? D - 120 : 90) : D / 2;
+      const wasteU = W / 2;
+      const inset = 60;
+      d.dashed(true);
+      [[inset, inset], [W - inset, inset], [W - inset, D - inset], [inset, D - inset]].forEach(([cu0, cv0])=>{
+        const dx = wasteU - cu0, dv = wasteV - cv0;
+        const len = Math.hypot(dx, dv);
+        if(len < 80) return;
+        // Stop short of the waste so four arrowheads do not pile up on it.
+        const t = Math.max(0, (len - 70) / len);
+        const eu = cu0 + dx * t, ev = cv0 + dv * t;
+        const a = planMap(wallId, uOff + cu0, cv0, plan);
+        const b = planMap(wallId, uOff + eu, ev, plan);
+        d.line(a[0], a[1], b[0], b[1], COL.ink4, LW.hairline);
+        // Arrowhead, built in page space off the line's own direction.
+        const ax = b[0] - a[0], ay = b[1] - a[1], al = Math.hypot(ax, ay) || 1;
+        const ux = ax / al, uy = ay / al, px = -uy, py = ux;
+        d.dashed(false);
+        d.line(b[0], b[1], b[0] - ux*3 + px*1.6, b[1] - uy*3 + py*1.6, COL.ink4, LW.hairline);
+        d.line(b[0], b[1], b[0] - ux*3 - px*1.6, b[1] - uy*3 - py*1.6, COL.ink4, LW.hairline);
+        d.dashed(true);
+      });
+      d.dashed(false);
+    })();
     drawShowerScreenOnPlan(d, wallId, uOff, cab, plan);
     const lp = planMap(wallId, uOff + cu, D*0.42, plan);
     d.text(lp[0], lp[1], (c.labelText || 'SHR'), { align:'center', baseline:'middle', size:4.5, color:COL.muted, italic:true });
@@ -6780,10 +6807,10 @@ function drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D){
   d.circle(wp[0], wp[1], 2.4, null, COL.ink2, LW.hairline);
   d.line(wp[0] - 1.7, wp[1], wp[0] + 1.7, wp[1], COL.ink2, LW.hairline);
   d.line(wp[0], wp[1] - 1.7, wp[0], wp[1] + 1.7, COL.ink2, LW.hairline);
-  if((c.tapMode || 'wall') === 'wall'){
-    const tv = (c.style === 'freestanding') ? 60 : Math.min(60, (c.hobW || 75) * 0.7);
-    const tp = planMap(wallId, uOff + bathTapU(cab), tv, plan);
-    d.circle(tp[0], tp[1], 2.6, SAN.metal, COL.ink2, LW.hairline);
+  if(c.tapMode !== 'floor'){
+    // Far enough off the wall face that the lever has somewhere to lie back to.
+    const tv = (c.style === 'freestanding') ? 75 : Math.max(55, (c.hobW || 75) * 0.75);
+    drawTapOnPlan(d, wallId, plan, uOff + bathTapU(cab), tv, 'gooseneck');
   }
   // The floor waste sits on the floor beside the bath, not in it, so it is
   // drawn clear of the fixture and tagged the way a plumber reads it.
@@ -9103,9 +9130,11 @@ function drawElevation(d, area, wallId, opts){
           const _yBench = oy + (Hm - benchTopY)*s;
           benchHatch(d, cx, _yBench, leg*s, _benchT*s, state.bench.material);
           d.rect(cx, _yBench, leg*s, _benchT*s, null, COL.ink, LW.thin);
-          if(state.bench.splashback > 0){
+          if(state.bench.splashback > 0 && !wallAlreadyTiled()){
             const _ySpl = _yBench - state.bench.splashback*s;
-            drawSplashbackBand(d, cx, _ySpl, leg*s, state.bench.splashback*s);
+            _tileSetout = true;
+            try { drawSplashbackBand(d, cx, _ySpl, leg*s, state.bench.splashback*s); }
+            finally { _tileSetout = false; }
           }
         }
       });
@@ -9118,9 +9147,11 @@ function drawElevation(d, area, wallId, opts){
     const yBench = oy + (Hm - benchTopY)*s;
     benchHatch(d, x, yBench, seg.length*s, benchT*s, state.bench.material);
     d.rect(x, yBench, seg.length*s, benchT*s, null, COL.ink, LW.thin);
-    if(state.bench.splashback > 0){
+    if(state.bench.splashback > 0 && !wallAlreadyTiled()){
       const ySpl = yBench - state.bench.splashback*s;
-      drawSplashbackBand(d, x, ySpl, seg.length*s, state.bench.splashback*s);
+      _tileSetout = true;
+      try { drawSplashbackBand(d, x, ySpl, seg.length*s, state.bench.splashback*s); }
+      finally { _tileSetout = false; }
     }
   });
   // Re-draw windows ON TOP of the splashback so a window placed behind the
@@ -9159,7 +9190,9 @@ function drawElevation(d, area, wallId, opts){
     }
     const x = ox + wu*s;
     // Fridge-wall sits on top of the fridge (custom bottom Y), not at the standard wall-cab height.
-    const _cabFloorY = (hasBottomOverride(cab) && cab.config && cab.config.cabBottomY) ? cab.config.cabBottomY : wallBottomY;
+    const _cabFloorY = (hasBottomOverride(cab) && cab.config && cab.config.cabBottomY)
+      ? cab.config.cabBottomY
+      : Math.min(wallBottomY, Math.max(0, Hm - cab.H - pelmetUnderH(cab) - 50));
     // A pelmet hangs off the carcass down to the top of the splashback, so the
     // carcass itself sits that much higher — the fascia closes the gap rather
     // than dropping into the splash.
@@ -11673,7 +11706,7 @@ function renderEditPanel(){
       pick('Tapware', 'tapMode', [['wall','Wall mounted'],['deck','Deck / hob mounted'],['floor','Floor mounted']]);
       pick('Waste position', 'wasteEnd',
         [['C','Centre'],['L','Left end'],['R','Right end'],['OC','Offset centre']]);
-      pick('Tapware end', 'tapEnd', [['L','Left'],['R','Right']]);
+      pick('Tapware position', 'tapEnd', [['L','Left end'],['C','Centre'],['R','Right end']]);
       check('Floor waste beside the bath', 'floorWaste');
       if(c.floorWaste)
         pick('Floor waste at', 'floorWasteAt',
