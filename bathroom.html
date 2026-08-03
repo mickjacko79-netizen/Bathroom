@@ -991,7 +991,11 @@ const CATALOG = {
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
     defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, tapMode:'deck', labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
-    defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050, wasteEnd:'L', labelText:'' } },
+    defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050,
+                    // wasteEnd: 'L' | 'C' | 'R' | 'OC' (offset centre), matching
+                    // the way the position is published. tapEnd is separate —
+                    // a central waste says nothing about which end the tap is.
+                    wasteEnd:'C', tapEnd:'L', floorWaste:false, floorWasteAt:'foot', labelText:'' } },
   'shower':      { label:'Shower',                  defaultW:900, H:2000, D:900, row:'base', hasShelves:false,
     defaultConfig:{ screenType:'panel-door', glassT:10, screenH:2000, frame:'frameless',
                     screenFinish:'matt-black', entryW:600, returnW:400, hinge:'R', swing:'out',
@@ -6416,6 +6420,12 @@ function applyCaromaProduct(cab, key){
   } else if(cab.type === 'bath'){
     if(p.style) c.style = (p.style === 'inset') ? 'inset' : 'freestanding';
     c.rimH = Math.round(p.H);
+    if(p.waste){
+      const w = String(p.waste).toLowerCase();
+      c.wasteEnd = w.indexOf('off') >= 0 ? 'OC'
+                 : w.indexOf('centre') >= 0 ? 'C'
+                 : w.indexOf('end') >= 0 ? 'L' : c.wasteEnd;
+    }
   }
   // The schedule reads brand and model off the appliance role, so set them
   // there rather than inventing a second place for the same fact.
@@ -6486,6 +6496,36 @@ function roundPoly(pts, r, steps){
   }
   return out;
 }
+// Where a bath's waste sits along its length, in fixture-local millimetres.
+// Centre is the commonest position on a freestanding bath and the one most of
+// the Caroma range publishes, so it is the default.
+function bathWasteU(cab){
+  const c = cab.config || {};
+  const W = cab.W, inset = (c.style === 'freestanding') ? 205 : (c.hobW || 75) + 130;
+  switch(c.wasteEnd || 'C'){
+    case 'L':  return inset;
+    case 'R':  return W - inset;
+    case 'OC': return W * 0.5 - Math.min(220, W * 0.13);   // offset from centre
+    default:   return W / 2;
+  }
+}
+// Which end the tapware is on. Falls back to the waste end where that is an end,
+// so an existing job that only said 'L' or 'R' keeps its tap where it was.
+function bathTapU(cab){
+  const c = cab.config || {};
+  const end = c.tapEnd || ((c.wasteEnd === 'L' || c.wasteEnd === 'R') ? c.wasteEnd : 'L');
+  const inset = (c.style === 'freestanding') ? 205 : (c.hobW || 75) + 130;
+  return end === 'R' ? cab.W - inset : inset;
+}
+// The floor waste that goes in beside a bath, as a fraction along its length.
+function bathFloorWasteU(cab){
+  const c = cab.config || {};
+  switch(c.floorWasteAt || 'foot'){
+    case 'head':   return cab.W * 0.12;
+    case 'middle': return cab.W * 0.5;
+    default:       return cab.W * 0.88;
+  }
+}
 // Points around an ellipse, in fixture-local (u,v) millimetres.
 function ellipseUV(cu, cv, ru, rv, steps){
   const pts = [];
@@ -6538,15 +6578,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       const tp = planMap(wallId, uOff + cu, (c.panD || cab.D) + 70, plan);
       d.text(tp[0], tp[1], 'SO ' + (c.setOut || 140), { align:'center', size:4.5, color:COL.muted });
     } else if(cab.type === 'bath'){
-      const wu = (c.wasteEnd === 'R') ? W - 205 : 205;
-      const wp = planMap(wallId, uOff + wu, D / 2, plan);
-      d.circle(wp[0], wp[1], 2.4, null, COL.ink2, LW.hairline);
-      d.line(wp[0] - 1.7, wp[1], wp[0] + 1.7, wp[1], COL.ink2, LW.hairline);
-      d.line(wp[0], wp[1] - 1.7, wp[0], wp[1] + 1.7, COL.ink2, LW.hairline);
-      if((c.tapMode || 'wall') === 'wall'){
-        const tp = planMap(wallId, uOff + wu, 60, plan);
-        d.circle(tp[0], tp[1], 2.6, SAN.metal, COL.ink2, LW.hairline);
-      }
+      drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D);
     }
     return;
   }
@@ -6601,16 +6633,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       d.polygon(P(roundRectUV(hob, ins, W-hob, D-hob, 90)), '#FFFFFF', COL.ink2, LW.thin);
       d.polygon(P(roundRectUV(hob+70, ins+55, W-hob-70, D-hob-55, 70)), SAN.water, COL.ink3, LW.hairline);
     }
-    // Waste + overflow at the tap end.
-    const wu = (c.wasteEnd === 'R') ? W - hob - 130 : hob + 130;
-    const wp = planMap(wallId, uOff + wu, D/2, plan);
-    d.circle(wp[0], wp[1], 2.4, null, COL.ink2, LW.hairline);
-    d.line(wp[0]-1.7, wp[1], wp[0]+1.7, wp[1], COL.ink2, LW.hairline);
-    d.line(wp[0], wp[1]-1.7, wp[0], wp[1]+1.7, COL.ink2, LW.hairline);
-    if((c.tapMode || 'wall') === 'wall'){
-      const tp = planMap(wallId, uOff + wu, Math.min(60, (c.hobW||75) * 0.7), plan);
-      d.circle(tp[0], tp[1], 2.6, SAN.metal, COL.ink2, LW.hairline);
-    }
+    drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D);
     return;
   }
 
@@ -6748,6 +6771,30 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
   }
 }
 
+// A bath's waste, its tap and its optional floor waste, on the plan. Shared, so
+// a bath drawn from a traced product outline and one drawn from the app's own
+// symbol put their plumbing in the same place.
+function drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D){
+  const c = cab.config || {};
+  const wp = planMap(wallId, uOff + bathWasteU(cab), D / 2, plan);
+  d.circle(wp[0], wp[1], 2.4, null, COL.ink2, LW.hairline);
+  d.line(wp[0] - 1.7, wp[1], wp[0] + 1.7, wp[1], COL.ink2, LW.hairline);
+  d.line(wp[0], wp[1] - 1.7, wp[0], wp[1] + 1.7, COL.ink2, LW.hairline);
+  if((c.tapMode || 'wall') === 'wall'){
+    const tv = (c.style === 'freestanding') ? 60 : Math.min(60, (c.hobW || 75) * 0.7);
+    const tp = planMap(wallId, uOff + bathTapU(cab), tv, plan);
+    d.circle(tp[0], tp[1], 2.6, SAN.metal, COL.ink2, LW.hairline);
+  }
+  // The floor waste sits on the floor beside the bath, not in it, so it is
+  // drawn clear of the fixture and tagged the way a plumber reads it.
+  if(c.floorWaste){
+    const fp = planMap(wallId, uOff + bathFloorWasteU(cab), D + 150, plan);
+    d.circle(fp[0], fp[1], 3.4, '#E7ECEE', COL.ink2, LW.thin);
+    d.circle(fp[0], fp[1], 1.5, null, COL.ink3, LW.hairline);
+    d.text(fp[0], fp[1] + 7.5, 'FW', { align:'center', size:4, color:COL.muted });
+  }
+}
+
 // ---- ELEVATION ---------------------------------------------------------
 // x is the fixture's left edge in page-mm; heights come off the floor, which is
 // at oy + Hm*s.
@@ -6770,8 +6817,9 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       d.circle(X(cu), Y((c.cisternH || cab.H) - 70), 7*s, '#F2F2F0', COL.ink2, LW.hairline);
     }
     if(cab.type === 'bath' && (c.tapMode || 'wall') === 'wall'){
-      const rightEnd = (c.wasteEnd === 'R');
-      drawWallSpout(d, X(rightEnd ? cab.W - 260 : 260), Y(c.tapH || 1050), s,
+      const tu = bathTapU(cab);
+      const rightEnd = tu > cab.W / 2;
+      drawWallSpout(d, X(tu), Y(c.tapH || 1050), s,
         { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
     }
     const pr = cabProduct(cab);
@@ -6841,11 +6889,11 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       d.dashed(false);
     }
     if((c.tapMode || 'wall') === 'wall'){
-      const rightEnd = (c.wasteEnd === 'R');
-      const tu = rightEnd ? cab.W - 260 : 260;
+      const tu = bathTapU(cab);
+      const rightEnd = tu > cab.W / 2;
       drawWallSpout(d, X(tu), Y(c.tapH || 1050), s, { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
     } else if((c.tapMode) === 'deck'){
-      drawTapOnElevation(d, X(cu), Y(rimH), s, 'gooseneck');
+      drawTapOnElevation(d, X(bathTapU(cab)), Y(rimH), s, 'gooseneck');
     }
     d.text(X(cu), Y(rimH*0.45), (c.labelText || 'BATH'), { align:'center', baseline:'middle', size:5, color:COL.muted, italic:true });
     return;
@@ -11623,7 +11671,13 @@ function renderEditPanel(){
     } else if(cab.type === 'bath'){
       pick('Type', 'style', [['inset','Inset / drop-in with hob'],['freestanding','Freestanding']]);
       pick('Tapware', 'tapMode', [['wall','Wall mounted'],['deck','Deck / hob mounted'],['floor','Floor mounted']]);
-      pick('Waste end', 'wasteEnd', [['L','Left'],['R','Right']]);
+      pick('Waste position', 'wasteEnd',
+        [['C','Centre'],['L','Left end'],['R','Right end'],['OC','Offset centre']]);
+      pick('Tapware end', 'tapEnd', [['L','Left'],['R','Right']]);
+      check('Floor waste beside the bath', 'floorWaste');
+      if(c.floorWaste)
+        pick('Floor waste at', 'floorWasteAt',
+          [['foot','Foot end'],['head','Head end'],['middle','Midway']]);
       num('Rim height', 'rimH', 400, 800, 5);
       num('Hob width', 'hobW', 0, 300, 5);
       num('Tap height above floor', 'tapH', 600, 1600, 10);
