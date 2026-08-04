@@ -673,7 +673,7 @@ header .project-label .dot.dirty{background:#F7C04A}
             <optgroup label="Bathroom accessories">
               <option value="mirror">Mirror</option>
               <option value="wall">Shaving / wall cabinet</option>
-              <option value="shower-niche">Shower niche</option>
+              <option value="shower-niche">Niche (recessed into the wall)</option>
               <option value="towel-rail">Towel rail</option>
             </optgroup>
             <optgroup label="Joinery">
@@ -1028,8 +1028,11 @@ const CATALOG = {
     defaultConfig:{ cabBottomY:1000, edge:'polished', ledFrame:false, labelText:'' } },
   'towel-rail':  { label:'Towel rail',              defaultW:600, H:120,  D:110, row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1140, heated:false, bars:1, labelText:'' } },
-  'shower-niche':{ label:'Shower niche',            defaultW:600, H:300,  D:100, row:'wall', hasShelves:false,
-    defaultConfig:{ cabBottomY:1100, shelf:false, labelText:'' } },
+  // A niche belongs anywhere there is a wall to form it in — over a bath, beside
+  // a vanity, in a shower. The key stays 'shower-niche' so drawings already
+  // saved still find it.
+  'shower-niche':{ label:'Niche',                   defaultW:600, H:300,  D:65,  row:'wall', hasShelves:false,
+    defaultConfig:{ cabBottomY:1100, shelves:0, labelText:'' } },
 };
 // Shower screens, as they are actually ordered: what is fixed, what opens, and
 // which way. `opening` says whether the type leaves a clear entry to dimension.
@@ -4708,6 +4711,13 @@ function cabTakesRecess(cab){
 function isFlushRecessed(cab){
   return cabTakesRecess(cab) && cabRecess(cab) >= (cab.D || 0) - 0.5;
 }
+// How many shelves are in a niche. It was one shelf or none, held as a boolean;
+// drawings saved that way still read correctly.
+function nicheShelves(cab){
+  const c = (cab && cab.config) || {};
+  if(typeof c.shelves === 'number') return Math.max(0, Math.min(3, Math.round(c.shelves)));
+  return c.shelf ? 1 : 0;
+}
 function isWallHung(cab){ return !!(cab && cab.config && cab.config.mount === 'wall-hung'); }
 // The kick's fill. Nothing under a wall-hung unit, so nothing is painted there.
 function kickFill(){ return isWallHung(_kickCab) ? null : state.kick.color; }
@@ -6375,10 +6385,14 @@ function drawWindowOnPlan(d, wallId, op, plan, wallT){ drawOpeningOnPlan(d, wall
 // Draw door swing arc(s) on the floor plan for cabinet doors.
 // Hinge corners are at the front face (v = cab.D) of the cabinet; doors swing
 // into the room (positive v direction).
-function drawCabinetDoorsOnPlan(d, wallId, uStart, cab, plan){
+// vOff is how far the unit is set back into the wall. The doors hang on the
+// carcass, so they swing off its face wherever that face has got to — pushing a
+// shaving cabinet into the wall used to leave its doors behind at the tiles,
+// hinged on nothing.
+function drawCabinetDoorsOnPlan(d, wallId, uStart, cab, plan, vOff){
   if(!cab || !cab.config) return;
   if(state.drawStyle && state.drawStyle.showCabDoorSwings === false) return;
-  const D = cab.D, G = CONST.GAP || 3;
+  const D = cab.D - (vOff || 0), G = CONST.GAP || 3;
   const angle = (state.drawStyle && state.drawStyle.cabDoorSwingAngle) || 90;
   const θ = Math.max(5, Math.min(120, angle)) * Math.PI / 180;
   function drawOne(uHingeAbs, doorWidth, side){
@@ -7518,7 +7532,13 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     // A recess reads as a recess: the opening solid, the returns hairline.
     d.rect(x, y, W, H, '#F3F5F5', stroke, lw);
     d.rect(x + 16*s, y + 16*s, W - 32*s, H - 32*s, '#E9EDEE', COL.ink3, LW.hairline);
-    if(c.shelf) d.line(x + 16*s, y + H/2, x + W - 16*s, y + H/2, COL.ink2, LW.thin);
+    // Shelves, evenly spaced across the opening. It used to be one shelf or
+    // none, which is not how a tall niche is built.
+    const _ns = nicheShelves(cab);
+    for(let i = 1; i <= _ns; i++){
+      const sy = y + H * (i / (_ns + 1));
+      d.line(x + 16*s, sy, x + W - 16*s, sy, COL.ink2, LW.thin);
+    }
     d.text(x + W/2, y + H + 22*s, (c.labelText || 'NICHE'), { align:'center', size:4, color:COL.muted, italic:true });
     return true;
   }
@@ -8335,13 +8355,20 @@ function drawPlan(d, area, view, opts){
     const wallDepth = (w.wallRow.length ? Math.max(...w.wallRow.map(c=>c.D)) : 320) + CONST.FRONT_PROJ;
     let u = start;
     w.wallRow.forEach(cab=>{
-      if(cab.adj?.left?.filler > 0){
+      // A recessed unit starts inside the wall: its footprint runs from -recess
+      // to depth-recess, so a flush one sits entirely within the wall band. Read
+      // up here because whatever is beside it has to be set back with it.
+      const _rec = cabTakesRecess(cab) ? cabRecess(cab) : 0;
+      // A gap is a gap. The base row has always known that; the wall row drew
+      // one as a solid filler, so dragging a unit along the wall left a slab of
+      // joinery behind it that was never there.
+      if(cab.adj?.left?.filler > 0 && cab.adj.left.kind !== 'space'){
         (function(){ const b = fillerBand(cab.D + CONST.FRONT_PROJ, adjFillerDepth(cab, 'left'));
-          planBandOnWall(d, w.id, u, cab.adj.left.filler, b.v0, b.v1, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
-        u += cab.adj.left.filler;
+          planBandOnWall(d, w.id, u, cab.adj.left.filler, b.v0 - _rec, b.v1 - _rec, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
       }
+      if(cab.adj?.left?.filler > 0) u += cab.adj.left.filler;
       if(cab.adj?.left?.panel > 0){
-        planRectOnWall(d, w.id, u, cab.adj.left.panel, cab.D + CONST.FRONT_PROJ, plan, '#E5DCC4', COL.accent, LW.hairline);
+        planBandOnWall(d, w.id, u, cab.adj.left.panel, -_rec, cab.D + CONST.FRONT_PROJ - _rec, plan, '#E5DCC4', COL.accent, LW.hairline);
         u += cab.adj.left.panel;
       }
       const wd = (cab.type==='filler-wall') ? cab.D + CONST.FRONT_PROJ
@@ -8353,9 +8380,6 @@ function drawPlan(d, area, view, opts){
       const wallFill = state.finish.color || '#F4F2EC';
       // Fridge-wall sits OFFSET from the wall by cab.config.wallOffset mm
       const _fwOff = (cab.type === 'fridge-wall' && cab.config && cab.config.wallOffset) ? cab.config.wallOffset : 0;
-      // A recessed unit starts inside the wall: its footprint runs from -recess
-      // to depth-recess, so a flush one sits entirely within the wall band.
-      const _rec = cabTakesRecess(cab) ? cabRecess(cab) : 0;
       let _corners;
       if(_rec > 0){
         const _wEdge = isSel ? COL.selected : COL.ink;
@@ -8385,12 +8409,20 @@ function drawPlan(d, area, view, opts){
         const _bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
         recordHit(V, cab.id, _bb[0], _bb[1], _bb[2], _bb[3], w.id);
         if(!compact && state.ui.selectedCabId === cab.id) _planHandles.push({ id: cab.id, bbox: _bb });
+        // A niche is a hole in the wall, and a hole in the wall drawn in among
+        // the poché is easy to read as nothing at all. Name it.
+        if(cab.type === 'shower-niche' && !compact){
+          const _lp = planMap(w.id, u + cab.W/2, -cab.D - 24, plan);
+          d.text(_lp[0], _lp[1], (cab.config && cab.config.labelText) || 'NICHE',
+            { align:'center', size:3.6, color:COL.muted, italic:true });
+        }
       }
       // Fridge-wall side panels (end panels) shown on plan view.
     
-      // Door swing arc — for standard hinged wall cabs only
+      // Door swing arc — for standard hinged wall cabs only. Set back with the
+      // carcass, since that is what they hang on.
       if(state.drawStyle.showCabDoorSwings !== false){
-        drawCabinetDoorsOnPlan(d, w.id, u, cab, plan);
+        drawCabinetDoorsOnPlan(d, w.id, u, cab, plan, _rec);
       }
       // Lift / bifold-lift opening indicator on plan — box sitting OFF the front
       // edge of the cupboard (full cab width, depth = half cab depth) with a
@@ -8415,14 +8447,14 @@ function drawPlan(d, area, view, opts){
       }
       u += cab.W;
       if(cab.adj?.right?.panel > 0){
-        planRectOnWall(d, w.id, u, cab.adj.right.panel, cab.D + CONST.FRONT_PROJ, plan, '#E5DCC4', COL.accent, LW.hairline);
+        planBandOnWall(d, w.id, u, cab.adj.right.panel, -_rec, cab.D + CONST.FRONT_PROJ - _rec, plan, '#E5DCC4', COL.accent, LW.hairline);
         u += cab.adj.right.panel;
       }
-      if(cab.adj?.right?.filler > 0){
+      if(cab.adj?.right?.filler > 0 && cab.adj.right.kind !== 'space'){
         (function(){ const b = fillerBand(cab.D + CONST.FRONT_PROJ, adjFillerDepth(cab, 'right'));
-          planBandOnWall(d, w.id, u, cab.adj.right.filler, b.v0, b.v1, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
-        u += cab.adj.right.filler;
+          planBandOnWall(d, w.id, u, cab.adj.right.filler, b.v0 - _rec, b.v1 - _rec, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
       }
+      if(cab.adj?.right?.filler > 0) u += cab.adj.right.filler;
     });
   });
 
@@ -12700,7 +12732,20 @@ function renderEditPanel(){
       check('Heated', 'heated');
     } else if(cab.type === 'shower-niche'){
       num('Bottom above floor', 'cabBottomY', 300, 2200, 10);
-      check('Centre shelf', 'shelf');
+      num('Shelves', 'shelves', 0, 3, 1, '');
+      // A niche is formed inside the wall, so how deep the wall is decides how
+      // deep the niche can be. Said here rather than left to be discovered on
+      // site, where the answer is a hole through to the next room.
+      {
+        const wt = wallThickness(findWallForCab(cab.id)?.wall) || state.room.wallT || 90;
+        const room = Math.max(0, wt - 20);
+        const warn = el('div', { class:'ctrl',
+          style:'font-size:11px;color:' + (cab.D > room ? 'var(--danger,#C0392B)' : 'var(--muted)') + ';margin-top:-2px' },
+          cab.D > room
+            ? `Deeper than the wall allows — ${wt} mm wall leaves about ${room} mm once it is lined.`
+            : `${wt} mm wall · about ${room} mm available once it is lined.`);
+        editor.appendChild(warn);
+      }
     }
     const noteRow = el('div', { class:'ctrl' });
     noteRow.appendChild(el('label', {}, 'Label on the drawing'));
