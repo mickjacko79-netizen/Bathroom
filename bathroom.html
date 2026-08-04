@@ -4640,6 +4640,31 @@ function cabTakesKick(cab){
   const def = CATALOG[cab.type];
   return !!def && def.row === 'base';
 }
+// The kick an elevation's height chain should be measured to. CONST.KICK_H
+// answers for whichever cabinet is being drawn at the time, which is right
+// while the joinery is going down and no use at all to the dimensions — by
+// then there is no cabinet in hand and it falls back to the project default.
+// A vanity given its own kick was drawn on it and dimensioned off the other.
+// So: the height the units on this wall actually stand on, where they agree on
+// one; null where they do not, and each is then dimensioned for itself.
+function wallGoverningKick(wall){
+  if(!wall) return null;
+  const seen = [];
+  (wall.baseRow || []).forEach(c => {
+    if(!cabTakesKick(c)) return;
+    const h = cabKickH(c);
+    const v = (h === null || h === undefined)
+      ? ((state.kick && state.kick.height) || CONST_BASE.KICK_H_DEFAULT) : h;
+    if(seen.indexOf(v) < 0) seen.push(v);
+  });
+  return seen.length === 1 ? seen[0] : null;
+}
+// What one cabinet's kick measures, resolved through the project default.
+function cabKickResolved(cab){
+  const h = cabKickH(cab);
+  return (h === null || h === undefined)
+    ? ((state.kick && state.kick.height) || CONST_BASE.KICK_H_DEFAULT) : h;
+}
 // Drawn over a front that has already been laid down in the finish colour.
 function drawFrontStyle(d, x, y, w, h, styleKey, s, orientation){
   const st = DOOR_STYLES[styleKey];
@@ -8564,24 +8589,53 @@ function drawPlan(d, area, view, opts){
     });
   }
   if(_showDims && state.drawStyle.showPerCabDims !== false){
-    let cu = runStartOffset(state.walls[0], 'base');
-    state.walls[0].baseRow.forEach(cab=>{
-      const lf = (cab.adj && cab.adj.left && cab.adj.left.filler)  || 0;
-      const lp = (cab.adj && cab.adj.left && cab.adj.left.panel)   || 0;
-      const rp = (cab.adj && cab.adj.right && cab.adj.right.panel) || 0;
-      const rf = (cab.adj && cab.adj.right && cab.adj.right.filler) || 0;
-      // Outside the wall face, clear of the wall's own dimension line and of
-      // the elevation reference markers. A traced shell can be much thicker
-      // than the room default, so the real thickness of wall A sets the datum.
-      const dimY = oy - (wallThicknessList(null)[0] || wallT)*s - (_traced ? 24 : 15);
-      if(lf > 0){ archDimH(d, ox+cu*s, ox+(cu+lf)*s, dimY, `${lf}`, { size:_dts-1, color:COL.accent }); cu += lf; }
-      if(lp > 0){ archDimH(d, ox+cu*s, ox+(cu+lp)*s, dimY, `${lp}`, { size:_dts-1, color:COL.accent }); cu += lp; }
-      const txt = dimTextFor(cab);
-      archDimH(d, ox+cu*s, ox+(cu+cab.W)*s, dimY, txt, { size:_dts-1, color:COL.ink3 });
-      recordDimHit(V, cab.id, ox+cu*s, dimY-3, cab.W*s, 5);
-      cu += cab.W;
-      if(rp > 0){ archDimH(d, ox+cu*s, ox+(cu+rp)*s, dimY, `${rp}`, { size:_dts-1, color:COL.accent }); cu += rp; }
-      if(rf > 0){ archDimH(d, ox+cu*s, ox+(cu+rf)*s, dimY, `${rf}`, { size:_dts-1, color:COL.accent }); cu += rf; }
+    // A set-out chain outside every wall, not just wall A. A bathroom is read
+    // off the plan wall by wall — the pan centre, the vanity, where the shower
+    // starts — and only the top wall was ever dimensioned, so three walls out
+    // of four had to be scaled off the paper.
+    //
+    // Laid out through the wall map rather than in page x/y, so it follows a
+    // traced shell whose walls do not run square to the sheet.
+    const _wallTs = wallThicknessList(null);
+    (state.walls || []).forEach((w, wi) => {
+      const arr = w.baseRow || [];
+      if(!arr.length) return;
+      // Out past the wall's own thickness, clear of its overall dimension and
+      // of the elevation reference markers.
+      const off = (_wallTs[wi] || wallT)*s + (_traced ? 24 : 15);
+      // The outward normal, taken off the map so any wall angle is handled.
+      const q0 = planMap(w.id, 0, 0, plan), qIn = planMap(w.id, 0, 100, plan);
+      let nx = q0[0] - qIn[0], ny = q0[1] - qIn[1];
+      const nl = Math.hypot(nx, ny) || 1;
+      nx = nx/nl * off; ny = ny/nl * off;
+      const seg = (u0, u1, label, opts, cabForHit) => {
+        if(u1 - u0 <= 0) return;
+        const a = planMap(w.id, u0, 0, plan), b = planMap(w.id, u1, 0, plan);
+        archDimAlong(d, a[0], a[1], b[0], b[1], nx, ny, label, opts);
+        if(cabForHit){
+          const x0 = Math.min(a[0], b[0]) + nx, x1 = Math.max(a[0], b[0]) + nx;
+          const y0 = Math.min(a[1], b[1]) + ny, y1 = Math.max(a[1], b[1]) + ny;
+          recordDimHit(V, cabForHit.id, x0 - 2, y0 - 3, (x1 - x0) + 4, (y1 - y0) + 6);
+        }
+      };
+      let cu = runStartOffset(w, 'base');
+      arr.forEach(cab=>{
+        const lf = (cab.adj && cab.adj.left && cab.adj.left.filler)  || 0;
+        const lp = (cab.adj && cab.adj.left && cab.adj.left.panel)   || 0;
+        const rp = (cab.adj && cab.adj.right && cab.adj.right.panel) || 0;
+        const rf = (cab.adj && cab.adj.right && cab.adj.right.filler) || 0;
+        if(lf > 0){ seg(cu, cu+lf, `${lf}`, { size:_dts-1, color:COL.accent }); cu += lf; }
+        if(lp > 0){ seg(cu, cu+lp, `${lp}`, { size:_dts-1, color:COL.accent }); cu += lp; }
+        seg(cu, cu+cab.W, dimTextFor(cab), { size:_dts-1, color:COL.ink3 }, cab);
+        cu += cab.W;
+        if(rp > 0){ seg(cu, cu+rp, `${rp}`, { size:_dts-1, color:COL.accent }); cu += rp; }
+        if(rf > 0){ seg(cu, cu+rf, `${rf}`, { size:_dts-1, color:COL.accent }); cu += rf; }
+      });
+      // What is left over to the far corner, so the chain closes on the wall
+      // rather than stopping at the last item and leaving the reader to work it
+      // out. Only worth lettering if there is really something there.
+      const _wl = wallLength(w.id);
+      if(_wl - cu > 1) seg(cu, _wl, `${Math.round(_wl - cu)}`, { size:_dts-1, color:COL.accent });
     });
   }
 
@@ -8976,11 +9030,22 @@ function drawElevation(d, area, wallId, opts){
   const oy = area.y + RES_T + Math.max(0, (area.h - RES_T - RES_B - Hm*s)/2);
   let finishCol = state.finish.color;
   const benchT = benchDefOf(state.bench.material).thick;
-  // Bench top is the user-set bench height (mm above floor).
-  const benchTopY = (state.bench && state.bench.height) || (CONST.KICK_H + 720 + benchT);
-  // Cabinet face height (top of kick to underside of bench), used by dim chain + scribe fillers.
-  const _cabFaceH = Math.max(200, benchTopY - benchT - CONST.KICK_H);
   const wall = getWall(wallId);
+  // The kick this elevation is dimensioned to. Reading CONST.KICK_H here took
+  // whichever cabinet the LAST wall drawn happened to leave behind, so the
+  // bench height and face height depended on what had been drawn before.
+  _kickCab = null;
+  const _wallKick = wallGoverningKick(wall);
+  const _kH = (_wallKick === null)
+    ? ((state.kick && state.kick.height) || CONST_BASE.KICK_H_DEFAULT) : _wallKick;
+  // Nothing stands on the floor under a wall-hung unit, so that height is not a
+  // kick — it is the clear space you can get a mop into, and it says so.
+  const _kickCabs = ((wall && wall.baseRow) || []).filter(cabTakesKick);
+  const _kickIsFloat = _kickCabs.length > 0 && _kickCabs.every(isWallHung);
+  // Bench top is the user-set bench height (mm above floor).
+  const benchTopY = (state.bench && state.bench.height) || (_kH + 720 + benchT);
+  // Cabinet face height (top of kick to underside of bench), used by dim chain + scribe fillers.
+  const _cabFaceH = Math.max(200, benchTopY - benchT - _kH);
   const T = state.carcass.T;
 
   // TITLE. The letter is the job-wide elevation letter, not the room-local id,
@@ -10080,7 +10145,9 @@ function drawElevation(d, area, wallId, opts){
     // Height dim chain — drawn INSIDE the elevation along the left edge so it's
     // always visible regardless of canvas layout. Uses bold brand colour.
     if(state.drawStyle.showHeightDims !== false){
-      const _kH = CONST.KICK_H;
+      // _kH is the wall's own kick, worked out up top. Any unit standing on a
+      // different one is dimensioned against itself below, since a single chain
+      // down the edge of the sheet can only speak for one of them.
       const _kickTop = Hm - _kH;
       const _faceTop = _kickTop - _cabFaceH;
       const _benchTop = _kickTop - _cabFaceH - benchT;
@@ -10091,10 +10158,23 @@ function drawElevation(d, area, wallId, opts){
         const note = _vNotes[key];
         return (note && note.length) ? (val + ' ' + note) : val;
       };
-      archDimV(d, oy + _kickTop*s,  oy + Hm*s,       dimX,      _appendNote(`${_kH}`,       'kick'),    { size:_dts, color:COL.ink });
+      archDimV(d, oy + _kickTop*s,  oy + Hm*s,       dimX,      _appendNote(`${_kH}${_kickIsFloat ? ' CLR' : ''}`, 'kick'), { size:_dts, color:COL.ink });
       archDimV(d, oy + _faceTop*s,  oy + _kickTop*s, dimX,      _appendNote(`${_cabFaceH}`, 'face'),    { size:_dts, color:COL.ink });
       archDimV(d, oy + _benchTop*s, oy + _faceTop*s, dimX,      _appendNote(`${benchT}`,    'bench'),   { size:_dts, color:COL.ink });
       archDimV(d, oy + _benchTop*s, oy + Hm*s,       dimX - 10, _appendNote(`${benchTopY}`, 'overall'), { size:_dts, color:COL.ink2 });
+      // Where the units on this wall do not all stand on the same height, the
+      // chain above cannot speak for them, so each is dimensioned at itself.
+      if(_wallKick === null && wall){
+        const _bArr = wall.baseRow || [], _bOff = runStartOffset(wall, 'base');
+        _bArr.forEach(cab => {
+          if(!cabTakesKick(cab)) return;
+          const kh = cabKickResolved(cab);
+          const xL = ox + cabLeftU(cab, _bArr, _bOff)*s + 6;
+          if(xL < _oxSheet || xL > _oxSheet + _span*s) return;   // cropped off this view
+          archDimV(d, oy + (Hm - kh)*s, oy + Hm*s, xL,
+            `${kh}${isWallHung(cab) ? ' CLR' : ''}`, { size:_dts - 1, color:COL.ink2 });
+        });
+      }
     }
     if(state.bench.splashback>0){
       archDimV(d, oy + (Hm - wallBottomY)*s, oy + (Hm - benchTopY)*s, _oxV - 22, (function(){ const n=(state.drawStyle.vDimNotes||{}).splashback; return `${state.bench.splashback}` + (n && n.length ? (' ' + n) : ''); })(), { size:_dts-1, color:COL.ink3 });
