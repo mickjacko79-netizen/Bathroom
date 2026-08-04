@@ -179,8 +179,10 @@ body.sm-full .view{padding:0}
 footer{grid-area:act;background:var(--panel);border-top:1px solid var(--border);display:flex;align-items:center;padding:0 22px;gap:12px}
 footer .info{flex:1;color:var(--muted);font-size:11.5px;letter-spacing:.02em}
 
-.swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:2px}
-.sw{height:30px;border-radius:5px;border:2px solid transparent;cursor:pointer;position:relative}
+/* Sized to hold a full palette rather than four picks — it fits as many across
+   as the sidebar allows and wraps, so a long range stays a couple of rows. */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(26px,1fr));gap:5px;margin-top:2px}
+.sw{height:24px;border-radius:4px;border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10);cursor:pointer;position:relative}
 .sw.on{border-color:var(--brand);box-shadow:0 0 0 2px rgba(31,78,95,.18)}
 .sw[title]:hover::after{content:attr(title);position:absolute;bottom:34px;left:50%;transform:translateX(-50%);background:#222;color:#fff;font-size:11px;padding:3px 6px;border-radius:4px;white-space:nowrap;z-index:2}
 
@@ -1177,6 +1179,10 @@ function isSanitary(cab){ return !!cab && SANITARY_TYPES.indexOf(cab.type) >= 0;
 function isSinkCab(cab){
   return !!cab && (cab.type === 'sink-base' || cab.type === 'laundry-tub');
 }
+// Named products first — those are the four the job was set up around, and the
+// schedule should call them what the supplier does. The rest of the front
+// palette is folded in below, once it is defined, so a colour picked off it is
+// scheduled by name instead of as "Custom".
 const FINISH_LABELS = {
   '#F4F2EC':'Polytec Whisper White',
   '#1F1E1B':'Polytec Black Wenge',
@@ -7562,6 +7568,33 @@ function planMap(wallId, u, v, plan){
   const y = seg.p1.y + u*seg.uy + v*seg.ny;
   return [ plan.ox + x*plan.s, plan.oy + y*plan.s ];
 }
+// Plan: a towel rail from over the top is a tube standing off the wall on two
+// brackets — not the plain filled box every wall item used to get, which read
+// as a cupboard. The bars of a ladder rail stack up the wall rather than out
+// from it, so however many there are, one tube is what you see from above.
+function drawTowelRailOnPlan(d, wallId, u0, cab, plan){
+  const c = cab.config || {};
+  const W = cab.W, D = Math.max(40, cab.D);
+  const shape = pts => mapUV(wallId, 0, pts, plan);
+  const plateW = 34, plateD = Math.min(16, D * 0.18);
+  const tubeR = Math.min(13, D * 0.15);
+  const barV = D - tubeR;                       // the tube's centreline
+  const armHalf = Math.max(3, tubeR * 0.42);
+  const inset = Math.min(20, W * 0.06);
+  // Brackets on the wall, and the arm out to the tube.
+  [u0 + inset + plateW/2, u0 + W - inset - plateW/2].forEach(cu=>{
+    d.polygon(shape(roundRectUV(cu - armHalf, plateD, cu + armHalf, barV, armHalf * 0.8)),
+      SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(cu - plateW/2, 0, cu + plateW/2, plateD, 3)),
+      SAN.metal, COL.ink2, LW.hairline);
+  });
+  // The tube, round in section and so round at the ends.
+  d.polygon(shape(roundRectUV(u0 + inset*0.5, barV - tubeR, u0 + W - inset*0.5, barV + tubeR, tubeR)),
+    SAN.metal, COL.ink2, LW.thin);
+  const lp = planMap(wallId, u0 + W/2, D + 34, plan);
+  d.text(lp[0], lp[1], c.labelText || (c.heated ? 'HTD TOWEL RAIL' : 'TOWEL RAIL'),
+    { align:'center', size:3.6, color:COL.muted, italic:true });
+}
 function planRectOnWall(d, wallId, uStart, length, depth, plan, fill, stroke, lw){
   const corners = [
     planMap(wallId, uStart, 0, plan),
@@ -8399,9 +8432,13 @@ function drawPlan(d, area, view, opts){
       } else {
         const _wEdge = isSel ? COL.selected : COL.ink;
         const _wLW = isSel ? LW.medium : LW.thin;
+        // A towel rail draws itself below. It still needs its footprint worked
+        // out for the hit area, but filled and outlined it reads as a cupboard.
+        const _rail = cab.type === 'towel-rail';
         _corners = _wFillBand
           ? planBandOnWall(d, w.id, u, cab.W, _wFillBand.v0, _wFillBand.v1, plan, wallFill, _wEdge, _wLW)
-          : planRectOnWall(d, w.id, u, cab.W, wd, plan, wallFill, _wEdge, _wLW);
+          : planRectOnWall(d, w.id, u, cab.W, wd, plan,
+              _rail ? null : wallFill, (_rail && !isSel) ? null : _wEdge, _wLW);
       }
       // Register hit area so wall cabs are clickable on plan
       if(_corners){
@@ -8409,6 +8446,7 @@ function drawPlan(d, area, view, opts){
         const _bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
         recordHit(V, cab.id, _bb[0], _bb[1], _bb[2], _bb[3], w.id);
         if(!compact && state.ui.selectedCabId === cab.id) _planHandles.push({ id: cab.id, bbox: _bb });
+        if(cab.type === 'towel-rail') drawTowelRailOnPlan(d, w.id, u, cab, plan);
         // A niche is a hole in the wall, and a hole in the wall drawn in among
         // the poché is easy to read as nothing at all. Name it.
         if(cab.type === 'shower-niche' && !compact){
@@ -13925,6 +13963,9 @@ function setFieldValue(id, v){
   if(!e) return;
   if(e.tagName === 'INPUT' || e.tagName === 'SELECT' || e.tagName === 'TEXTAREA') e.value = String(v);
   else e.textContent = String(v);
+  // A colour set from the state has to mark its own swatch, or the palette
+  // shows the last one clicked rather than the colour actually in force.
+  if(e.type === 'color') syncSwatches(e);
 }
 
 // ============================================================
@@ -14116,6 +14157,132 @@ document.getElementById('splashColorReset').addEventListener('click', ()=>{
   state.splashback.colorOverride = null;
   renderSurfacePanel(); renderActive();
 });
+// ---- Colour palettes ----------------------------------------------------
+// A picker on its own asks the wrong question. Nobody chooses a wall colour by
+// naming a hex triple; they choose off a range. Each picker keeps working for
+// anything not on its palette, and the palette is what you reach for first.
+const COLOUR_PALETTES = {
+  // Wall poché and structure.
+  wall: [
+    ['#1B1B1B','Poché black'], ['#2E2E2E','Charcoal'], ['#4A4A4A','Dark grey'],
+    ['#6E6E6E','Mid grey'], ['#9A9A9A','Light grey'], ['#C8C8C8','Pale grey'],
+    ['#E6E2D8','Render'], ['#F4F2EC','Set plaster'], ['#D8CFC0','Brick'],
+    ['#B9AE9B','Blockwork'], ['#8E9296','Concrete'], ['#FFFFFF','White'],
+  ],
+  // Kicks — usually matched to the floor or lost in shadow.
+  kick: [
+    ['#F4F2EC','Matt white'], ['#E8E4DA','Off white'], ['#C9C6BC','Light grey'],
+    ['#8E9296','Mid grey'], ['#5A5A5A','Dark grey'], ['#2E2E2E','Charcoal'],
+    ['#1B1B1B','Matt black'], ['#CFA875','Oak'], ['#A5793F','Walnut'],
+    ['#7A5B3A','Dark timber'], ['#B9C4BA','Sage'], ['#9FB0BF','Blue grey'],
+  ],
+  // Cabinet fronts.
+  finish: [
+    ['#F4F2EC','Whisper white'], ['#EDE9E0','Chalk'], ['#E2DED2','Linen'],
+    ['#CFCabf','Putty'], ['#A9A9A0','Stone grey'], ['#7C8079','Olive grey'],
+    ['#5C6B5D','Forest green'], ['#3E5361','Deep teal'], ['#37414B','Navy'],
+    ['#2E2E2E','Charcoal'], ['#1B1B1B','Matt black'], ['#CFA875','Natural oak'],
+    ['#A5793F','Walnut'], ['#E8C9A0','Blackbutt'],
+  ],
+  // Stone tops.
+  bench: [
+    ['#FAFAF7','Pure white'], ['#F2F0EA','Snow'], ['#EDEAE3','Calacatta'],
+    ['#E4DED2','Travertine'], ['#DAD5C8','Limestone'], ['#C4C1B7','Concrete grey'],
+    ['#9FA3A6','Bluestone'], ['#6E7276','Basalt'], ['#3A3D40','Dark stone'],
+    ['#1F2124','Nero'], ['#E8DCC8','Warm marble'], ['#D9E0DE','Cool marble'],
+  ],
+  // Wall tiles.
+  tile: [
+    ['#FFFFFF','Gloss white'], ['#F2F0EA','Off white'], ['#EFEDE6','Bone'],
+    ['#E4E0D6','Sand'], ['#D8D4CB','Greige'], ['#C4C1B7','Warm grey'],
+    ['#A9AFA6','Sage'], ['#8FA3A1','Eucalypt'], ['#7E9AA8','Duck egg'],
+    ['#5E7C8A','Petrol'], ['#C99C7C','Terracotta'], ['#8E6A55','Clay'],
+    ['#4A4A4A','Charcoal'], ['#1F1F1F','Matt black'],
+  ],
+  // Grout, wall and floor.
+  grout: [
+    ['#FFFFFF','Bright white'], ['#EDEAE3','White'], ['#D8D4CB','Silver'],
+    ['#C4C1B7','Pale grey'], ['#A5A096','Grey'], ['#8A867E','Mid grey'],
+    ['#6B6B66','Charcoal grey'], ['#4A4A46','Charcoal'], ['#2B2B28','Black'],
+    ['#C9A878','Sand'], ['#B5A48C','Beige'], ['#9AA69A','Sage'],
+  ],
+  // Floor finishes.
+  floor: [
+    ['#E2DDD0','Bone tile'], ['#DCD7CA','Greige tile'], ['#C6C2B9','Concrete'],
+    ['#9FA3A6','Bluestone'], ['#6E7276','Basalt'], ['#3A3D40','Charcoal tile'],
+    ['#DED2BC','Travertine'], ['#E7E2D6','Terrazzo'], ['#EFE0BF','Oak boards'],
+    ['#E5C28B','Blackbutt'], ['#CFA875','Spotted gum'], ['#A5793F','Walnut'],
+    ['#D6CCAE','Carpet'], ['#FFFFFF','White'],
+  ],
+  // Linework and dimensions.
+  ink: [
+    ['#111111','Black'], ['#2E2E2E','Near black'], ['#3C3C3C','Graphite'],
+    ['#5A5A5A','Dark grey'], ['#7A7A7A','Mid grey'], ['#9A9A9A','Light grey'],
+    ['#1F3A5F','Navy'], ['#2C5F5A','Teal'], ['#7A3B2E','Oxide red'],
+    ['#8A6D1F','Ochre'],
+  ],
+};
+// Mark whichever swatch matches the colour in force. Called when a colour is
+// set from the state too, or the palette shows the last one clicked rather than
+// what is actually on the drawing.
+function syncSwatches(input){
+  const box = input && input.__swatches;
+  if(!box) return;
+  const cur = String(input.value || '').toLowerCase();
+  box.querySelectorAll('.sw').forEach(b =>
+    b.classList.toggle('on', (b.dataset.color || '').toLowerCase() === cur));
+}
+function _swatchHTML(pal){
+  return pal.map(([hex, name]) =>
+    `<div class="sw" data-color="${hex}" title="${name} · ${hex.toUpperCase()}"></div>`).join('');
+}
+// Hang a palette on a colour picker, in the same markup the three hand-written
+// bars already used — so it looks like one thing, and initCollapsibles paints
+// the backgrounds. barId names a bar that already exists and has its own click
+// handler; that one is filled out rather than given a second bar beside it.
+function attachPalette(inputId, paletteKey, barId){
+  const input = document.getElementById(inputId);
+  const pal = COLOUR_PALETTES[paletteKey];
+  if(!input || !pal) return;
+  let box = barId ? document.getElementById(barId) : null;
+  if(box){
+    box.innerHTML = _swatchHTML(pal);
+  } else {
+    // Above the picker and inside the same control, so whatever shows and hides
+    // that row takes the palette with it.
+    const row = input.closest('.customRow') || input.parentElement;
+    box = document.createElement('div');
+    box.className = 'swatches';
+    box.innerHTML = _swatchHTML(pal);
+    row.insertAdjacentElement('beforebegin', box);
+  }
+  box.addEventListener('click', e => {
+    const t = e.target.closest('.sw');
+    if(!t || !box.contains(t)) return;
+    input.value = t.dataset.color;
+    // The same events a hand-picked colour raises, so every listener already
+    // wired to this picker does its own job and nothing here has to know what
+    // that job is.
+    input.dispatchEvent(new Event('input',  { bubbles:true }));
+    input.dispatchEvent(new Event('change', { bubbles:true }));
+    syncSwatches(input);
+  });
+  input.__swatches = box;
+  input.addEventListener('input', ()=> syncSwatches(input));
+  syncSwatches(input);
+}
+// Every front colour on the palette gets a name on the schedule. The four
+// named products already in FINISH_LABELS keep theirs.
+COLOUR_PALETTES.finish.forEach(([hex, name])=>{
+  if(!FINISH_LABELS[hex]) FINISH_LABELS[hex] = name;
+});
+[['wallColorCustom','wall'], ['kickColorCustom','kick'],
+ ['finishColorCustom','finish','finishBar'], ['benchColorCustom','bench'],
+ ['splashColorCustom','tile'], ['splashGroutCustom','grout'],
+ ['floorColorCustom','floor'], ['floorLineCustom','grout'],
+ ['lineColorCustom','ink','lineColorBar'], ['dimColorCustom','ink','dimColorBar'],
+].forEach(([id, key, bar])=> attachPalette(id, key, bar));
+
 document.getElementById('splashGroutCustom').addEventListener('input', e=>{
   state.splashback.jointColorOverride = e.target.value; renderActive();
 });
