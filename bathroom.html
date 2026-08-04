@@ -518,13 +518,19 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl" id="splashFinishRow"><label>Surface finish</label><select id="splashFinish"></select></div>
         <div class="customRow" id="splashColourRow">
           <input type="color" id="splashColorCustom" value="#EDEAE3">
-          <span class="lbl">Splashback colour</span>
+          <span class="lbl">Tile / wall colour</span>
           <button class="reset" id="splashColorReset" title="Use type default">reset</button>
+        </div>
+        <div class="customRow" id="splashGroutRow">
+          <input type="color" id="splashGroutCustom" value="#C4C1B7">
+          <span class="lbl">Grout colour</span>
+          <button class="reset" id="splashGroutReset" title="Shade off the tile">reset</button>
         </div>
         <div class="hatch-sel" id="splashHatchRow">
           <label style="display:block;font-size:11px;color:var(--muted);margin:6px 0 4px">Hatch / laying pattern</label>
           <select id="splashHatch"></select>
         </div>
+        <div class="ctrl" id="splashTileRow"><label>Tile</label><select id="splashTile"></select></div>
         <div style="font-size:10.5px;color:var(--muted);margin:12px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Tile module</div>
         <div class="row2">
           <div class="ctrl"><label>Tile width <span class="val"><input class="valInp" id="tileW" type="number" min="20" max="1800" step="10" value="300"> mm</span></label></div>
@@ -1451,6 +1457,10 @@ function splashbackSpecLabel(){
     return `Matched to benchtop · ${h} mm high`;
   }
   const bits = [SPLASHBACK_TYPES[sp.type] || sp.type];
+  // Which tile it is, where one has been chosen — the schedule said only "Tile"
+  // however particular the choice had been.
+  const _t = wallTileDef();
+  if(_t) bits.push(_t.label);
   const brand = benchBrandLabel(sp.brand);
   if(brand) bits.push(brand.replace(/ \(.*\)$/, ''));
   if(sp.product) bits.push(sp.product);
@@ -1518,15 +1528,56 @@ function drawSplashbackBand(d, x, y, w, h){
   if(hatch !== 'blank') d.rect(x, y, w, h, fill, null);
   const saveCol = state.bench.colorOverride;
   state.bench.colorOverride = fill;          // benchHatch reads the bench override
+  _splashDraw = true;                        // so the joint colour is the wall's
   try { benchHatch(d, x, y, w, h, state.bench.material, hatch); }
-  finally { state.bench.colorOverride = saveCol; }
+  finally { state.bench.colorOverride = saveCol; _splashDraw = false; }
   d.rect(x, y, w, h, null, COL.ink2, LW.hairline);
 }
+// True only while the wall finish is being hatched, so a benchtop drawn with a
+// tile hatch does not pick up the wall's grout.
+let _splashDraw = false;
 const SPLASHBACK_FILL = {
   'porcelain':'#EDEAE3', 'natural-stone':'#E4DED2', 'glass':'#D8E6EA', 'tile':'#EFEDE6',
   'mirror':'#DCE2E5', 'stainless':'#CFD2D5', 'acrylic':'#EFECE8', 'laminate':'#EDE7DA',
   'paint':'#F4F2EC',
 };
+// The wall tiles themselves. The floor has always had a list to choose from and
+// the wall had one entry, 'Tile', with the module typed in by hand — so the two
+// halves of the same decision were made in two different ways. These set the
+// module, the bond and the colours in one go; the module fields underneath stay
+// live for anything not on the list.
+//   w/h    the tile, in millimetres, laid as it is laid on the wall
+//   bond   0 stack · 0.5 half brick · 1/3 third
+const WALL_TILE_TYPES = {
+  'subway-75x150':    { label:'Subway 75 × 150',                w:150,  h:75,   bond:0.5,   color:'#F2F0EA', line:'#C9C6BC' },
+  'subway-100x200':   { label:'Subway 100 × 200',               w:200,  h:100,  bond:0.5,   color:'#F2F0EA', line:'#C9C6BC' },
+  'subway-100x300':   { label:'Subway 100 × 300',               w:300,  h:100,  bond:0.5,   color:'#F2F0EA', line:'#C9C6BC' },
+  'subway-vert':      { label:'Subway 100 × 300 — stacked vertical', w:100, h:300, bond:0, color:'#F2F0EA', line:'#C9C6BC' },
+  'finger-vert':      { label:'Finger / kit-kat 23 × 145 — vertical', w:23, h:145, bond:0, color:'#EDEFEA', line:'#BFC4BA' },
+  'square-100':       { label:'Square 100 × 100',               w:100,  h:100,  bond:0,     color:'#F0EEE8', line:'#C6C3B9' },
+  'square-200':       { label:'Square 200 × 200',               w:200,  h:200,  bond:0,     color:'#EFEDE6', line:'#C4C1B7' },
+  'square-300':       { label:'Square 300 × 300',               w:300,  h:300,  bond:0,     color:'#EFEDE6', line:'#C4C1B7' },
+  'rect-300x600':     { label:'Rectangle 300 × 600',            w:300,  h:600,  bond:0.5,   color:'#EFEDE6', line:'#C4C1B7' },
+  'rect-300x600-s':   { label:'Rectangle 300 × 600 — stack bond', w:300, h:600, bond:0,     color:'#EFEDE6', line:'#C4C1B7' },
+  'square-600':       { label:'Square 600 × 600',               w:600,  h:600,  bond:0,     color:'#EEECE5', line:'#C2BFB5' },
+  'plank-300x900':    { label:'Plank 300 × 900',                w:900,  h:300,  bond:1/3,   color:'#EDEBE4', line:'#C2BFB5' },
+  'large-600x1200':   { label:'Large format 600 × 1200',        w:1200, h:600,  bond:0.5,   color:'#EAE8E1', line:'#BEBBB1' },
+  'large-1200x2400':  { label:'Slab format 1200 × 2400',        w:1200, h:2400, bond:0,     color:'#E9E7E0', line:'#BCB9AF' },
+  'mosaic-25':        { label:'Mosaic 25 × 25',                 w:25,   h:25,   bond:0,     color:'#EDEAE1', line:'#B6B2A7' },
+  'mosaic-50':        { label:'Mosaic 50 × 50',                 w:50,   h:50,   bond:0,     color:'#EDEAE1', line:'#B6B2A7' },
+  'penny-round':      { label:'Penny round 20',                 w:20,   h:20,   bond:0.5,   color:'#EFECE4', line:'#B6B2A7' },
+  'hex-100':          { label:'Hexagon 100',                    w:100,  h:115,  bond:0.5,   color:'#EEEBE2', line:'#B8B4A9' },
+  'hex-200':          { label:'Hexagon 200',                    w:200,  h:230,  bond:0.5,   color:'#EEEBE2', line:'#B8B4A9' },
+  'herringbone-75':   { label:'Herringbone 75 × 300',           w:300,  h:75,   bond:0.5,   color:'#F0EDE5', line:'#C1BDB2' },
+  'terrazzo-600':     { label:'Terrazzo 600 × 600',             w:600,  h:600,  bond:0,     color:'#EDE9DF', line:'#B9B4A6' },
+  'stone-400x800':    { label:'Stone 400 × 800',                w:800,  h:400,  bond:0.5,   color:'#E4DED2', line:'#AEA694' },
+  'marble-600x1200':  { label:'Marble 600 × 1200',              w:1200, h:600,  bond:0.5,   color:'#EFEDE9', line:'#BCB8B0' },
+};
+// The tile a wall is set out to, where one has been chosen off the list.
+function wallTileDef(){
+  const sp = state.splashback || {};
+  return WALL_TILE_TYPES[sp.tile] || null;
+}
 const SPLASHBACK_HATCH = {
   'porcelain':'tile-grid', 'natural-stone':'marble', 'glass':'solid', 'tile':'tile-brick',
   'mirror':'diag-l', 'stainless':'h-lines', 'acrylic':'solid', 'laminate':'solid', 'paint':'solid',
@@ -2022,14 +2073,25 @@ const FLOOR_MATERIALS = {
   'timber-chevron':     { label:'Timber chevron',                color:'#E5C28B', hatch:'chevron',     size:110, size2:600,  lineColor:'#A57442' },
   'parquet':            { label:'Parquet (basket weave)',        color:'#D9B07A', hatch:'parquet',     size:200,             lineColor:'#7A552C' },
   'vinyl-plank':        { label:'Vinyl / laminate plank',        color:'#DFD3BE', hatch:'vinyl-plank', size:220, size2:1200, lineColor:'#A9997E' },
+  'tile-100':           { label:'Tile 100 × 100 — shower floor',  color:'#E4DFD2', hatch:'tile-stack',  size:100, size2:100,  lineColor:'#9A958A' },
+  'tile-200':           { label:'Tile 200 × 200',                color:'#E2DDD0', hatch:'tile-stack',  size:200, size2:200,  lineColor:'#9F9A8F' },
   'tile-300':           { label:'Tile 300 × 300',                color:'#E2DDD0', hatch:'tile-stack',  size:300, size2:300,  lineColor:'#9F9A8F' },
+  'tile-300x600':       { label:'Tile 300 × 600',                color:'#E2DDD0', hatch:'tile-brick',  size:600, size2:300,  lineColor:'#9F9A8F' },
   'tile-450':           { label:'Tile 450 × 450',                color:'#E2DDD0', hatch:'tile-stack',  size:450, size2:450,  lineColor:'#9F9A8F' },
   'tile-600':           { label:'Tile 600 × 600',                color:'#E2DDD0', hatch:'tile-stack',  size:600, size2:600,  lineColor:'#9F9A8F' },
   'tile-large':         { label:'Large format 1200 × 600',        color:'#DCD7CA', hatch:'tile-stack',  size:1200, size2:600, lineColor:'#9F9A8F' },
+  'tile-slab':          { label:'Slab format 1200 × 2400',        color:'#DAD5C8', hatch:'tile-stack',  size:1200, size2:2400, lineColor:'#9F9A8F' },
   'tile-plank':         { label:'Tile plank 900 × 150',           color:'#DED8C9', hatch:'tile-brick',  size:900, size2:150,  lineColor:'#9F9A8F' },
+  'tile-plank-900x300': { label:'Tile plank 900 × 300',           color:'#DED8C9', hatch:'tile-third',  size:900, size2:300,  lineColor:'#9F9A8F' },
   'tile-diagonal':      { label:'Tile 450 laid diagonal',         color:'#E2DDD0', hatch:'tile-diag',   size:450, size2:450,  lineColor:'#9F9A8F' },
+  'tile-herringbone':   { label:'Tile herringbone 100 × 400',     color:'#E1DCCF', hatch:'herringbone', size:100, size2:400,  lineColor:'#9A958A' },
   'tile-hex':           { label:'Hexagon tile 200',               color:'#E4E0D6', hatch:'hexagon',     size:200,             lineColor:'#9A958A' },
+  'tile-hex-100':       { label:'Hexagon tile 100',               color:'#E4E0D6', hatch:'hexagon',     size:100,             lineColor:'#9A958A' },
   'mosaic':             { label:'Mosaic 50 × 50',                 color:'#E6E2D8', hatch:'mosaic',      size:50,  size2:50,   lineColor:'#A5A096' },
+  'mosaic-25':          { label:'Mosaic 25 × 25',                 color:'#E6E2D8', hatch:'mosaic',      size:25,  size2:25,   lineColor:'#A5A096' },
+  'penny-round':        { label:'Penny round 20',                 color:'#E8E4DA', hatch:'mosaic',      size:20,  size2:20,   lineColor:'#A5A096' },
+  'terrazzo':           { label:'Terrazzo 600 × 600',             color:'#E7E2D6', hatch:'speckle',     size:600, size2:600,  lineColor:'#98938A' },
+  'microcement':        { label:'Microcement / seamless render',  color:'#D8D4CB', hatch:'speckle',                           lineColor:'#8A867E' },
   'stone-flag':         { label:'Stone flagging — random',        color:'#CDC6B6', hatch:'flagstone',   size:450,             lineColor:'#857F70' },
   'bluestone':          { label:'Bluestone 400 × 800',            color:'#9FA3A6', hatch:'tile-brick',  size:800, size2:400,  lineColor:'#6B7073' },
   'travertine':         { label:'Travertine 600 × 400',           color:'#DED2BC', hatch:'tile-third',  size:600, size2:400,  lineColor:'#A2977F' },
@@ -3351,16 +3413,23 @@ function benchSegmentsFor(wall){
     if(R.panel  > 0) slots.push({ kind:'panel',  w:R.panel,  depth:cab.D });
     if(R.filler > 0) slots.push({ kind:'filler', w:R.filler, depth:cab.D, space:R.kind === 'space' });
   });
-  // A filler needs stone on both sides of it to be stone itself. The ends of the
-  // run count as benched so a leading or trailing filler still gets covered.
+  // A filler or a panel needs stone on both sides of it to be stone itself. The
+  // ends of the run count as benched, so a leading or trailing one still gets
+  // covered. Panels used to break the stone wherever they fell — the top ran up
+  // to the panel and started again after it, leaving the panel standing proud
+  // of a benchtop that should have run straight over it. They are part of the
+  // width the top is cut to, so the stone extends across them as it does across
+  // a filler. An open gap still carries nothing: there is nothing under it.
   const carries = i => {
     const s = slots[i];
-    if(s.kind === 'panel')  return false;
-    if(s.kind === 'cab')    return !!s.benched;
-    if(s.space)             return false;
+    if(s.kind === 'cab') return !!s.benched;
+    if(s.space)          return false;
     const near = (j, step)=>{
       for(let k = j; k >= 0 && k < slots.length; k += step){
-        if(slots[k].kind === 'filler'){ if(slots[k].space) return false; continue; }
+        if(slots[k].kind === 'filler' || slots[k].kind === 'panel'){
+          if(slots[k].space) return false;
+          continue;
+        }
         return slots[k].kind === 'cab' && !!slots[k].benched;
       }
       return true;                         // ran off the end of the row
@@ -4272,8 +4341,11 @@ function benchHatch(d, x, y, w, h, materialKey, hatchOverride){
     case 'tile-vstack': {
       const s = (_curScale > 0 && isFinite(_curScale)) ? _curScale : 1;
       // Grout reads a shade darker than the tile rather than as an ink line —
-      // a full wall of hairline black swamps everything else on the sheet.
-      const grout = shade(color, -0.14);
+      // a full wall of hairline black swamps everything else on the sheet. A
+      // tile off the list brings its own joint colour; anything else is shaded
+      // off its own face, which is what a benchtop wants.
+      const _spj = _splashDraw && state.splashback && state.splashback.jointColorOverride;
+      const grout = _spj || shade(color, -0.14);
       if(_tileSetout){
         // On an elevation the courses are set out from the job's datum, so the
         // drawing shows where the cut actually lands.
@@ -4356,8 +4428,13 @@ function noteViewScale(view, s){
 // Tile module for the wall tiling, in real millimetres.
 function tileModule(){
   const sp = state.splashback || {};
-  return { w: Math.max(20, sp.tileW || 300), h: Math.max(20, sp.tileH || 600),
-           bond: (sp.bond === undefined || sp.bond === null) ? 0.5 : sp.bond };
+  // A tile off the list sets the module; the fields below it still win, so a
+  // size that is not on the list can be typed in as it always could.
+  const def = wallTileDef();
+  const w = (typeof sp.tileW === 'number' && sp.tileW > 0) ? sp.tileW : (def ? def.w : 300);
+  const h = (typeof sp.tileH === 'number' && sp.tileH > 0) ? sp.tileH : (def ? def.h : 600);
+  const b = (sp.bond === undefined || sp.bond === null) ? (def ? def.bond : 0.5) : sp.bond;
+  return { w: Math.max(20, w), h: Math.max(20, h), bond: b };
 }
 // The tiling datum, in mm above finished floor level. Everything about the
 // tiling setout is measured from here, so moving it moves every course.
@@ -13994,6 +14071,13 @@ document.getElementById('splashColorReset').addEventListener('click', ()=>{
   state.splashback.colorOverride = null;
   renderSurfacePanel(); renderActive();
 });
+document.getElementById('splashGroutCustom').addEventListener('input', e=>{
+  state.splashback.jointColorOverride = e.target.value; renderActive();
+});
+document.getElementById('splashGroutReset').addEventListener('click', ()=>{
+  state.splashback.jointColorOverride = null;
+  renderSurfacePanel(); renderActive();
+});
 
 // ---- Project logo -------------------------------------------------------
 // Held as a data URL on the job so it survives save/load, export and import,
@@ -14762,10 +14846,28 @@ function renderSurfacePanel(){
     v => { sp.finish = v; renderActive(); });
   setFieldValue('splashProduct', sp.product || '');
   setFieldValue('splashColorCustom', sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3');
+  setFieldValue('splashGroutCustom', sp.jointColorOverride
+    || shade(sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3', -0.14));
   _fillSelect('splashHatch',
     [['', '(type default)']].concat(Object.entries(BENCH_HATCHES)),
     sp.hatchOverride || '',
     v => { sp.hatchOverride = v || null; renderActive(); });
+  // Picking a tile off the list sets the module, the bond and the colours in
+  // one go — so it clears the typed-in ones, which otherwise sit on top of it
+  // and the choice appears to do nothing.
+  _fillSelect('splashTile',
+    [['', '(custom module below)']].concat(Object.entries(WALL_TILE_TYPES).map(([k, t]) => [k, t.label])),
+    sp.tile || '',
+    v => {
+      sp.tile = v || null;
+      const t = WALL_TILE_TYPES[v];
+      if(t){
+        sp.tileW = null; sp.tileH = null; sp.bond = null;
+        sp.colorOverride = t.color;
+        sp.jointColorOverride = t.line;
+      }
+      renderSurfacePanel(); renderActive();
+    });
 
   // Only the fields that make sense for the chosen splashback type.
   const own = sp.type && sp.type !== 'matched' && sp.type !== 'none';
@@ -14776,6 +14878,8 @@ function renderSurfacePanel(){
   show('splashFinishRow',  own);
   show('splashColourRow',  own);
   show('splashHatchRow',   own);
+  show('splashTileRow',    sp.type === 'tile');
+  show('splashGroutRow',   own);
   const fw = document.getElementById('tileFullWalls');
   if(fw) fw.checked = sp.fullWalls !== false;
   const sd = document.getElementById('tileShowDatum');
@@ -14794,13 +14898,18 @@ function renderSurfacePanel(){
           (g.mode === 'both' ? ` split as ${Math.round(g.cut / 2 * 10) / 10} mm at each end.`
                              : ` at the ${g.mode === 'top' ? 'floor' : 'top'}.`);
   }
-  setFieldValue('tileW', sp.tileW || 300);
-  setFieldValue('tileH', sp.tileH || 600);
-  const bondBar = document.getElementById('tileBondBar');
-  if(bondBar){
-    const cur = (sp.bond === undefined || sp.bond === null) ? 0.5 : sp.bond;
-    bondBar.querySelectorAll('.pill').forEach(p=>
-      p.classList.toggle('on', Math.abs(parseFloat(p.dataset.v) - cur) < 0.01));
+  // Show the module that is actually being drawn, whether it came off the list
+  // or was typed in — the fields read as the answer to "what size is the tile",
+  // and sitting at 300 × 600 under a chosen mosaic they answered it wrongly.
+  {
+    const _m = tileModule();
+    setFieldValue('tileW', _m.w);
+    setFieldValue('tileH', _m.h);
+    const bondBar = document.getElementById('tileBondBar');
+    if(bondBar){
+      bondBar.querySelectorAll('.pill').forEach(p=>
+        p.classList.toggle('on', Math.abs(parseFloat(p.dataset.v) - _m.bond) < 0.01));
+    }
   }
 }
 function renderAppliancePanel(){
