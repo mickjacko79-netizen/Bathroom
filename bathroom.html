@@ -678,6 +678,7 @@ header .project-label .dot.dirty{background:#F7C04A}
             <optgroup label="Bathroom accessories">
               <option value="mirror">Mirror</option>
               <option value="wall">Shaving / wall cabinet</option>
+              <option value="blade">Blade wall (stands out from the wall)</option>
               <option value="shower-niche">Niche (recessed into the wall)</option>
               <option value="towel-rail">Towel rail</option>
             </optgroup>
@@ -1076,6 +1077,8 @@ const CATALOG = {
   // A niche belongs anywhere there is a wall to form it in — over a bath, beside
   // a vanity, in a shower. The key stays 'shower-niche' so drawings already
   // saved still find it.
+  'blade':       { label:'Blade wall',              defaultW:120, H:2100, D:900, row:'base', hasShelves:false,
+    defaultConfig:{ tile:null, color:null, grout:null, capping:false, cappingD:40, labelText:'' } },
   'shower-niche':{ label:'Niche',                   defaultW:600, H:300,  D:65,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1100, shelves:0, labelText:'' } },
 };
@@ -1228,7 +1231,7 @@ function screenLayout(cab){
 
 // The sanitary fixtures are boxes, not carcasses — no fronts, no hardware, no
 // benchtop over them. One predicate keeps every "is this joinery?" test honest.
-const SANITARY_TYPES = ['toilet','basin-fs','bath','shower','mirror','towel-rail','shower-niche'];
+const SANITARY_TYPES = ['toilet','basin-fs','bath','shower','mirror','towel-rail','shower-niche','blade'];
 function isSanitary(cab){ return !!cab && SANITARY_TYPES.indexOf(cab.type) >= 0; }
 // A laundry tub is drawn, dimensioned and scheduled exactly like a sink base —
 // only its default bowl and door count differ.
@@ -2775,7 +2778,13 @@ function maxDepthFor(type){
 function maxWidthFor(type){
   return (typeof SANITARY_TYPES !== 'undefined' && SANITARY_TYPES.indexOf(type) >= 0) ? 2400 : 1200;
 }
-function minWidthFor(type){ return /^filler-/.test(type) ? 10 : 300; }
+function minWidthFor(type){
+  if(/^filler-/.test(type)) return 10;
+  // A blade wall is as narrow as the stud it is built off. Three hundred is the
+  // floor for a cabinet, and it was quietly widening a 120 blade to 300.
+  if(type === 'blade') return 50;
+  return 300;
+}
 function makeCab(type, opts={}){
   const def = CATALOG[type];
   // Use a combination of incrementing counter AND a random suffix so duplicate IDs are virtually impossible.
@@ -3267,6 +3276,7 @@ const SANITARY_FINISH = {
   'shower':       'Tiled base · framed glass',
   'mirror':       'Silvered glass, polished edge',
   'towel-rail':   'Chrome / matt black',
+  'blade':        'Tiled, waterproofed',
   'shower-niche': 'Tiled, waterproofed',
 };
 function fixtureFinishLabel(cab){
@@ -7274,6 +7284,20 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
     return;
   }
 
+  if(cab.type === 'blade'){
+    // Seen from above it is a rectangle running out from the wall: as thick as
+    // it is wide and as long as it reaches.
+    const sp = state.splashback || {};
+    const fill = (c.tile && WALL_TILE_TYPES[c.tile] && (c.color || WALL_TILE_TYPES[c.tile].color))
+      || sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
+    d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), fill, COL.ink, LW.thin);
+    // The free end, which is the one that gets a capping or a set-out.
+    d.line.apply(d, P([[0,D],[W,D]]).flat().concat([COL.ink, LW.medium]));
+    d.text.apply(d, (function(){ const p = P([[W/2, D + 40]])[0];
+      return [p[0], p[1], (c.labelText || 'BLADE WALL'), { align:'center', size:3.6, color:COL.muted, italic:true }]; })());
+    return;
+  }
+
   if(cab.type === 'bath'){
     const style = c.style || 'inset';
     const hob = c.hobW || 75, ins = c.innerInset || 110;
@@ -7745,6 +7769,17 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     return true;
   }
 
+  if(cab.type === 'blade'){
+    // Looking at the wall it comes off, a blade is seen end on: as wide as it
+    // is thick, standing the full height it is built to.
+    d.rect(x, y, W, H, '#F3F5F5', null, 0);
+    withBladeFinish(cab, ()=> drawSplashbackBand(d, x, y, W, H));
+    d.rect(x, y, W, H, null, stroke, lw);
+    d.text(x + W/2, y - 4, (c.labelText || 'BLADE'),
+      { align:'center', size:3.6, color:COL.muted, italic:true });
+    return true;
+  }
+
   if(cab.type === 'towel-rail'){
     const bars = Math.max(1, c.bars || 1);
     d.rect(x, y, W, H, null, null, 0);                     // no box — it is a rail
@@ -7893,6 +7928,27 @@ function withWallFinish(wall, fn){
   sp.colorOverride      = W.color || (t ? t.color : null);
   sp.jointColorOverride = W.grout || (t ? t.line  : null);
   try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
+}
+// A blade is tiled like the wall it comes off, unless it is given its own.
+function withBladeFinish(cab, fn){
+  const c = (cab && cab.config) || {};
+  const sp = state.splashback || {};
+  if(!c.tile) return fn();
+  const keys = ['type','tile','tileW','tileH','bond','colorOverride','jointColorOverride'];
+  const saved = {};
+  keys.forEach(k => saved[k] = sp[k]);
+  const t = WALL_TILE_TYPES[c.tile];
+  sp.type = 'tile'; sp.tile = c.tile;
+  sp.tileW = null; sp.tileH = null; sp.bond = null;
+  sp.colorOverride      = c.color || (t ? t.color : null);
+  sp.jointColorOverride = c.grout || (t ? t.line  : null);
+  try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
+}
+function bladeNote(cab){
+  const c = (cab && cab.config) || {};
+  const t = c.tile && WALL_TILE_TYPES[c.tile];
+  return [`${Math.round(cab.D)} out · ${Math.round(cab.W)} thick · ${Math.round(cab.H)} high`,
+          t ? t.label : 'tiled to match the wall'].join(' · ');
 }
 function withLowWallFinish(L, fn){
   const sp = state.splashback || {};
@@ -13406,6 +13462,12 @@ function renderEditPanel(){
       num('Height above floor', 'cabBottomY', 300, 2000, 10);
       num('Bars', 'bars', 1, 8, 1, '');
       check('Heated', 'heated');
+    } else if(cab.type === 'blade'){
+      // Width, depth and height are the standard size controls above; what is
+      // left is what it is finished in.
+      const _tiles = [['', '(same as the wall)']]
+        .concat(Object.entries(WALL_TILE_TYPES).map(([k, t]) => [k, t.label]));
+      pick('Tile', 'tile', _tiles);
     } else if(cab.type === 'shower-niche'){
       num('Bottom above floor', 'cabBottomY', 300, 2200, 10);
       num('Shelves', 'shelves', 0, 3, 1, '');
