@@ -6031,8 +6031,13 @@ function tapSpec(style){ return TAP_SPEC[style] || TAP_SPEC['gooseneck']; }
 //   leverU         lever centre to spout centre, along the plate
 //   spoutT         the spout in section
 const WALL_TAP_SPEC = {
+  // 52 is how far the lever hangs BELOW the plate, not its length from the
+  // plate's centre — on the front elevation the 65 spans the plate and the 52
+  // carries on down from the bottom of it.
   'plate-165': { label:'Wall mixer — 165 plate', plateW:165, plateH:65,
-                 reach:207, outlet:180, spray:16, leverL:52, leverU:100, spoutT:26 },
+                 reach:207, outlet:180, spray:16,
+                 leverU:100, leverW:62, leverDrop:52,
+                 mouthW:70, mouthH:42, spoutT:26 },
 };
 function wallTapSpec(style){ return WALL_TAP_SPEC[style] || WALL_TAP_SPEC['plate-165']; }
 // Elevation, looking at the wall it is fixed to. The plate is seen square on;
@@ -6041,18 +6046,26 @@ function wallTapSpec(style){ return WALL_TAP_SPEC[style] || WALL_TAP_SPEC['plate
 function drawWallMixerOnElevation(d, cx, cy, s, style){
   const T = wallTapSpec(style);
   const pw = T.plateW*s, ph = T.plateH*s, r = ph/2;
-  const x0 = cx - pw/2, y0 = cy - ph/2;
+  const x0 = cx - pw/2, y0 = cy - ph/2, yBot = y0 + ph;
   // Backplate, stadium ended.
-  d.polygon(roundPoly([[x0,y0],[x0+pw,y0],[x0+pw,y0+ph],[x0,y0+ph]], r, 8),
+  d.polygon(roundPoly([[x0,y0],[x0+pw,y0],[x0+pw,yBot],[x0,yBot]], r, 10),
     '#F2F2F0', COL.ink2, LW.thin);
-  // The spout, seen end on: its section, on the plate's centre.
-  const su = cx - (T.leverU/2)*s;
-  d.circle(su, cy, (T.spoutT/2)*s*1.15, SAN.metal, COL.ink2, LW.hairline);
-  d.circle(su, cy, (T.spoutT/2)*s*0.55, TAP_DARK, null, 0);
-  // The lever, hanging below the plate on the other side of it.
-  const lu = su + T.leverU*s, lw2 = (T.spoutT*1.35)*s;
-  d.polygon(roundPoly([[lu-lw2/2, cy - ph*0.10],[lu+lw2/2, cy - ph*0.10],
-                       [lu+lw2/2, cy + T.leverL*s],[lu-lw2/2, cy + T.leverL*s]], lw2*0.45, 6),
+  // The two things on it, 100 apart: the spout on one side, the lever on the
+  // other, straddling the plate's centre.
+  const su = cx - (T.leverU/2)*s, lu = cx + (T.leverU/2)*s;
+  // The spout, seen end on — its mouth, not a dot. It sits in the plate rather
+  // than hanging off it, which is what the front elevation shows.
+  const mw = T.mouthW*s, mh = T.mouthH*s;
+  d.polygon(roundPoly([[su-mw/2, cy-mh/2],[su+mw/2, cy-mh/2],
+                       [su+mw/2, cy+mh/2],[su-mw/2, cy+mh/2]], mh*0.42, 8),
+    SAN.metal, COL.ink2, LW.hairline);
+  d.line(su-mw*0.34, cy+mh*0.16, su+mw*0.34, cy+mh*0.16, COL.ink3, LW.hairline);
+  // The lever: it starts up inside the plate and carries on past the bottom of
+  // it by the drop, which is the 52 on the drawing.
+  const lw2 = T.leverW*s;
+  d.polygon(roundPoly([[lu-lw2/2, y0 + ph*0.18],[lu+lw2/2, y0 + ph*0.18],
+                       [lu+lw2/2, yBot + T.leverDrop*s],[lu-lw2/2, yBot + T.leverDrop*s]],
+                      lw2*0.46, 10),
     SAN.metal, COL.ink2, LW.hairline);
 }
 // Plan, from over the top. The plate lies on the wall, the spout runs out into
@@ -6071,7 +6084,7 @@ function drawWallMixerOnPlan(d, wallId, plan, u, style){
   const o = planMap(wallId, su, T.outlet, plan);
   d.circle(o[0], o[1], Math.max(0.35, halfB*(plan && plan.s || 1)), '#FFFFFF', COL.ink2, LW.hairline);
   // The lever, on the plate.
-  d.polygon(shape(roundRectUV(lu - T.spoutT*0.7, 6, lu + T.spoutT*0.7, 6 + T.leverL, 8)),
+  d.polygon(shape(roundRectUV(lu - T.leverW/2, 6, lu + T.leverW/2, 6 + T.leverDrop, 10)),
     SAN.metal, COL.ink2, LW.hairline);
 }
 const TAP_BODY = '#C9CCCF', TAP_DARK = '#8E9296';
