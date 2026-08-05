@@ -1056,7 +1056,7 @@ const CATALOG = {
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
     defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, tapMode:'deck', labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
-    defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050,
+    defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050, wallTap:'plate-165',
                     // wasteEnd: 'L' | 'C' | 'R' | 'OC' (offset centre), matching
                     // the way the position is published. tapEnd is separate —
                     // a central waste says nothing about which end the tap is.
@@ -6018,6 +6018,62 @@ const TAP_SPEC = {
   'gooseneck': { base:38, riser:170, reach:180, spout:24, lever:85, curved:true  },
 };
 function tapSpec(style){ return TAP_SPEC[style] || TAP_SPEC['gooseneck']; }
+// Wall mixers, which are a different animal from a deck tap: one backplate
+// carrying both the spout and the lever, and a projection measured from the
+// wall face rather than a riser measured up off a benchtop. The numbers are the
+// maker's own set-out, so what is drawn is what turns up on site.
+//
+//   plateW/plateH  the backplate, stadium ends
+//   reach          wall face to the tip of the spout
+//   outlet         wall face to where the water actually leaves it
+//   spray          the cone, in degrees
+//   leverL         the lever, measured down from the plate's centreline
+//   leverU         lever centre to spout centre, along the plate
+//   spoutT         the spout in section
+const WALL_TAP_SPEC = {
+  'plate-165': { label:'Wall mixer — 165 plate', plateW:165, plateH:65,
+                 reach:207, outlet:180, spray:16, leverL:52, leverU:100, spoutT:26 },
+};
+function wallTapSpec(style){ return WALL_TAP_SPEC[style] || WALL_TAP_SPEC['plate-165']; }
+// Elevation, looking at the wall it is fixed to. The plate is seen square on;
+// the spout comes towards the viewer and so is seen end on, not as the bar in
+// profile a side elevation would show.
+function drawWallMixerOnElevation(d, cx, cy, s, style){
+  const T = wallTapSpec(style);
+  const pw = T.plateW*s, ph = T.plateH*s, r = ph/2;
+  const x0 = cx - pw/2, y0 = cy - ph/2;
+  // Backplate, stadium ended.
+  d.polygon(roundPoly([[x0,y0],[x0+pw,y0],[x0+pw,y0+ph],[x0,y0+ph]], r, 8),
+    '#F2F2F0', COL.ink2, LW.thin);
+  // The spout, seen end on: its section, on the plate's centre.
+  const su = cx - (T.leverU/2)*s;
+  d.circle(su, cy, (T.spoutT/2)*s*1.15, SAN.metal, COL.ink2, LW.hairline);
+  d.circle(su, cy, (T.spoutT/2)*s*0.55, TAP_DARK, null, 0);
+  // The lever, hanging below the plate on the other side of it.
+  const lu = su + T.leverU*s, lw2 = (T.spoutT*1.35)*s;
+  d.polygon(roundPoly([[lu-lw2/2, cy - ph*0.10],[lu+lw2/2, cy - ph*0.10],
+                       [lu+lw2/2, cy + T.leverL*s],[lu-lw2/2, cy + T.leverL*s]], lw2*0.45, 6),
+    SAN.metal, COL.ink2, LW.hairline);
+}
+// Plan, from over the top. The plate lies on the wall, the spout runs out into
+// the room to its full reach, and the outlet is marked where the water leaves.
+function drawWallMixerOnPlan(d, wallId, plan, u, style){
+  const T = wallTapSpec(style);
+  const shape = pts => mapUV(wallId, 0, pts, plan);
+  const su = u - T.leverU/2, lu = su + T.leverU;
+  // Backplate against the wall, its thickness standing off it.
+  d.polygon(shape(roundRectUV(u - T.plateW/2, 0, u + T.plateW/2, 22, 8)),
+    '#F2F2F0', COL.ink2, LW.thin);
+  // The spout, tapering to its tip, with the outlet marked where it really is.
+  const halfA = T.spoutT/2, halfB = T.spoutT*0.34;
+  d.polygon(shape([[su-halfA, 18],[su+halfA, 18],[su+halfB, T.reach],[su-halfB, T.reach]]),
+    SAN.metal, COL.ink2, LW.hairline);
+  const o = planMap(wallId, su, T.outlet, plan);
+  d.circle(o[0], o[1], Math.max(0.35, halfB*(plan && plan.s || 1)), '#FFFFFF', COL.ink2, LW.hairline);
+  // The lever, on the plate.
+  d.polygon(shape(roundRectUV(lu - T.spoutT*0.7, 6, lu + T.spoutT*0.7, 6 + T.leverL, 8)),
+    SAN.metal, COL.ink2, LW.hairline);
+}
 const TAP_BODY = '#C9CCCF', TAP_DARK = '#8E9296';
 // An LED extrusion is a slim thing — drawn any deeper it reads as a rail.
 const LED_STRIP_T = 10;
@@ -7547,7 +7603,11 @@ function drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D){
   d.circle(wp[0], wp[1], 2.4, null, COL.ink2, LW.hairline);
   d.line(wp[0] - 1.7, wp[1], wp[0] + 1.7, wp[1], COL.ink2, LW.hairline);
   d.line(wp[0], wp[1] - 1.7, wp[0], wp[1] + 1.7, COL.ink2, LW.hairline);
-  if(c.tapMode !== 'floor'){
+  if(c.tapMode === 'wall' && c.wallTap && WALL_TAP_SPEC[c.wallTap]){
+    // On the wall: its plate lies against the tiles and its spout reaches out
+    // over the bath, which is a set-out off the wall face and not off the rim.
+    drawWallMixerOnPlan(d, wallId, plan, uOff + bathTapU(cab), c.wallTap);
+  } else if(c.tapMode !== 'floor'){
     // Far enough off the wall face that the lever has somewhere to lie back to.
     const tv = (c.style === 'freestanding') ? 75 : Math.max(55, (c.hobW || 75) * 0.75);
     drawTapOnPlan(d, wallId, plan, uOff + bathTapU(cab), tv, 'gooseneck');
@@ -7658,7 +7718,8 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
     if((c.tapMode || 'wall') === 'wall'){
       const tu = bathTapU(cab);
       const rightEnd = tu > cab.W / 2;
-      drawWallSpout(d, X(tu), Y(c.tapH || 1050), s, { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
+      if(c.wallTap && WALL_TAP_SPEC[c.wallTap]) drawWallMixerOnElevation(d, X(tu), Y(c.tapH || 1050), s, c.wallTap);
+      else drawWallSpout(d, X(tu), Y(c.tapH || 1050), s, { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
     } else if((c.tapMode) === 'deck'){
       drawTapOnElevation(d, X(bathTapU(cab)), Y(rimH), s, 'gooseneck');
     }
@@ -13384,6 +13445,11 @@ function renderEditPanel(){
       num('Rim height', 'rimH', 400, 800, 5);
       num('Hob width', 'hobW', 0, 300, 5);
       num('Tap height above floor', 'tapH', 600, 1600, 10);
+      // Which wall mixer, where it is on the wall. Blank keeps the plain spout
+      // and pair of handles the app has always drawn.
+      pick('Wall mixer', 'wallTap',
+        [['', 'Plain spout and handles']].concat(
+          Object.entries(WALL_TAP_SPEC).map(([k, t]) => [k, t.label])));
     } else if(cab.type === 'shower'){
       // ---- Screen. Its own group, because it is ordered as its own item.
       editor.appendChild(el('h3', {}, 'Screen'));
