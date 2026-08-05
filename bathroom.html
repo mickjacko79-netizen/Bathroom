@@ -768,6 +768,19 @@ header .project-label .dot.dirty{background:#F7C04A}
           <label class="toggle"><input type="checkbox" id="leftWallEnd"> <span>Left end panel</span></label>
           <label class="toggle"><input type="checkbox" id="rightWallEnd"> <span>Right end panel</span></label>
         </div>
+        <h3 style="font-size:10.5px;color:var(--muted);margin:10px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Tile on this wall</h3>
+        <div class="ctrl"><label>Tile</label><select id="wallTileSel"></select></div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:-2px">Leave this on the job's tile to follow Wall tiling. Set it and only this wall changes.</div>
+        <div class="customRow" id="wallTileColourRow">
+          <input type="color" id="wallTileColor" value="#EFEDE6">
+          <span class="lbl">Tile colour</span>
+          <button class="reset" id="wallTileColorReset" title="Use the tile's own colour">reset</button>
+        </div>
+        <div class="customRow" id="wallTileGroutRow">
+          <input type="color" id="wallTileGrout" value="#C4C1B7">
+          <span class="lbl">Grout colour</span>
+          <button class="reset" id="wallTileGroutReset" title="Shade off the tile">reset</button>
+        </div>
         <h3 style="font-size:10.5px;color:var(--muted);margin:10px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Low wall on this wall</h3>
         <label class="toggle"><input type="checkbox" id="lowWallOn"> <span>Tiled low wall in front</span></label>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:2px">A stud wall built off this one, tiled to match. Anything starting below its top fixes to it and comes forward by its thickness; anything at or above its top goes on the wall behind.</div>
@@ -2602,6 +2615,8 @@ function makeWall(id){
     id, baseRow:[], wallRow:[], openings:[], electrical:[],
     // A low wall stood in front of this one. Height is to the top of the
     // capping; from/to are along the wall, and to:null means all of it.
+    // This wall's own tile. null means it takes the job's, set in Wall tiling.
+    splashback:{ tile:null, color:null, grout:null },
     // tile null means it takes whatever the wall it stands against is tiled in.
     lowWall:{ on:false, height:1000, thickness:120, capping:true, cappingD:40, from:0, to:null,
               tile:null, color:null, grout:null },
@@ -4113,9 +4128,14 @@ function archDimAlong(d, x1, y1, x2, y2, offX, offY, label, opts={}){
   if(len < 6) return;                       // too short to letter legibly
   const ux = dx/len, uy = dy/len;
   const nx = -uy, ny = ux;
-  // Witness lines back to the face being measured.
-  d.line(x1, y1, ax + nx*1.4, ay + ny*1.4, color, lw*0.7);
-  d.line(x2, y2, bx + nx*1.4, by + ny*1.4, color, lw*0.7);
+  // Witness lines back towards the face being measured, stopping short of it.
+  // Run right up to the wall they touch its poché and read as part of the
+  // drawing rather than as a dimension off it.
+  const _ol = Math.hypot(offX, offY) || 1;
+  const _gx = offX/_ol, _gy = offY/_ol;
+  const _gap = (opts.gap === undefined) ? 2.5 : opts.gap;
+  d.line(x1 + _gx*_gap, y1 + _gy*_gap, ax + nx*1.4, ay + ny*1.4, color, lw*0.7);
+  d.line(x2 + _gx*_gap, y2 + _gy*_gap, bx + nx*1.4, by + ny*1.4, color, lw*0.7);
   d.line(ax, ay, bx, by, color, lw);
   const tick = 0.9;
   [[ax, ay], [bx, by]].forEach(([px, py])=>{
@@ -7778,6 +7798,23 @@ function withPlanVOff(off, fn){
 // the duration and put straight back. Everything that paints a tile reads
 // state.splashback, so lending it the low wall's settings is what lets the same
 // drawing code do both without either knowing about the other.
+// One wall tiled differently from the rest. Same trick as the low wall: the
+// tiling code reads state.splashback, so this wall's settings are lent to it
+// for the length of the draw and put straight back.
+function withWallFinish(wall, fn){
+  const sp = state.splashback || {};
+  const W = wall && wall.splashback;
+  if(!W || !W.tile) return fn();
+  const keys = ['type','tile','tileW','tileH','bond','colorOverride','jointColorOverride'];
+  const saved = {};
+  keys.forEach(k => saved[k] = sp[k]);
+  const t = WALL_TILE_TYPES[W.tile];
+  sp.type = 'tile'; sp.tile = W.tile;
+  sp.tileW = null; sp.tileH = null; sp.bond = null;
+  sp.colorOverride      = W.color || (t ? t.color : null);
+  sp.jointColorOverride = W.grout || (t ? t.line  : null);
+  try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
+}
 function withLowWallFinish(L, fn){
   const sp = state.splashback || {};
   if(!L || !L.tile) return fn();
@@ -7792,6 +7829,12 @@ function withLowWallFinish(L, fn){
   try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
 }
 // What a low wall is tiled in, for the schedule.
+// What one wall is tiled in, for the schedule.
+function wallFinishNote(wall){
+  const W = wall && wall.splashback;
+  const t = W && W.tile && WALL_TILE_TYPES[W.tile];
+  return t ? t.label : '';
+}
 function lowWallFinishNote(wall){
   const L = lowWallOf(wall);
   if(!L) return '';
@@ -9051,9 +9094,11 @@ function drawPlan(d, area, view, opts){
     (state.walls || []).forEach((w, wi) => {
       const arr = w.baseRow || [];
       if(!arr.length) return;
-      // Out past the wall's own thickness, clear of its overall dimension and
-      // of the elevation reference markers.
-      const off = (_wallTs[wi] || wallT)*s + (_traced ? 24 : 15);
+      // Two hundred millimetres clear of the outside face of the wall, so the
+      // chain stands off the drawing instead of sitting on it. Measured in real
+      // millimetres rather than page ones, so it holds at any scale — with a
+      // floor in page terms so it cannot crowd the wall on a small drawing.
+      const off = (_wallTs[wi] || wallT)*s + Math.max(_traced ? 24 : 15, 200*s);
       // The outward normal, taken off the map so any wall angle is handled.
       const q0 = planMap(w.id, 0, 0, plan), qIn = planMap(w.id, 0, 100, plan);
       let nx = q0[0] - qIn[0], ny = q0[1] - qIn[1];
@@ -9520,12 +9565,13 @@ function drawElevation(d, area, wallId, opts){
 
   // BACK WALL
   d.rect(ox, oy, wL*s, Hm*s, '#FFFFFF', COL.ink3, LW.hairline);
-  // WALL TILING — the room's finish, before anything is stood in front of it.
-  try { drawWallTiling(d, ox, oy, wL, Hm, s); }
+  // WALL TILING — this wall's finish, before anything is stood in front of it.
+  try { withWallFinish(wall, ()=> drawWallTiling(d, ox, oy, wL, Hm, s)); }
   catch(e){ console.warn('[Bathroom] wall tiling failed', e.message); }
 
   // The low wall stands on the floor in front of that tiling, and the joinery
-  // stands in front of it again.
+  // stands in front of it again. Its own tile, where it has one, wins over the
+  // wall's — which is why this is not inside the swap above.
   try { drawLowWallOnElevation(d, wall, ox, oy, Hm, s); }
   catch(e){ console.warn('[Bathroom] low wall failed', e.message); }
 
@@ -14246,6 +14292,7 @@ function renderCabinetList(){
   chk('endToFloor',   wall.trim.leftEnd.toFloor);
   chk('endWaterfall', wall.trim.leftEnd.waterfall);
   try { syncLowWallPanel(); } catch(_){}
+  try { syncWallTilePanel(); } catch(_){}
 }
 // Live "does this run fit the wall?" readout in the sidebar. Kept separate from
 // renderCabinetList so it can also refresh on plain redraws (e.g. dragging the
@@ -17977,6 +18024,46 @@ function _lowWallOf(){
   if(!w.lowWall) w.lowWall = { on:false, height:1000, thickness:120, capping:true, cappingD:40, from:0, to:null };
   return w.lowWall;
 }
+function _wallTileOf(){
+  const w = uiGetWall(state.ui.activeWall);
+  if(!w) return null;
+  if(!w.splashback) w.splashback = { tile:null, color:null, grout:null };
+  return w.splashback;
+}
+function syncWallTilePanel(){
+  const W = _wallTileOf();
+  if(!W) return;
+  const sel = document.getElementById('wallTileSel');
+  if(sel) sel.value = W.tile || '';
+  const t = W.tile && WALL_TILE_TYPES[W.tile];
+  setFieldValue('wallTileColor', W.color || (t ? t.color : '#EFEDE6'));
+  setFieldValue('wallTileGrout', W.grout || (t ? t.line  : '#C4C1B7'));
+  // Colours mean nothing until it has a tile of its own — without one it takes
+  // the job's finish whole.
+  ['wallTileColourRow','wallTileGroutRow'].forEach(id=>{
+    const e = document.getElementById(id);
+    if(e) e.style.display = W.tile ? '' : 'none';
+    const sw = e && e.previousElementSibling;
+    if(sw && sw.classList && sw.classList.contains('swatches')) sw.style.display = W.tile ? '' : 'none';
+  });
+}
+(function(){
+  const on = (id, ev, fn)=>{ const e = document.getElementById(id); if(e) e.addEventListener(ev, fn); };
+  _fillSelect('wallTileSel',
+    [['', "(the job's tile)"]].concat(Object.entries(WALL_TILE_TYPES).map(([k, t]) => [k, t.label])),
+    '',
+    v => {
+      const W = _wallTileOf(); if(!W) return;
+      W.tile = v || null; W.color = null; W.grout = null;
+      syncWallTilePanel(); pushHistory(); scheduleAutosave(); renderActive();
+    });
+  on('wallTileColor', 'input', e=>{ const W=_wallTileOf(); if(!W) return; W.color = e.target.value; scheduleAutosave(); renderActive(); });
+  on('wallTileColorReset', 'click', ()=>{ const W=_wallTileOf(); if(!W) return; W.color = null; syncWallTilePanel(); scheduleAutosave(); renderActive(); });
+  on('wallTileGrout', 'input', e=>{ const W=_wallTileOf(); if(!W) return; W.grout = e.target.value; scheduleAutosave(); renderActive(); });
+  on('wallTileGroutReset', 'click', ()=>{ const W=_wallTileOf(); if(!W) return; W.grout = null; syncWallTilePanel(); scheduleAutosave(); renderActive(); });
+  attachPalette('wallTileColor', 'tile');
+  attachPalette('wallTileGrout', 'grout');
+})();
 function syncLowWallPanel(){
   const L = _lowWallOf();
   if(!L) return;
