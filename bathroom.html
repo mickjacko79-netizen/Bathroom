@@ -7887,8 +7887,42 @@ function lowWallFinishNote(wall){
   if(L.capping && L.cappingD > 0) bits.push(`${Math.round(L.cappingD)} capping`);
   return bits.join(' · ');
 }
+// The ends of a low wall, as things you can take hold of on the plan. Kept
+// apart from the cabinet handles because what is grabbed is not an item — it is
+// one end of a run, and dragging it changes where that run stops.
+const lowWallHandles = {};
+function clearLowWallHandles(view){ if(view) lowWallHandles[view] = []; }
+function recordLowWallHandle(view, wallId, end, cx, cy, r){
+  if(!view) return;
+  (lowWallHandles[view] = lowWallHandles[view] || [])
+    .push({ wallId, end, b:[cx - r, cy - r, cx + r, cy + r] });
+}
+function findLowWallHandleAt(view, x, y){
+  const list = lowWallHandles[view] || [];
+  for(let i = list.length - 1; i >= 0; i--){
+    const b = list[i].b;
+    if(x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return list[i];
+  }
+  return null;
+}
+// Where a low wall's end has been dragged to, in millimetres along its wall.
+function setLowWallEnd(wall, end, u){
+  const L = wall && wall.lowWall;
+  if(!L) return;
+  const wl = wallLength(wall.id);
+  const v = Math.max(0, Math.min(wl, u));
+  if(end === 'from'){
+    const to = (L.to === null || L.to === undefined) ? wl : L.to;
+    L.from = Math.min(v, Math.max(0, to - 50));      // never shorter than a nub
+  } else {
+    // Dragged to the corner it goes back to following the corner, so it still
+    // runs the full way if the room is resized — same as the Length field.
+    L.to = (v >= wl - 25) ? null : Math.max(v, (L.from || 0) + 50);
+  }
+}
 // Plan: the low wall as a band standing off the wall face, tiled, with the
 // capping shown as a line along its front edge.
+let _lwView = null;
 function drawLowWallOnPlan(d, wall, plan){
   const L = lowWallOf(wall);
   if(!L) return;
@@ -7901,6 +7935,18 @@ function drawLowWallOnPlan(d, wall, plan){
     const cd = Math.min(L.cappingD, L.t);
     planBandOnWall(d, wall.id, L.from, L.to - L.from, L.t - cd, L.t, plan,
       null, COL.ink2, LW.hairline);
+  }
+  // A grip at each end, so the run can be shortened on the drawing rather than
+  // by working out a number for it. Not on a thumbnail, and never on the PDF.
+  if(!state._planCompact){
+    [['from', L.from], ['to', L.to]].forEach(([end, u])=>{
+      const c = planMap(wall.id, u, L.t/2, plan);
+      const r = 2.2;
+      d.rect(c[0]-r, c[1]-r, r*2, r*2, '#FFFFFF', COL.selected, LW.thin);
+      d.line(c[0]-r*0.45, c[1]-r*0.5, c[0]-r*0.45, c[1]+r*0.5, COL.selected, LW.hairline);
+      d.line(c[0]+r*0.45, c[1]-r*0.5, c[0]+r*0.45, c[1]+r*0.5, COL.selected, LW.hairline);
+      recordLowWallHandle(_lwView, wall.id, end, c[0], c[1], r + 2);
+    });
   }
 }
 // Elevation: the low wall stands from the floor to its top, tiled like the wall
@@ -8530,6 +8576,8 @@ function drawPlan(d, area, view, opts){
   // that threw part-way through the last sheet would otherwise carry its offset
   // into this one and move everything on it.
   _planVOff = 0;
+  _lwView = V;
+  clearLowWallHandles(V);
   // The low wall goes down before the joinery, so the joinery stands in front.
   state.walls.forEach(w=> drawLowWallOnPlan(d, w, plan));
 
@@ -12273,6 +12321,13 @@ function _commitCabDrag(){
 }
 // Window-level mouseup catches releases outside any canvas.
 window.addEventListener('mouseup', e => {
+  if(state.ui.lowWallDrag){
+    const moved = state.ui.lowWallDrag.moved;
+    state.ui.lowWallDrag = null;
+    if(moved){ pushHistory(); scheduleAutosave(); }
+    try { syncLowWallPanel(); } catch(_){}
+    renderActive();
+  }
   if(_commitCabDrag()){
     renderCabinetList(); renderActive();
   }
@@ -12356,6 +12411,17 @@ function wireViewport(canvas){
     }
     if(_view === 'plan' || _view === 'plan-base' || _view.startsWith('elev-')){
       const p = clientToPageMM(canvas, e.clientX, e.clientY);
+      // An end of a low wall comes before anything else: the grip sits over the
+      // band, and the band sits over the wall, so whatever is under it would
+      // otherwise take the click.
+      const lwh = findLowWallHandleAt(_view, p.x, p.y);
+      if(lwh){
+        e.preventDefault();
+        state.ui.lowWallDrag = { wallId: lwh.wallId, end: lwh.end,
+          startX: e.clientX, startY: e.clientY, moved: false };
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
       const dh = findDimAt(_view, p.x, p.y);
       if(dh){
         const cab = findCabById(dh.cabId);
@@ -12449,6 +12515,19 @@ function wireViewport(canvas){
       renderView();
       return;
     }
+    // An end of a low wall is being dragged along its wall.
+    if(state.ui.lowWallDrag){
+      const D = state.ui.lowWallDrag;
+      const w = getWall(D.wallId);
+      if(w && w.lowWall){
+        const p = clientToPageMM(canvas, e.clientX, e.clientY);
+        setLowWallEnd(w, D.end, computeWallU(w.id, p.x, p.y));
+        D.moved = true;
+        try { syncLowWallPanel(); } catch(_){}
+        renderActive();
+      }
+      return;
+    }
     // A break line is being dragged — narrow or widen the elevation.
     if(state.ui.cropDrag){
       const cd = state.ui.cropDrag;
@@ -12507,6 +12586,16 @@ function wireViewport(canvas){
     }
   });
   canvas.addEventListener('mouseup', e => {
+    if(state.ui.lowWallDrag){
+      const moved = state.ui.lowWallDrag.moved;
+      state.ui.lowWallDrag = null;
+      canvas.style.cursor = '';
+      if(moved){ pushHistory(); scheduleAutosave(); }
+      try { syncLowWallPanel(); } catch(_){}
+      renderActive();
+      e.preventDefault();
+      return;
+    }
     if(state.ui.cropDrag){
       const moved = state.ui.cropDrag.moved;
       state.ui.cropDrag = null;
