@@ -7862,6 +7862,51 @@ function drawLowWallOnPlan(d, wall, plan){
 }
 // Elevation: the low wall stands from the floor to its top, tiled like the wall
 // it is built against, with a capping board across the top.
+// The walls either side of this one, in the order the runs are laid out: the
+// one before it ends at this wall's left corner, the one after starts at its
+// right. A low wall on either returns into this elevation and is seen end on.
+const _PREV_WALL = { A:'D', B:'A', C:'B', D:'C' };
+const _NEXT_WALL = { A:'B', B:'C', C:'D', D:'A' };
+function adjoiningLowWalls(wall){
+  const out = [];
+  if(!wall) return out;
+  const prev = getWall(_PREV_WALL[wall.id]);
+  const next = getWall(_NEXT_WALL[wall.id]);
+  if(prev){
+    const L = lowWallOf(prev);
+    // Only if it actually reaches the corner we share.
+    if(L && L.to >= wallLength(prev.id) - 2) out.push({ L, at:'start' });
+  }
+  if(next){
+    const L = lowWallOf(next);
+    if(L && L.from <= 2) out.push({ L, at:'end' });
+  }
+  return out;
+}
+// Drawn as what you see: the return face of it, its own thickness wide, in its
+// own finish. It stands in front of this wall, so it goes down after the wall's
+// tiling and before the joinery, same as the wall's own low wall.
+function drawAdjoiningLowWallsOnElevation(d, wall, ox, oy, wL, Hm, s){
+  adjoiningLowWalls(wall).forEach(({ L, at })=>{
+    const w = L.t*s;
+    const x = (at === 'start') ? ox : (ox + wL*s - w);
+    const capT = (L.capping && L.cappingD > 0) ? Math.min(40, L.height * 0.06) : 0;
+    const yTop = oy + (Hm - L.height)*s;
+    const bodyY = yTop + capT*s;
+    const floorY = oy + Hm*s;
+    d.rect(x, bodyY, w, floorY - bodyY, '#F3F5F5', null, 0);
+    // Its own tile if it has one, otherwise the tile of the wall it is built
+    // against — which is that wall's, not this one's.
+    withWallFinish(L.wall, ()=> withLowWallFinish(L, ()=>
+      drawSplashbackBand(d, x, bodyY, w, floorY - bodyY)));
+    if(capT > 0){
+      d.rect(x, yTop, w, capT*s, benchDefOf(state.bench.material).color || '#EDEAE3',
+        COL.ink, LW.thin);
+    }
+    d.rect(x, yTop, w, floorY - yTop, null, COL.ink, LW.thin);
+    d.text(x + w/2, yTop - 4, 'LOW WALL', { align:'center', size:3.2, color:COL.muted, italic:true });
+  });
+}
 function drawLowWallOnElevation(d, wall, ox, oy, Hm, s){
   const L = lowWallOf(wall);
   if(!L) return;
@@ -9574,6 +9619,9 @@ function drawElevation(d, area, wallId, opts){
   // wall's — which is why this is not inside the swap above.
   try { drawLowWallOnElevation(d, wall, ox, oy, Hm, s); }
   catch(e){ console.warn('[Bathroom] low wall failed', e.message); }
+  // And the ones returning into this elevation from the walls either side.
+  try { drawAdjoiningLowWallsOnElevation(d, wall, ox, oy, wL, Hm, s); }
+  catch(e){ console.warn('[Bathroom] adjoining low wall failed', e.message); }
 
   // OPENINGS on this wall — rendered on the wall surface, behind cabinets. A
   // wall shared with an adjoining room shows that room's openings too.
