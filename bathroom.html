@@ -19148,6 +19148,14 @@ function loadDesign(snap){
         if(c.config.sinkOffsetU === undefined)  c.config.sinkOffsetU = 0;
         if(c.config.doors === undefined)        c.config.doors = 2;
       }
+      if(c.type === 'bath'){
+        // A bath drawn before the wall mixer existed has no wallTap on it, so
+        // it kept falling back to the plain spout and the deck-tap symbol —
+        // the drawing looked untouched however many times the mixer was fixed.
+        // New defaults only reach new fixtures; an existing job has to be told.
+        c.config = c.config || {};
+        if(c.config.wallTap === undefined) c.config.wallTap = 'plate-165';
+      }
       if(c.type === 'dishwasher-int'){
         c.config = c.config || {};
         if(c.config.tipout === undefined)     c.config.tipout = true;
