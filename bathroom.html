@@ -5109,7 +5109,12 @@ function drawAdjElevBase(d, x, oy, Hm, s, w, cabH, kind, finishCol){
 function _adjWallY(oy, Hm, s, wallBottomY, cab){
   const under = (typeof pelmetUnderH === 'function' ? pelmetUnderH(cab) : 0) || 0;
   const H = (cab && cab.H) || 0;
-  const bot = Math.max(0, Math.min(wallBottomY, Hm - H - under));
+  // The height of the thing it is beside, not the height a wall cupboard
+  // happens to hang at. A niche sitting at 1100 had its filler drawn at the
+  // bench-and-splashback height of 2100 — the same piece of joinery in two
+  // places a metre apart, which is what the box high on the wall was.
+  const want = (typeof wallCabBottomY === "function") ? wallCabBottomY(cab) : wallBottomY;
+  const bot = Math.max(0, Math.min(want, Hm - H - under));
   return oy + (Hm - bot - under - H)*s;
 }
 function drawAdjElevWall(d, x, y, s, w, cabH, kind, finishCol){
