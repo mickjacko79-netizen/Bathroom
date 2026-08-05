@@ -1054,7 +1054,7 @@ const CATALOG = {
   'toilet':      { label:'Toilet suite',            defaultW:450, H:830,  D:700, row:'base', hasShelves:false,
     defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, labelText:'' } },
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
-    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, tapMode:'deck', labelText:'' } },
+    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, tapMode:'deck', wallTap:'plate-165', labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
     defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050, wallTap:'plate-165',
                     // wasteEnd: 'L' | 'C' | 'R' | 'OC' (offset centre), matching
@@ -6043,6 +6043,21 @@ function wallTapSpec(style){ return WALL_TAP_SPEC[style] || WALL_TAP_SPEC['plate
 // The wall mixer on a bath, if it has one. Both views ask this one question, so
 // they cannot disagree about it — and it does not consult the tap mode, because
 // a wall mixer is wall mounted by definition. Choosing one is the decision.
+// The wall mixer on any fixture that takes one. A basin defaults to a deck
+// tap, so unlike a bath it only gets the mixer when it is set to a wall tap —
+// turning every pedestal basin in every saved job into a wall-mounted one
+// would be a change to the job, not to how it is drawn.
+function wallMixerOf(cab){
+  if(!cab) return null;
+  const c = cab.config || {};
+  if(cab.type === 'bath') return bathWallMixer(cab);
+  if(cab.type === 'basin-fs'){
+    if((c.tapMode || 'deck') !== 'wall') return null;
+    if(!WALL_TAP_SPEC[c.wallTap]) c.wallTap = 'plate-165';
+    return c.wallTap;
+  }
+  return null;
+}
 function bathWallMixer(cab){
   const c = (cab && cab.config) || {};
   // Fill it in here rather than relying on the job having been through a load.
@@ -7365,7 +7380,8 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       d.polygon(P(ellipseUV(cu, 40 + bd/2, 90, 90)), null, COL.ink3, LW.hairline);
       d.dashed(false);
     }
-    if((c.tapMode || 'deck') === 'deck') drawTapOnPlan(d, wallId, plan, uOff + cu, 62, 'gooseneck');
+    if(wallMixerOf(cab)) drawWallMixerOnPlan(d, wallId, plan, uOff + cu, wallMixerOf(cab));
+    else if((c.tapMode || 'deck') === 'deck') drawTapOnPlan(d, wallId, plan, uOff + cu, 62, 'gooseneck');
     return;
   }
 
@@ -7718,10 +7734,20 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       poly(roundPoly([[cu-95, rimH-165],[cu+95, rimH-165],[cu+125, 0],[cu-125, 0]], 30),
         SAN.china, stroke, lw);
     } else {
-      R(cu-22, rimH-165, cu+22, rimH-330, SAN.metal, COL.ink2, LW.hairline);   // bottle trap
-      R(cu-95, rimH-330, cu+95, rimH-360, SAN.metal, COL.ink2, LW.hairline);
+      // Bottle trap: the tail off the waste, the bottle itself, and the spigot
+      // returning to the wall. It was two plain rectangles, the lower one
+      // sticking out both sides like a shelf rather than running back to the
+      // wall the basin hangs on.
+      R(cu-19, rimH-160, cu+19, rimH-255, SAN.metal, COL.ink2, LW.hairline);
+      poly(roundPoly([[cu-38, rimH-250],[cu+38, rimH-250],
+                      [cu+38, rimH-395],[cu-38, rimH-395]], 32), SAN.metal, COL.ink2, LW.hairline);
+      R(cu-19, rimH-395, cu+19, rimH-425, SAN.metal, COL.ink2, LW.hairline);
+      // Back to the wall, which is behind the basin, so it is dashed.
+      d.dashed(true);
+      R(cu-19, rimH-300, cu+19, rimH-330, null, COL.ink3, LW.hairline);
+      d.dashed(false);
     }
-    if((c.tapMode || 'deck') === 'wall') drawWallSpout(d, X(cu - 130), Y(rimH + 230), s, { reach:180, drop:40, dia:28 });
+    if(wallMixerOf(cab)) drawWallMixerOnElevation(d, X(cu), Y(rimH + 230), s, wallMixerOf(cab));
     else drawTapOnElevation(d, X(cu), Y(rimH), s, 'gooseneck');
     return;
   }
