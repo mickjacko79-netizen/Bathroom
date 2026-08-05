@@ -6020,17 +6020,35 @@ function drawTapOnPlan(d, wallId, plan, u, v, style){
   const a0 = P(u, v), a1 = P(u + 10, v);
   const sc = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) / 10 || (plan && plan.s) || 1;
   const half = T.spout/2, noseHalf = half*0.72, nose = v + T.reach;
-  // Lever, laid back over the bench behind the body — never past the wall it
-  // stands in front of.
-  const lev = Math.max(25, Math.min(T.lever, v - 12));
-  d.polygon([P(u - 8, v), P(u + 8, v), P(u + 6, v - lev), P(u - 6, v - lev)],
-    TAP_BODY, COL.ink2, LW.hairline);
-  // Spout, tapering to the outlet.
+  // The lever lies back over the bench behind the body, where there is bench to
+  // lie back over. A bath tap sits 55 to 75 off the wall and there is no room
+  // behind it at all, so it was drawn crushed against the wall as a dark stub.
+  // With less than its own length to lie in it is laid across instead, which is
+  // where the handle of a tap that close to a wall actually ends up.
+  const room = v - 12;
+  const levLen = Math.max(30, Math.min(T.lever, 90));
+  const across = room < levLen;
+  {
+    const th = across ? -1.18 : -Math.PI/2;             // radians, from +v
+    const du = Math.sin(th), dv = Math.cos(th);
+    const nu = dv, nv = -du;                            // across the lever
+    const L = across ? levLen : Math.max(25, Math.min(T.lever, room));
+    const wA = 8, wB = 6;
+    d.polygon([P(u + nu*wA, v + nv*wA), P(u - nu*wA, v - nv*wA),
+               P(u + du*L - nu*wB, v + dv*L - nv*wB), P(u + du*L + nu*wB, v + dv*L + nv*wB)],
+      TAP_BODY, COL.ink2, LW.hairline);
+    const t = P(u + du*L, v + dv*L);
+    d.circle(t[0], t[1], Math.max(0.35, wB*sc), TAP_BODY, COL.ink2, LW.hairline);
+  }
+  // Spout, tapering to the outlet, with a rounded nose rather than a cut end.
   d.polygon([P(u - half, v), P(u + half, v), P(u + noseHalf, nose), P(u - noseHalf, nose)],
     TAP_BODY, COL.ink2, LW.hairline);
-  // Outlet.
   const o = P(u, nose);
-  d.circle(o[0], o[1], Math.max(0.4, noseHalf*sc*0.75), '#FFFFFF', COL.ink2, LW.hairline);
+  d.circle(o[0], o[1], Math.max(0.4, noseHalf*sc), TAP_BODY, COL.ink2, LW.hairline);
+  // Outlet: a ring with the bore dark inside it, so it reads as a hole water
+  // comes out of and not as a blob on the end of a bar.
+  d.circle(o[0], o[1], Math.max(0.3, noseHalf*sc*0.62), '#FFFFFF', COL.ink2, LW.hairline);
+  d.circle(o[0], o[1], Math.max(0.15, noseHalf*sc*0.3), TAP_DARK, null, 0);
   // Base plate last, so it reads over the spout and the lever.
   d.circle(a0[0], a0[1], Math.max(0.6, (T.base/2)*sc), TAP_BODY, COL.ink, LW.hairline);
   d.circle(a0[0], a0[1], Math.max(0.3, (T.base/2)*sc*0.45), TAP_DARK, null, 0);
