@@ -7973,8 +7973,11 @@ function drawLowWallOnPlan(d, wall, plan){
       null, COL.ink2, LW.hairline);
   }
   // A grip at each end, so the run can be shortened on the drawing rather than
-  // by working out a number for it. Not on a thumbnail, and never on the PDF.
-  if(!state._planCompact){
+  // by working out a number for it. It is a control, not part of the drawing —
+  // off a thumbnail, and off the PDF, where it was printing as a red box on an
+  // issued sheet. The cabinet handles get out of the export by having the
+  // selection cleared; these belong to no selection, so they have to ask.
+  if(!state._planCompact && !_isPdfTarget(d)){
     [['from', L.from], ['to', L.to]].forEach(([end, u])=>{
       const c = planMap(wall.id, u, L.t/2, plan);
       const r = 2.2;
