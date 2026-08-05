@@ -1054,7 +1054,7 @@ const CATALOG = {
   'toilet':      { label:'Toilet suite',            defaultW:450, H:830,  D:700, row:'base', hasShelves:false,
     defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, labelText:'' } },
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
-    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, tapMode:'deck', wallTap:'plate-165', labelText:'' } },
+    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, tapMode:'deck', wallTap:'plate-165', trapL:145, labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
     defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050, wallTap:'plate-165',
                     // wasteEnd: 'L' | 'C' | 'R' | 'OC' (offset centre), matching
@@ -7738,13 +7738,21 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       // returning to the wall. It was two plain rectangles, the lower one
       // sticking out both sides like a shelf rather than running back to the
       // wall the basin hangs on.
-      R(cu-19, rimH-160, cu+19, rimH-255, SAN.metal, COL.ink2, LW.hairline);
-      poly(roundPoly([[cu-38, rimH-250],[cu+38, rimH-250],
-                      [cu+38, rimH-395],[cu-38, rimH-395]], 32), SAN.metal, COL.ink2, LW.hairline);
-      R(cu-19, rimH-395, cu+19, rimH-425, SAN.metal, COL.ink2, LW.hairline);
+      // The bottle is the part that varies — a shallow one clears a vanity
+      // drawer, a long one suits a wall-hung basin with the waste set low. The
+      // tail, the cleaning eye and the spigot all follow it rather than sitting
+      // at heights of their own, so the trap stays a trap at any length.
+      const _tail = 95, _tL = Math.max(40, Math.min(400, c.trapL || 145));
+      const _bTop = rimH - 160 - _tail + 5;
+      const _bBot = _bTop - _tL;
+      R(cu-19, rimH-160, cu+19, _bTop - 5, SAN.metal, COL.ink2, LW.hairline);
+      poly(roundPoly([[cu-38, _bTop],[cu+38, _bTop],
+                      [cu+38, _bBot],[cu-38, _bBot]], Math.min(32, _tL*0.22)),
+        SAN.metal, COL.ink2, LW.hairline);
+      R(cu-19, _bBot, cu+19, _bBot - 30, SAN.metal, COL.ink2, LW.hairline);
       // Back to the wall, which is behind the basin, so it is dashed.
       d.dashed(true);
-      R(cu-19, rimH-300, cu+19, rimH-330, null, COL.ink3, LW.hairline);
+      R(cu-19, _bTop - _tL*0.35, cu+19, _bTop - _tL*0.35 - 30, null, COL.ink3, LW.hairline);
       d.dashed(false);
     }
     if(wallMixerOf(cab)) drawWallMixerOnElevation(d, X(cu), Y(rimH + 230), s, wallMixerOf(cab));
@@ -13485,6 +13493,8 @@ function renderEditPanel(){
       num('Cistern / top height', 'cisternH', 400, 1400, 5);
     } else if(cab.type === 'basin-fs'){
       pick('Type', 'style', [['wall-hung','Wall hung + bottle trap'],['pedestal','Pedestal'],['semi-recessed','Semi-recessed']]);
+      // Only a wall-hung basin has a trap on show; a pedestal hides it.
+      if((c.style || 'wall-hung') !== 'pedestal') num('Bottle trap length', 'trapL', 40, 400, 5);
       pick('Tapware', 'tapMode', [['deck','Deck mounted'],['wall','Wall mounted']]);
       num('Rim height', 'rimH', 700, 1000, 5);
       num('Bowl width', 'bowlW', 250, 900, 5);
