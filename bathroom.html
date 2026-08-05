@@ -5101,6 +5101,17 @@ function drawAdjElevBase(d, x, oy, Hm, s, w, cabH, kind, finishCol){
       { align:'center', baseline:'middle', size:4, color:COL.muted, italic:true, angle:-Math.PI/2 });
   }
 }
+// Where an adjacency beside a wall-row item sits. It was worked out from the
+// bench and the splashback alone, with nothing holding it under the ceiling —
+// so on a wall where that height plus the item's own passes the ceiling, the
+// filler floated above it with nothing underneath: a box on its own at the top
+// of the sheet. Held down the same way the item beside it is.
+function _adjWallY(oy, Hm, s, wallBottomY, cab){
+  const under = (typeof pelmetUnderH === 'function' ? pelmetUnderH(cab) : 0) || 0;
+  const H = (cab && cab.H) || 0;
+  const bot = Math.max(0, Math.min(wallBottomY, Hm - H - under));
+  return oy + (Hm - bot - under - H)*s;
+}
 function drawAdjElevWall(d, x, y, s, w, cabH, kind, finishCol){
   if(kind === 'space') return;
   d.rect(x, y, w*s, cabH*s, finishCol, kind === 'panel' ? COL.accent : COL.ink2, LW.hairline);
@@ -10249,11 +10260,11 @@ function drawElevation(d, area, wallId, opts){
     _curFrontCab = cab;
     finishCol = mirrorFrontOf(cab) ? SAN.mirror : _projFrontCol;
     if(cab.adj?.left?.filler > 0){
-      drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.left.filler, cab.H, cab.adj.left.kind === 'space' ? 'space' : 'filler', finishCol);
+      drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.left.filler, cab.H, cab.adj.left.kind === 'space' ? 'space' : 'filler', finishCol);
       wu += cab.adj.left.filler;
     }
     if(cab.adj?.left?.panel > 0){
-      drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.left.panel, cab.H, 'panel', finishCol);
+      drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.left.panel, cab.H, 'panel', finishCol);
       wu += cab.adj.left.panel;
     }
     const x = ox + wu*s;
@@ -10287,11 +10298,11 @@ function drawElevation(d, area, wallId, opts){
     // so every cabinet after them drifted out of alignment.
     const _rightAdjWall = ()=>{
       if(cab.adj?.right?.panel > 0){
-        drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.panel, cab.H, 'panel', finishCol);
+        drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.panel, cab.H, 'panel', finishCol);
         wu += cab.adj.right.panel;
       }
       if(cab.adj?.right?.filler > 0){
-        drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol);
+        drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol);
         wu += cab.adj.right.filler;
       }
     };
@@ -10425,8 +10436,8 @@ function drawElevation(d, area, wallId, opts){
       drawCarcassVoid(d, x, y, cab.W, cab.H, s, state.carcass.T, false, 0);
       recordHit(view, cab.id, x, y, x + cab.W*s, y + cab.H*s, wallId);
       wu += cab.W;
-      if(cab.adj?.right?.panel > 0){ drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.panel, cab.H, 'panel', finishCol); wu += cab.adj.right.panel; }
-      if(cab.adj?.right?.filler > 0){ drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol); wu += cab.adj.right.filler; }
+      if(cab.adj?.right?.panel > 0){ drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.panel, cab.H, 'panel', finishCol); wu += cab.adj.right.panel; }
+      if(cab.adj?.right?.filler > 0){ drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol); wu += cab.adj.right.filler; }
       return;
     }
     if(_wallMode === 'lift'){
@@ -10447,8 +10458,8 @@ function drawElevation(d, area, wallId, opts){
       drawCarcassVoid(d, x, y, cab.W, cab.H, s, state.carcass.T, false, 0);
       recordHit(view, cab.id, x, y, x + cab.W*s, y + cab.H*s, wallId);
       wu += cab.W;
-      if(cab.adj?.right?.panel > 0){ drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.panel, cab.H, 'panel', finishCol); wu += cab.adj.right.panel; }
-      if(cab.adj?.right?.filler > 0){ drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol); wu += cab.adj.right.filler; }
+      if(cab.adj?.right?.panel > 0){ drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.panel, cab.H, 'panel', finishCol); wu += cab.adj.right.panel; }
+      if(cab.adj?.right?.filler > 0){ drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol); wu += cab.adj.right.filler; }
       return;
     }
     if(_wallMode === 'bifold-lift'){
@@ -10493,8 +10504,8 @@ function drawElevation(d, area, wallId, opts){
       drawCarcassVoid(d, x, y, cab.W, cab.H, s, state.carcass.T, false, 0);
       recordHit(view, cab.id, x, y, x + cab.W*s, y + cab.H*s, wallId);
       wu += cab.W;
-      if(cab.adj?.right?.panel > 0){ drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.panel, cab.H, 'panel', finishCol); wu += cab.adj.right.panel; }
-      if(cab.adj?.right?.filler > 0){ drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol); wu += cab.adj.right.filler; }
+      if(cab.adj?.right?.panel > 0){ drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.panel, cab.H, 'panel', finishCol); wu += cab.adj.right.panel; }
+      if(cab.adj?.right?.filler > 0){ drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol); wu += cab.adj.right.filler; }
       return;
     }
     if(_wallMode === 'rangehood'){
@@ -10544,11 +10555,11 @@ function drawElevation(d, area, wallId, opts){
       recordHit(view, cab.id, x, y, x + cab.W*s, y + cab.H*s, wallId);
       wu += cab.W;
       if(cab.adj?.right?.panel > 0){
-        drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.panel, cab.H, 'panel', finishCol);
+        drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.panel, cab.H, 'panel', finishCol);
         wu += cab.adj.right.panel;
       }
       if(cab.adj?.right?.filler > 0){
-        drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol);
+        drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol);
         wu += cab.adj.right.filler;
       }
       return;
@@ -10603,11 +10614,11 @@ function drawElevation(d, area, wallId, opts){
     recordHit(view, cab.id, x, y, x + cab.W*s, y + cab.H*s, wallId);
     wu += cab.W;
     if(cab.adj?.right?.panel > 0){
-      drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.panel, cab.H, 'panel', finishCol);
+      drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.panel, cab.H, 'panel', finishCol);
       wu += cab.adj.right.panel;
     }
     if(cab.adj?.right?.filler > 0){
-      drawAdjElevWall(d, ox + wu*s, oy + (Hm - wallBottomY - pelmetUnderH(cab) - cab.H)*s, s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol);
+      drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.right.filler, cab.H, cab.adj.right.kind === 'space' ? 'space' : 'filler', finishCol);
       wu += cab.adj.right.filler;
     }
   });
