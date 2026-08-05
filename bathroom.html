@@ -6045,6 +6045,12 @@ function wallTapSpec(style){ return WALL_TAP_SPEC[style] || WALL_TAP_SPEC['plate
 // a wall mixer is wall mounted by definition. Choosing one is the decision.
 function bathWallMixer(cab){
   const c = (cab && cab.config) || {};
+  // Fill it in here rather than relying on the job having been through a load.
+  // Backfilling on load only reaches baths in the containers that loop walks —
+  // a bath in an adjoining room, or on the island, or one added since, was
+  // never given the field and quietly went on drawing the old tap. Asking at
+  // the moment of drawing reaches every one of them, wherever it lives.
+  if(c.wallTap === undefined || c.wallTap === null || c.wallTap === '') c.wallTap = 'plate-165';
   return (c.tapMode !== 'floor' && c.wallTap && WALL_TAP_SPEC[c.wallTap]) ? c.wallTap : null;
 }
 // Elevation, looking at the wall it is fixed to. The plate is seen square on;
