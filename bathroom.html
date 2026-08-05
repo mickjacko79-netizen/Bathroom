@@ -10780,7 +10780,10 @@ function drawElevation(d, area, wallId, opts){
   d.text(fx, fy + 2.6, `Benchtop · ${state.bench.overhang} mm overhang`, { size:5.5, color:COL.muted });
   // (The fronts finish is stated in the footer note below; the floating duplicate
   // that used to sit here landed on top of the overall dimension line.)
-  // Handle callout
+  // The handle callout used to sit here. On a wall of sanitaryware it was
+  // describing joinery that is often not on the wall at all, and it is already
+  // scheduled and on the summary. Kept only where there is joinery to describe.
+  if(wall && (wall.baseRow || []).some(c => !isSanitary(c)))
   d.text(area.x + 8, area.y + area.h - 30, `Handles: ${HANDLE_STYLES[state.handleDefault.style]?.label || 'mixed'} · ${HANDLE_FINISH_LABELS[state.handleDefault.finish] || ''}`, { size:5.5, color:COL.muted, italic:true });
 
   // WALL ID badge
@@ -10807,8 +10810,20 @@ function drawElevation(d, area, wallId, opts){
     d.text(area.x + 5, area.y + 23.8, msg, { size:5.5, bold:true, color:'#A8332B' });
   }
 
+  // What this wall is actually finished in. It read "Fronts / Carcass /
+  // Splashback" whatever was on the wall — the kitchen's words, quoting a
+  // carcass on a wall that has no joinery and calling the tiling a splashback.
   d.text(area.x + 8, area.y + area.h - 6,
-    `Fronts: ${state.finish.label} · Carcass: ${state.carcass.substrate} ${state.carcass.T} mm · Splashback: ${state.bench.splashback} mm`,
+    (function(){
+      const bits = [];
+      const wt = wallFinishNote(wall);
+      bits.push('Wall: ' + (wt || splashbackSpecLabel()));
+      const lw = lowWallFinishNote(wall);
+      if(lw) bits.push('Low wall: ' + lw);
+      if(wall && (wall.baseRow || []).some(c => !isSanitary(c)))
+        bits.push(`Joinery: ${state.finish.label} · ${state.carcass.substrate} ${state.carcass.T} mm`);
+      return bits.join('  ·  ');
+    })(),
     { size:6, color:COL.muted, italic:true });
   // Drag insertion line (no ghost cab — the live reorder moves the actual cab).
   if(state.ui.drag && state.ui.drag.active && state.ui.drag.pending && state.ui.drag.pending.view === view){
