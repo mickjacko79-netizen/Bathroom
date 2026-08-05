@@ -7717,6 +7717,22 @@ function lowWallOf(wall){
            capping:   L.capping !== false,
            cappingD:  Math.max(0,   (L.cappingD === undefined ? 40 : L.cappingD)) };
 }
+// How far off the floor a wall-row item's underside sits. The elevation works
+// this out inline because it has the wall's own numbers in hand; the plan has
+// to ask, now that it decides whether an item is low enough to be fixing to a
+// low wall. Anything carrying its own bottom — a mirror, a rail, a niche — says
+// so; the rest hang at the standard height under the ceiling.
+function wallCabBottomY(cab){
+  if(!cab) return 0;
+  const c = cab.config || {};
+  if(typeof c.cabBottomY === 'number' && c.cabBottomY > 0) return c.cabBottomY;
+  const Hm = (state.room && state.room.H) || 2700;
+  const benchTopY = (state.bench && state.bench.height) || 850;
+  const wallBottomY = benchTopY + ((state.bench && state.bench.splashback) || 0);
+  let under = 0;
+  try { under = pelmetUnderH(cab) || 0; } catch(_){}
+  return Math.min(wallBottomY, Math.max(0, Hm - (cab.H || 0) - under - 50));
+}
 // Whether something occupying u0..u1 and starting at bottomY fixes to the low
 // wall. It has to overlap it along the wall AND start below its top: a mirror
 // at 1400 goes on the wall behind, which is the whole point of the thing.
@@ -8625,6 +8641,11 @@ function drawPlan(d, area, view, opts){
     const wallDepth = (w.wallRow.length ? Math.max(...w.wallRow.map(c=>c.D)) : 320) + CONST.FRONT_PROJ;
     let u = start;
     w.wallRow.forEach(cab=>{
+      // Low enough to be in the low wall? Then it hangs off that, and its
+      // recess is cut into that — so the offset goes on before anything here is
+      // mapped, and the recess still measures back from whatever face it is
+      // fixed to. A mirror at 1400 is above the low wall and does not move.
+      _planVOff = lowWallOffset(w, u, u + cab.W, wallCabBottomY(cab));
       // A recessed unit starts inside the wall: its footprint runs from -recess
       // to depth-recess, so a flush one sits entirely within the wall band. Read
       // up here because whatever is beside it has to be set back with it.
@@ -8730,6 +8751,7 @@ function drawPlan(d, area, view, opts){
           planBandOnWall(d, w.id, u, cab.adj.right.filler, b.v0 - _rec, b.v1 - _rec, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
       }
       if(cab.adj?.right?.filler > 0) u += cab.adj.right.filler;
+      _planVOff = 0;
     });
   });
 
@@ -13017,13 +13039,15 @@ function renderEditPanel(){
       // deep the niche can be. Said here rather than left to be discovered on
       // site, where the answer is a hole through to the next room.
       {
-        const wt = wallThickness(findWallForCab(cab.id)?.wall) || state.room.wallT || 90;
+        const _fw = findWallForCab(cab.id);
+        const _lw = _fw ? onLowWall(_fw.wall, 0, cab.W, (cab.config || {}).cabBottomY || 0) : null;
+        const wt = _lw ? _lw.t : (wallThickness(_fw && _fw.wall) || state.room.wallT || 90);
         const room = Math.max(0, wt - 20);
         const warn = el('div', { class:'ctrl',
           style:'font-size:11px;color:' + (cab.D > room ? 'var(--danger,#C0392B)' : 'var(--muted)') + ';margin-top:-2px' },
-          cab.D > room
-            ? `Deeper than the wall allows — ${wt} mm wall leaves about ${room} mm once it is lined.`
-            : `${wt} mm wall · about ${room} mm available once it is lined.`);
+          (cab.D > room
+            ? `Deeper than the wall allows — ${wt} mm ${_lw ? 'low wall' : 'wall'} leaves about ${room} mm once it is lined.`
+            : `${wt} mm ${_lw ? 'low wall' : 'wall'} · about ${room} mm available once it is lined.`));
         editor.appendChild(warn);
       }
     }
