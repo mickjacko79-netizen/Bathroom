@@ -10808,10 +10808,13 @@ function drawElevation(d, area, wallId, opts){
       });
       _seen.forEach(({ rec, refs }, i)=>{
         const X = ox + _crop.to*s + 34 + i*26;
+        // Held inside the ceiling line. The tag sits above the cupboard it
+        // names, and a cupboard hard against the ceiling leaves nowhere above
+        // it — so the tag walked out of the drawing and into the sheet header.
         // Name the cupboard the chain is for, at the head of it — always, so the
         // figures can be read back to a cabinet on the schedule without having
         // to work out which overhead they came off.
-        d.text(X, _yAt(rec.bot + rec.H + rec.tp) - 3, refs.join(', '),
+        d.text(X, Math.max(oy + 4, _yAt(rec.bot + rec.H + rec.tp) - 3), refs.join(', '),
           { align:'center', baseline:'alphabetic', size:Math.max(3.6, _dts - 1), color:COL.accent, bold:true });
         // Up to the lowest thing on it — the door where it runs past the pelmet.
         archDimV(d, _yAt(rec.bot - rec.drop), oy + Hm*s, X,
