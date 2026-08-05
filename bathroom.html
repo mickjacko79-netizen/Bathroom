@@ -7627,16 +7627,52 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
   }
 
   if(cab.type === 'shower-niche'){
-    // A recess reads as a recess: the opening solid, the returns hairline.
-    d.rect(x, y, W, H, '#F3F5F5', stroke, lw);
-    d.rect(x + 16*s, y + 16*s, W - 32*s, H - 32*s, '#E9EDEE', COL.ink3, LW.hairline);
+    // The inside of a niche is tiled, in the same tile as the wall it is cut
+    // into — it was a pale blue box let into the tiling, which is not what gets
+    // built. Set out from the niche's own corner rather than the room datum,
+    // because a tiler works the courses to the opening rather than running the
+    // wall's through it. A base coat first, so a wall with no tiling on it at
+    // all still leaves the recess reading as a recess.
+    d.rect(x, y, W, H, '#F3F5F5', null, 0);
+    drawSplashbackBand(d, x, y, W, H);
+    // The reveal: the returns back into the wall, mitred at the corners.
+    const rIn = Math.max(1, Math.min(14*s, W*0.08, H*0.12));
+    [[x, y], [x + W, y], [x, y + H], [x + W, y + H]].forEach(([ax, ay])=>{
+      const bx = ax + (ax === x ? rIn : -rIn), by = ay + (ay === y ? rIn : -rIn);
+      d.line(ax, ay, bx, by, COL.ink3, LW.hairline);
+    });
+    d.rect(x + rIn, y + rIn, W - 2*rIn, H - 2*rIn, null, COL.ink3, LW.hairline);
+    d.rect(x, y, W, H, null, stroke, lw);
     // Shelves, evenly spaced across the opening. It used to be one shelf or
     // none, which is not how a tall niche is built.
     const _ns = nicheShelves(cab);
     for(let i = 1; i <= _ns; i++){
       const sy = y + H * (i / (_ns + 1));
-      d.line(x + 16*s, sy, x + W - 16*s, sy, COL.ink2, LW.thin);
+      d.line(x + rIn, sy, x + W - rIn, sy, COL.ink2, LW.thin);
     }
+    // What it measures, written inside it. A niche is set out by a tiler off
+    // the elevation, and its size is the one thing they need off this drawing —
+    // it used to be nowhere on the sheet at all.
+    (function(){
+      const l1 = Math.round(cab.W) + ' \u00D7 ' + Math.round(cab.H);
+      const l2 = Math.round(cab.D) + ' DEEP';
+      // In the bottom compartment, so shelves are not written over.
+      const band = H / (_ns + 1);
+      const cy = y + H - band/2;
+      const sz = Math.max(2.6, Math.min(4.6, band * 0.30, W * 0.11));
+      const two = band > sz * 3.2;
+      const wid = Math.max(textWidthMM(l1, sz), textWidthMM(l2, sz));
+      if(wid > W - 4*rIn) return;              // too small to letter legibly
+      const cx = x + W/2;
+      const th = two ? sz * 2.5 : sz * 1.5;
+      d.rect(cx - wid/2 - 2, cy - th/2, wid + 4, th, '#FFFFFF', null, 0);
+      if(two){
+        d.text(cx, cy - sz*0.15, l1, { align:'center', size:sz, color:COL.ink2 });
+        d.text(cx, cy + sz*1.0,  l2, { align:'center', size:sz, color:COL.muted });
+      } else {
+        d.text(cx, cy + sz*0.35, l1 + ' \u00D7 ' + l2, { align:'center', size:sz, color:COL.ink2 });
+      }
+    })();
     d.text(x + W/2, y + H + 22*s, (c.labelText || 'NICHE'), { align:'center', size:4, color:COL.muted, italic:true });
     return true;
   }
