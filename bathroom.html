@@ -4128,14 +4128,21 @@ function archDimAlong(d, x1, y1, x2, y2, offX, offY, label, opts={}){
   if(len < 6) return;                       // too short to letter legibly
   const ux = dx/len, uy = dy/len;
   const nx = -uy, ny = ux;
-  // Witness lines back towards the face being measured, stopping short of it.
-  // Run right up to the wall they touch its poché and read as part of the
-  // drawing rather than as a dimension off it.
+  // Witness lines back towards the face being measured, stopping short of it
+  // and running past the dimension line at the other end so they cross on the
+  // tick, which is what makes a tick read as a tick.
+  //
+  // The far end used to be pushed out along n, the perpendicular of the
+  // dimension line. n flips with the direction the wall runs, so on half the
+  // walls it pushed the witness back TOWARDS the wall and the line stopped
+  // short of the dimension instead of crossing it. Pushed out along the offset
+  // itself it always goes the one way — away from what is being measured.
   const _ol = Math.hypot(offX, offY) || 1;
   const _gx = offX/_ol, _gy = offY/_ol;
   const _gap = (opts.gap === undefined) ? 2.5 : opts.gap;
-  d.line(x1 + _gx*_gap, y1 + _gy*_gap, ax + nx*1.4, ay + ny*1.4, color, lw*0.7);
-  d.line(x2 + _gx*_gap, y2 + _gy*_gap, bx + nx*1.4, by + ny*1.4, color, lw*0.7);
+  const _past = 1.6;
+  d.line(x1 + _gx*_gap, y1 + _gy*_gap, ax + _gx*_past, ay + _gy*_past, color, lw*0.7);
+  d.line(x2 + _gx*_gap, y2 + _gy*_gap, bx + _gx*_past, by + _gy*_past, color, lw*0.7);
   d.line(ax, ay, bx, by, color, lw);
   const tick = 0.9;
   [[ax, ay], [bx, by]].forEach(([px, py])=>{
@@ -9143,16 +9150,25 @@ function drawPlan(d, area, view, opts){
       // chain stands off the drawing instead of sitting on it. Measured in real
       // millimetres rather than page ones, so it holds at any scale — with a
       // floor in page terms so it cannot crowd the wall on a small drawing.
-      const off = (_wallTs[wi] || wallT)*s + Math.max(_traced ? 24 : 15, 200*s);
+      // Two hundred millimetres, as asked. The floor is only there so the
+      // chain cannot collapse onto the wall on a very small drawing — it used
+      // to be large enough to win at normal scales and push the chain out to
+      // 245 instead.
+      const off = (_wallTs[wi] || wallT)*s + Math.max(200*s, _traced ? 14 : 8);
       // The outward normal, taken off the map so any wall angle is handled.
       const q0 = planMap(w.id, 0, 0, plan), qIn = planMap(w.id, 0, 100, plan);
       let nx = q0[0] - qIn[0], ny = q0[1] - qIn[1];
       const nl = Math.hypot(nx, ny) || 1;
       nx = nx/nl * off; ny = ny/nl * off;
+      // Clear of the wall itself, not just of the face being measured: the
+      // chain is dimensioned off the room face, so a witness line starting
+      // there runs out straight through the poché.
+      const _wGap = (_wallTs[wi] || wallT)*s + 2;
       const seg = (u0, u1, label, opts, cabForHit) => {
         if(u1 - u0 <= 0) return;
         const a = planMap(w.id, u0, 0, plan), b = planMap(w.id, u1, 0, plan);
-        archDimAlong(d, a[0], a[1], b[0], b[1], nx, ny, label, opts);
+        archDimAlong(d, a[0], a[1], b[0], b[1], nx, ny, label,
+          Object.assign({ gap: _wGap }, opts));
         if(cabForHit){
           const x0 = Math.min(a[0], b[0]) + nx, x1 = Math.max(a[0], b[0]) + nx;
           const y0 = Math.min(a[1], b[1]) + ny, y1 = Math.max(a[1], b[1]) + ny;
