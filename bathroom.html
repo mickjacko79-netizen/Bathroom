@@ -7412,9 +7412,8 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   if(cab.type === 'blade'){
     // Seen from above it is a rectangle running out from the wall: as thick as
     // it is wide and as long as it reaches.
-    const sp = state.splashback || {};
-    const fill = (c.tile && WALL_TILE_TYPES[c.tile] && (c.color || WALL_TILE_TYPES[c.tile].color))
-      || sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
+    // Filled the way a low wall is, through the same call.
+    let fill; withBladeFinish(cab, ()=>{ fill = tiledWallPlanFill(); });
     d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), fill, COL.ink, LW.thin);
     // The free end, which is the one that gets a capping or a set-out.
     d.line.apply(d, P([[0,D],[W,D]]).flat().concat([COL.ink, LW.medium]));
@@ -7570,9 +7569,24 @@ function drawWallSpout(d, X, Y, s, opts){
 // ordered — and a door is shown open with its swing, like any other door.
 function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
   const L = screenLayout(cab);
+  const P = (pts)=> mapUV(wallId, uOff, pts, plan);
+  // A blade wall is built, so it is drawn as wall rather than glass, and it
+  // replaces the glass return on the side it stands on. It comes before the
+  // screen — and before a shower with no screen gives up — because a built
+  // wall stands there whether or not there is any glass beside it. Leaving it
+  // to the screen took the wall of a walk-in shower off the floor plans.
+  if(L.blade){
+    const bl = L.blade;
+    const u0 = (bl.side === 'R') ? L.W - bl.t : 0;
+    // Filled the way a low wall is, through the same call.
+    let fill; withBladeFinish(cab, ()=>{ fill = tiledWallPlanFill(); });
+    d.polygon(P([[u0, 0],[u0 + bl.t, 0],[u0 + bl.t, bl.d],[u0, bl.d]]), fill, COL.ink, LW.thin);
+    // The nib end gets the same line weight the room's own walls carry.
+    const tp = planMap(wallId, uOff + u0 + bl.t / 2, bl.d + 95, plan);
+    d.text(tp[0], tp[1], 'BLADE ' + Math.round(bl.t), { align:'center', size:4, color:COL.muted });
+  }
   if(L.type === 'none') return;
   const ink = screenInk(cab);
-  const P = (pts)=> mapUV(wallId, uOff, pts, plan);
   const half = L.t / 2;
   // A pane lying along the front face of the tray, between u0 and u1.
   const paneU = (u0, u1)=> d.polygon(P([[u0, L.D-half],[u1, L.D-half],[u1, L.D+half],[u0, L.D+half]]),
@@ -7608,18 +7622,6 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
   };
 
   const hingeRight = (L.hinge === 'R');
-  // A blade wall is built, so it is drawn as wall rather than glass, and it
-  // replaces the glass return on the side it stands on.
-  if(L.blade){
-    const bl = L.blade;
-    const u0 = (bl.side === 'R') ? L.W - bl.t : 0;
-    const wm = wallMaterial(state.room.wallMaterial);
-    const fill = state.room.wallColorOverride || (wm && wm.color) || COL.poche;
-    d.polygon(P([[u0, 0],[u0 + bl.t, 0],[u0 + bl.t, bl.d],[u0, bl.d]]), fill, COL.ink, LW.thin);
-    // The nib end gets the same line weight the room's own walls carry.
-    const tp = planMap(wallId, uOff + u0 + bl.t / 2, bl.d + 95, plan);
-    d.text(tp[0], tp[1], 'BLADE ' + Math.round(bl.t), { align:'center', size:4, color:COL.muted });
-  }
   // A glass return goes on the panel's side, and only where a blade is not
   // already doing that job.
   if((L.type === 'return-panel' || L.type === 'corner')
@@ -8169,13 +8171,22 @@ function setLowWallEnd(wall, end, u){
 // Plan: the low wall as a band standing off the wall face, tiled, with the
 // capping shown as a line along its front edge.
 let _lwView = null;
+// What a built, tiled wall is filled with when it is seen from above. A low
+// wall and a blade wall are the same thing — brickwork or studwork, tiled,
+// cut through by the plan — so they are filled by the same line of code and
+// cannot drift apart into looking like two different kinds of object. Call it
+// inside withLowWallFinish or withBladeFinish and it picks up that wall's own
+// tile; call it outside one and it gives the room's finish.
+function tiledWallPlanFill(){
+  const sp = state.splashback || {};
+  return sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
+}
 function drawLowWallOnPlan(d, wall, plan){
   const L = lowWallOf(wall);
   if(!L) return;
   withLowWallFinish(L, ()=>{
-    const sp = state.splashback || {};
-    const fill = sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
-    planRectOnWall(d, wall.id, L.from, L.to - L.from, L.t, plan, fill, COL.ink, LW.thin);
+    planRectOnWall(d, wall.id, L.from, L.to - L.from, L.t, plan,
+      tiledWallPlanFill(), COL.ink, LW.thin);
   });
   if(L.capping && L.cappingD > 0){
     const cd = Math.min(L.cappingD, L.t);
