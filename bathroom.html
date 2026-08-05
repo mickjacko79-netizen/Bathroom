@@ -4875,6 +4875,23 @@ function isFlushRecessed(cab){
 }
 // How many shelves are in a niche. It was one shelf or none, held as a boolean;
 // drawings saved that way still read correctly.
+// A niche is a hole in a wall. There is no joinery beside it to fill or to
+// panel, so it has neither — and one drawn beside it was a piece of nothing on
+// the elevation and a line on the schedule for something nobody is making.
+//
+// What it does keep is the gap. Dragging a niche along its wall sets a filler
+// marked as a space to hold where it sits, and taking that away would take away
+// its position with it. So a panel becomes gap, and any filler becomes a gap:
+// the niche stays where it was put and nothing is built beside it.
+function tidyNicheAdjacency(cab){
+  if(!cab || cab.type !== 'shower-niche' || !cab.adj) return;
+  ['left','right'].forEach(side=>{
+    const a = cab.adj[side];
+    if(!a) return;
+    if(a.panel > 0){ a.filler = (a.filler || 0) + a.panel; a.panel = 0; }
+    if(a.filler > 0) a.kind = 'space';
+  });
+}
 function nicheShelves(cab){
   const c = (cab && cab.config) || {};
   if(typeof c.shelves === 'number') return Math.max(0, Math.min(3, Math.round(c.shelves)));
@@ -8797,6 +8814,7 @@ function drawPlan(d, area, view, opts){
     const wallDepth = (w.wallRow.length ? Math.max(...w.wallRow.map(c=>c.D)) : 320) + CONST.FRONT_PROJ;
     let u = start;
     w.wallRow.forEach(cab=>{
+      tidyNicheAdjacency(cab);
       // Low enough to be in the low wall? Then it hangs off that, and its
       // recess is cut into that — so the offset goes on before anything here is
       // mapped, and the recess still measures back from whatever face it is
@@ -10258,6 +10276,7 @@ function drawElevation(d, area, wallId, opts){
   // Wall row uses its own startU (accounts for corner-WALL on previous wall),
   // independent of the base row's startU.
   const wallStartU = runStartOffset(wall, 'wall');
+  (wall.wallRow || []).forEach(tidyNicheAdjacency);
   // Every fascia on this wall, merged into continuous boards.
   const _pelmetBands = [];
   // The fascia UNDER a cabinet is behind its doors — the doors run on past it —
@@ -13891,7 +13910,9 @@ function renderEditPanel(){
   }
 
   // ----- ADJACENCIES (per-cabinet fillers + decorative panels)
-  if(cab.type !== 'fridge-gap'){
+  // A niche has none: it is a hole in a wall, not a run of joinery, so there is
+  // nothing beside it to fill or to panel and no control for setting one.
+  if(cab.type !== 'fridge-gap' && cab.type !== 'shower-niche'){
     editor.appendChild(el('h3', {}, 'Adjacent fillers & panels'));
     if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
     function adjInput(label, key1, key2, max){
