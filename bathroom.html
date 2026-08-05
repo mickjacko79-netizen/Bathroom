@@ -505,7 +505,7 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl"><label>Tiling height <span class="val"><input class="valInp" id="spVal" type="number" min="0" max="3300" step="10" value="1250"> mm</span></label><input id="sp" type="range" min="0" max="3300" step="10" value="1250"></div>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin:-4px 0 8px">Measured up from the vanity top. Set it past the ceiling height for full-height tiling.</div>
         <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileFullWalls" checked> <span>Tile every wall, not just above the vanity</span></label>
-        <div class="ctrl"><label>Tile datum <span class="val"><input class="valInp" id="tileDatum" type="number" min="0" max="1200" step="5" value="0"> mm</span></label>
+        <div class="ctrl"><label>Tile datum <span class="val"><input class="valInp" id="tileDatum" type="number" min="-50" max="1200" step="5" value="0"> mm</span></label>
           <div style="font-size:11px;color:var(--muted);margin-top:2px">Height above finished floor the tiling is set out from — 0 is FFL. Raise it for a hob, a screed or a set-down.</div>
         </div>
         <div class="ctrl"><label>Part course goes</label>
@@ -1515,6 +1515,8 @@ function drawWallTiling(d, ox, oy, wL, Hm, s){
   finally { _tileSetout = false; }
 
   // Below the datum is not tiled — say so rather than leaving it ambiguous.
+  // Only above FFL: below it the tiling runs on under the floor and there is no
+  // untiled strip to mark.
   if(bottom > 0){
     d.line(ox, oy + (Hm - bottom)*s, ox + wL*s, oy + (Hm - bottom)*s, COL.ink2, LW.thin);
   }
@@ -1526,7 +1528,7 @@ function drawWallTiling(d, ox, oy, wL, Hm, s){
     d.polygon([[ox - 4, dy - t], [ox - 4 + t*1.7, dy], [ox - 4, dy + t]], COL.accent, COL.accent, LW.hairline);
     d.line(ox - 12, dy, ox - 4, dy, COL.accent, LW.thin);
     d.text(ox - 13, dy - 1.2,
-      `TILE DATUM ${bottom === 0 ? 'FFL' : '+' + Math.round(bottom)}`,
+      `TILE DATUM ${bottom === 0 ? 'FFL' : (bottom > 0 ? '+' : '') + Math.round(bottom)}`,
       { size:4.2, color:COL.accent, align:'right' });
     d.text(ox - 13, dy + 4,
       `${g.full} × ${g.module.h} ${g.cut > 0.5 ? '+ ' + g.cut + ' cut ' + (g.mode === 'both' ? 'each end' : 'at ' + (g.mode === 'top' ? 'floor' : 'top')) : '· gauges full'}`,
@@ -4560,7 +4562,10 @@ function tileModule(){
 // tiling setout is measured from here, so moving it moves every course.
 function tileDatumY(){
   const sp = state.splashback || {};
-  return Math.max(0, sp.datum || 0);
+  // Down to 50 below finished floor level. A floor laid to falls has no single
+  // FFL: the lowest point of it is what the wall tiling has to start off, or
+  // the bottom course runs out of tile where the floor drops away from it.
+  return Math.max(-50, sp.datum || 0);
 }
 // How a wall gauges out: the courses that fit between the datum and the tile
 // line, and the part course left over.
