@@ -1054,7 +1054,7 @@ const CATALOG = {
   'toilet':      { label:'Toilet suite',            defaultW:450, H:830,  D:700, row:'base', hasShelves:false,
     defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, labelText:'' } },
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
-    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, tapMode:'deck', wallTap:'plate-165', trapL:145, labelText:'' } },
+    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, bowlShape:'oval', tapMode:'deck', wallTap:'plate-165', trapL:145, labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
     defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050, wallTap:'plate-165',
                     // wasteEnd: 'L' | 'C' | 'R' | 'OC' (offset centre), matching
@@ -7290,6 +7290,29 @@ function bathFloorWasteU(cab){
   }
 }
 // Points around an ellipse, in fixture-local (u,v) millimetres.
+// A basin bowl in plan. Round and oval were all there was, so a rectangular
+// basin — which is most of what goes in a bathroom now — had to be drawn as an
+// oval and dimensioned as a rectangle.
+const BOWL_SHAPES = {
+  'oval':      'Oval',
+  'round':     'Round',
+  'rect-soft': 'Rectangular, soft corners',
+  'rect':      'Rectangular',
+};
+// ru/rv are half the bowl. A round one takes the smaller of the two so it
+// stays round however the width and depth are set.
+function bowlUV(cu, cv, ru, rv, shape){
+  switch(shape){
+    case 'round': { const r = Math.min(ru, rv); return ellipseUV(cu, cv, r, r, 30); }
+    case 'rect':      return roundRectUV(cu-ru, cv-rv, cu+ru, cv+rv, Math.min(ru, rv)*0.10);
+    case 'rect-soft': return roundRectUV(cu-ru, cv-rv, cu+ru, cv+rv, Math.min(ru, rv)*0.38);
+    default:          return ellipseUV(cu, cv, ru, rv, 30);
+  }
+}
+// How square the bowl reads on the elevation, to match.
+function bowlElevRadius(shape){
+  return (shape === 'rect') ? 8 : (shape === 'rect-soft') ? 22 : 40;
+}
 function ellipseUV(cu, cv, ru, rv, steps){
   const pts = [];
   const N = steps || 28;
@@ -7373,8 +7396,9 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   if(cab.type === 'basin-fs'){
     const bw = c.bowlW || 450, bd = c.bowlD || 340;
     const style = c.style || 'wall-hung';
-    d.polygon(P(ellipseUV(cu, 40 + bd/2, bw/2, bd/2)), SAN.china, line, lw);
-    d.polygon(P(ellipseUV(cu, 40 + bd/2, bw/2 - 55, bd/2 - 45)), SAN.water, COL.ink3, LW.hairline);
+    const _bs = c.bowlShape || 'oval';
+    d.polygon(P(bowlUV(cu, 40 + bd/2, bw/2, bd/2, _bs)), SAN.china, line, lw);
+    d.polygon(P(bowlUV(cu, 40 + bd/2, bw/2 - 55, bd/2 - 45, _bs)), SAN.water, COL.ink3, LW.hairline);
     if(style === 'pedestal'){
       d.dashed(true);
       d.polygon(P(ellipseUV(cu, 40 + bd/2, 90, 90)), null, COL.ink3, LW.hairline);
@@ -7728,8 +7752,12 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
 
   if(cab.type === 'basin-fs'){
     const style = c.style || 'wall-hung', rimH = c.rimH || 850, bw = c.bowlW || 450;
+    // A rectangular bowl has near-vertical sides; an oval one tapers in.
+    const _bs = c.bowlShape || 'oval';
+    const _taper = (_bs === 'rect') ? 8 : (_bs === 'rect-soft') ? 24 : 55;
     poly(roundPoly([[cu-bw/2, rimH],[cu+bw/2, rimH],
-                    [cu+bw/2-55, rimH-165],[cu-bw/2+55, rimH-165]], 40), SAN.china, stroke, lw);
+                    [cu+bw/2-_taper, rimH-165],[cu-bw/2+_taper, rimH-165]],
+                   bowlElevRadius(_bs)), SAN.china, stroke, lw);
     if(style === 'pedestal'){
       poly(roundPoly([[cu-95, rimH-165],[cu+95, rimH-165],[cu+125, 0],[cu-125, 0]], 30),
         SAN.china, stroke, lw);
@@ -13495,6 +13523,7 @@ function renderEditPanel(){
       pick('Type', 'style', [['wall-hung','Wall hung + bottle trap'],['pedestal','Pedestal'],['semi-recessed','Semi-recessed']]);
       // Only a wall-hung basin has a trap on show; a pedestal hides it.
       if((c.style || 'wall-hung') !== 'pedestal') num('Bottle trap length', 'trapL', 40, 400, 5);
+      pick('Bowl shape', 'bowlShape', Object.entries(BOWL_SHAPES));
       pick('Tapware', 'tapMode', [['deck','Deck mounted'],['wall','Wall mounted']]);
       num('Rim height', 'rimH', 700, 1000, 5);
       num('Bowl width', 'bowlW', 250, 900, 5);
