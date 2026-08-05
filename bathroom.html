@@ -781,6 +781,17 @@ header .project-label .dot.dirty{background:#F7C04A}
           <div class="ctrl"><label>Starts at <span class="val"><input class="valInp" id="lowWallFrom" type="number" min="0" max="8000" step="10" value="0"> mm</span></label></div>
           <div class="ctrl"><label>Ends at <span class="val"><input class="valInp" id="lowWallTo" type="number" min="0" max="8000" step="10" placeholder="full"> mm</span></label></div>
         </div>
+        <div class="ctrl"><label>Tile</label><select id="lowWallTile"></select></div>
+        <div class="customRow" id="lowWallColourRow">
+          <input type="color" id="lowWallColor" value="#EFEDE6">
+          <span class="lbl">Tile colour</span>
+          <button class="reset" id="lowWallColorReset" title="Use the tile's own colour">reset</button>
+        </div>
+        <div class="customRow" id="lowWallGroutRow">
+          <input type="color" id="lowWallGrout" value="#C4C1B7">
+          <span class="lbl">Grout colour</span>
+          <button class="reset" id="lowWallGroutReset" title="Shade off the tile">reset</button>
+        </div>
         <h3 style="font-size:10.5px;color:var(--muted);margin:10px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Bench on this wall</h3>
         <label class="toggle"><input type="checkbox" id="benchOn" checked> <span>Bench enabled</span></label>
         <div class="ctrl"><label>Bench extends left <span class="val"><input class="valInp" id="benchLeftExtVal" type="number" min="0" max="600" step="5" value="0"> mm</span></label><input id="benchLeftExt" type="range" min="0" max="600" step="5" value="0"></div>
@@ -2591,7 +2602,9 @@ function makeWall(id){
     id, baseRow:[], wallRow:[], openings:[], electrical:[],
     // A low wall stood in front of this one. Height is to the top of the
     // capping; from/to are along the wall, and to:null means all of it.
-    lowWall:{ on:false, height:1000, thickness:120, capping:true, cappingD:40, from:0, to:null },
+    // tile null means it takes whatever the wall it stands against is tiled in.
+    lowWall:{ on:false, height:1000, thickness:120, capping:true, cappingD:40, from:0, to:null,
+              tile:null, color:null, grout:null },
     trim: {
       leftScribe:0, rightScribe:0,
       leftEnd:{ enabled:false, thickness:18, toFloor:true, waterfall:false },
@@ -7712,6 +7725,9 @@ function lowWallOf(wall){
   const to   = (L.to === null || L.to === undefined) ? len : Math.max(from, Math.min(len, L.to));
   if(to - from < 1) return null;
   return { from, to, wall,
+           tile:  L.tile  || null,
+           color: L.color || null,
+           grout: L.grout || null,
            height:    Math.max(150, L.height || 1000),
            t:         Math.max(50,  L.thickness || 120),
            capping:   L.capping !== false,
@@ -7758,14 +7774,43 @@ function withPlanVOff(off, fn){
   _planVOff = off || 0;
   try { return fn(); } finally { _planVOff = was; }
 }
+// A low wall given its own tile is drawn with the wall's finish swapped out for
+// the duration and put straight back. Everything that paints a tile reads
+// state.splashback, so lending it the low wall's settings is what lets the same
+// drawing code do both without either knowing about the other.
+function withLowWallFinish(L, fn){
+  const sp = state.splashback || {};
+  if(!L || !L.tile) return fn();
+  const keys = ['type','tile','tileW','tileH','bond','colorOverride','jointColorOverride'];
+  const saved = {};
+  keys.forEach(k => saved[k] = sp[k]);
+  const t = WALL_TILE_TYPES[L.tile];
+  sp.type = 'tile'; sp.tile = L.tile;
+  sp.tileW = null; sp.tileH = null; sp.bond = null;
+  sp.colorOverride      = L.color || (t ? t.color : null);
+  sp.jointColorOverride = L.grout || (t ? t.line  : null);
+  try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
+}
+// What a low wall is tiled in, for the schedule.
+function lowWallFinishNote(wall){
+  const L = lowWallOf(wall);
+  if(!L) return '';
+  const bits = [`${Math.round(L.height)} high · ${Math.round(L.t)} thick`];
+  const t = L.tile && WALL_TILE_TYPES[L.tile];
+  bits.push(t ? t.label : 'tiled to match the wall');
+  if(L.capping && L.cappingD > 0) bits.push(`${Math.round(L.cappingD)} capping`);
+  return bits.join(' · ');
+}
 // Plan: the low wall as a band standing off the wall face, tiled, with the
 // capping shown as a line along its front edge.
 function drawLowWallOnPlan(d, wall, plan){
   const L = lowWallOf(wall);
   if(!L) return;
-  const sp = state.splashback || {};
-  const fill = sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
-  planRectOnWall(d, wall.id, L.from, L.to - L.from, L.t, plan, fill, COL.ink, LW.thin);
+  withLowWallFinish(L, ()=>{
+    const sp = state.splashback || {};
+    const fill = sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
+    planRectOnWall(d, wall.id, L.from, L.to - L.from, L.t, plan, fill, COL.ink, LW.thin);
+  });
   if(L.capping && L.cappingD > 0){
     const cd = Math.min(L.cappingD, L.t);
     planBandOnWall(d, wall.id, L.from, L.to - L.from, L.t - cd, L.t, plan,
@@ -7783,7 +7828,7 @@ function drawLowWallOnElevation(d, wall, ox, oy, Hm, s){
   const bodyY = yTop + capT*s;
   // The face of it, in the wall's own tile.
   d.rect(x, bodyY, w, oy + Hm*s - bodyY, '#F3F5F5', null, 0);
-  drawSplashbackBand(d, x, bodyY, w, oy + Hm*s - bodyY);
+  withLowWallFinish(L, ()=> drawSplashbackBand(d, x, bodyY, w, oy + Hm*s - bodyY));
   if(capT > 0){
     d.rect(x, yTop, w, capT*s, benchDefOf(state.bench.material).color || '#EDEAE3',
       COL.ink, LW.thin);
@@ -17942,6 +17987,19 @@ function syncLowWallPanel(){
   setFieldValue('lowWallFrom', L.from || 0);
   const to = document.getElementById('lowWallTo');
   if(to) to.value = (L.to === null || L.to === undefined) ? '' : String(L.to);
+  const ts = document.getElementById('lowWallTile');
+  if(ts) ts.value = L.tile || '';
+  const t = L.tile && WALL_TILE_TYPES[L.tile];
+  setFieldValue('lowWallColor', L.color || (t ? t.color : '#EFEDE6'));
+  setFieldValue('lowWallGrout', L.grout || (t ? t.line  : '#C4C1B7'));
+  // The colours only mean anything once it has a tile of its own; without one
+  // it is taking the wall's finish whole, colours included.
+  ['lowWallColourRow','lowWallGroutRow'].forEach(id=>{
+    const e = document.getElementById(id);
+    if(e) e.style.display = L.tile ? '' : 'none';
+    const sw = e && e.previousElementSibling;
+    if(sw && sw.classList && sw.classList.contains('swatches')) sw.style.display = L.tile ? '' : 'none';
+  });
 }
 (function(){
   const on = (id, ev, fn)=>{ const e = document.getElementById(id); if(e) e.addEventListener(ev, fn); };
@@ -17964,6 +18022,37 @@ function syncLowWallPanel(){
   num('lowWallT', 'thickness', 50, 400);
   num('lowWallCapD', 'cappingD', 0, 400);
   num('lowWallFrom', 'from', 0, 20000);
+  // Its own tile, or blank to take whatever the wall behind it is tiled in.
+  _fillSelect('lowWallTile',
+    [['', '(same as the wall)']].concat(Object.entries(WALL_TILE_TYPES).map(([k, t]) => [k, t.label])),
+    '',
+    v => {
+      const L = _lowWallOf(); if(!L) return;
+      L.tile = v || null;
+      // A tile off the list brings its own colours; clear anything set by hand
+      // so the choice is not sitting under an override and appearing to do
+      // nothing.
+      L.color = null; L.grout = null;
+      syncLowWallPanel(); pushHistory(); scheduleAutosave(); renderActive();
+    });
+  on('lowWallColor', 'input', e=>{
+    const L = _lowWallOf(); if(!L) return;
+    L.color = e.target.value; scheduleAutosave(); renderActive();
+  });
+  on('lowWallColorReset', 'click', ()=>{
+    const L = _lowWallOf(); if(!L) return;
+    L.color = null; syncLowWallPanel(); scheduleAutosave(); renderActive();
+  });
+  on('lowWallGrout', 'input', e=>{
+    const L = _lowWallOf(); if(!L) return;
+    L.grout = e.target.value; scheduleAutosave(); renderActive();
+  });
+  on('lowWallGroutReset', 'click', ()=>{
+    const L = _lowWallOf(); if(!L) return;
+    L.grout = null; syncLowWallPanel(); scheduleAutosave(); renderActive();
+  });
+  attachPalette('lowWallColor', 'tile');
+  attachPalette('lowWallGrout', 'grout');
   // Blank means all the way to the far corner, which is the usual case.
   on('lowWallTo', 'change', e=>{
     const L = _lowWallOf(); if(!L) return;
