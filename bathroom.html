@@ -8801,16 +8801,25 @@ function drawPlan(d, area, view, opts){
       // to depth-recess, so a flush one sits entirely within the wall band. Read
       // up here because whatever is beside it has to be set back with it.
       const _rec = cabTakesRecess(cab) ? cabRecess(cab) : 0;
+      // How deep this item runs, and which way. A niche is cut INTO the wall,
+      // so its depth is negative. Anything beside it has to go the same way —
+      // a filler next to a niche was drawn its own depth into the ROOM while
+      // the niche went into the wall, so it stood out of the wall as a slab on
+      // the wrong side of it.
+      const _wdOwn = (cab.type==='filler-wall') ? cab.D + CONST.FRONT_PROJ
+                   : (cab.type==='shower-niche') ? -cab.D : cab.D;
+      const _adjD = (_wdOwn < 0) ? _wdOwn : (cab.D + CONST.FRONT_PROJ);
       // A gap is a gap. The base row has always known that; the wall row drew
       // one as a solid filler, so dragging a unit along the wall left a slab of
       // joinery behind it that was never there.
       if(cab.adj?.left?.filler > 0 && cab.adj.left.kind !== 'space'){
-        (function(){ const b = fillerBand(cab.D + CONST.FRONT_PROJ, adjFillerDepth(cab, 'left'));
+        (function(){ const b = (_adjD < 0) ? { v0:0, v1:_adjD }
+                           : fillerBand(_adjD, adjFillerDepth(cab, 'left'));
           planBandOnWall(d, w.id, u, cab.adj.left.filler, b.v0 - _rec, b.v1 - _rec, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
       }
       if(cab.adj?.left?.filler > 0) u += cab.adj.left.filler;
       if(cab.adj?.left?.panel > 0){
-        planBandOnWall(d, w.id, u, cab.adj.left.panel, -_rec, cab.D + CONST.FRONT_PROJ - _rec, plan, '#E5DCC4', COL.accent, LW.hairline);
+        planBandOnWall(d, w.id, u, cab.adj.left.panel, -_rec, _adjD - _rec, plan, '#E5DCC4', COL.accent, LW.hairline);
         u += cab.adj.left.panel;
       }
       const wd = (cab.type==='filler-wall') ? cab.D + CONST.FRONT_PROJ
@@ -8894,11 +8903,12 @@ function drawPlan(d, area, view, opts){
       }
       u += cab.W;
       if(cab.adj?.right?.panel > 0){
-        planBandOnWall(d, w.id, u, cab.adj.right.panel, -_rec, cab.D + CONST.FRONT_PROJ - _rec, plan, '#E5DCC4', COL.accent, LW.hairline);
+        planBandOnWall(d, w.id, u, cab.adj.right.panel, -_rec, _adjD - _rec, plan, '#E5DCC4', COL.accent, LW.hairline);
         u += cab.adj.right.panel;
       }
       if(cab.adj?.right?.filler > 0 && cab.adj.right.kind !== 'space'){
-        (function(){ const b = fillerBand(cab.D + CONST.FRONT_PROJ, adjFillerDepth(cab, 'right'));
+        (function(){ const b = (_adjD < 0) ? { v0:0, v1:_adjD }
+                           : fillerBand(_adjD, adjFillerDepth(cab, 'right'));
           planBandOnWall(d, w.id, u, cab.adj.right.filler, b.v0 - _rec, b.v1 - _rec, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
       }
       if(cab.adj?.right?.filler > 0) u += cab.adj.right.filler;
