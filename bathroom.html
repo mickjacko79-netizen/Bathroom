@@ -1035,12 +1035,12 @@ const CATALOG = {
   'filler-base': { label:'Filler — vanity (720H)', defaultW:50,  H:720,  D:460, row:'base', hasShelves:false, defaultConfig:{} },
   'filler-tall': { label:'Filler — tall (2100H)',  defaultW:50,  H:2100, D:460, row:'base', hasShelves:false, defaultConfig:{} },
   'filler-wall': { label:'Filler — wall (750H)',   defaultW:50,  H:750,  D:150, row:'wall', hasShelves:false, defaultConfig:{} },
-  'sink-base':       { label:'Vanity — basin + tap',       defaultW:900, H:720,  D:460, row:'base', hasShelves:true,  defaultConfig:{ doors:2, hingeSide:'L', bowls:'single', bowlW:420, bowlD:340, dummyDrawer:true, dummyDrawerH:140, tapStyle:'gooseneck', sinkOffsetU:0, shelves:0, shelfMode:'equal' } },
+  'sink-base':       { label:'Vanity — basin + tap',       defaultW:900, H:720,  D:460, row:'base', hasShelves:true,  defaultConfig:{ doors:2, hingeSide:'L', bowls:'single', bowlW:420, bowlD:340, bowlShape:'rect-soft', basinMount:'undermount', vesselH:130, dummyDrawer:true, dummyDrawerH:140, tapStyle:'gooseneck', sinkOffsetU:0, shelves:0, shelfMode:'equal' } },
   // ---- Laundry ----------------------------------------------------------
   // A laundry tub is a sink base with a deep single bowl, so it shares the
   // sink-base renderers and picks up the sink + tap brand pickers unchanged.
   'laundry-tub':     { label:'Laundry tub + tap',          defaultW:600, H:720,  D:560, row:'base', hasShelves:true,
-    defaultConfig:{ doors:1, hingeSide:'L', bowls:'single', bowlW:450, bowlD:420, bowlClearance:400, dummyDrawer:false, dummyDrawerH:140, tapStyle:'gooseneck', sinkOffsetU:0, shelves:0, shelfMode:'equal', shelfPositions:[] } },
+    defaultConfig:{ doors:1, hingeSide:'L', bowls:'single', bowlW:450, bowlD:420, bowlClearance:400, bowlShape:'rect', basinMount:'inset', vesselH:130, dummyDrawer:false, dummyDrawerH:140, tapStyle:'gooseneck', sinkOffsetU:0, shelves:0, shelfMode:'equal', shelfPositions:[] } },
   'laundry-appliance': { label:'Washer / dryer — under bench', defaultW:600, H:720, D:600, row:'base', hasShelves:false,
     defaultConfig:{ mode:'washer', mount:'freestanding', benchOver:true, showKick:false, porthole:true, labelText:'' } },
   'dryer-wall':      { label:'Dryer — wall mounted',       defaultW:600, H:700,  D:520, row:'wall', hasShelves:false,
@@ -6243,6 +6243,33 @@ function drawTapOnElevation(d, cx, benchY, s, style){
 }
 // The bowls a sink cabinet carries, in wall-local mm across the cabinet. One
 // list, so the plan and the elevation can never disagree about where they are.
+// How a basin meets the benchtop. It is not decoration: the benchtop is made
+// differently for each one — an undermount cutout is polished on its edge, a
+// drop-in is not because the rim covers it, and a basin standing on top needs
+// nothing cut at all beyond a hole for the waste. So the drawing has to say
+// which, and it now does on both views.
+const BASIN_MOUNTS = {
+  'undermount': { label:'Undermount', note:'undermounted' },
+  'inset':      { label:'Drop-in',    note:'drop-in, rim on the top' },
+  'above':      { label:'On top',     note:'above counter, standing on the top' },
+};
+// Undermount is what this app has always drawn, so that is what anything
+// without a mount on it is: an existing job comes over looking as it did.
+function basinMountOf(cab){
+  const m = (cab && cab.config && cab.config.basinMount);
+  return BASIN_MOUNTS[m] ? m : 'undermount';
+}
+// Likewise the shape: a plain rectangle is what was drawn before there was a
+// choice, so that is where anything without one stays.
+function sinkBowlShape(cab){
+  const sh = (cab && cab.config && cab.config.bowlShape);
+  return BOWL_SHAPES[sh] ? sh : 'rect';
+}
+// A basin that stands on the bench has a height above it; one that hangs
+// under it does not.
+function vesselHeightOf(cab){
+  return Math.max(60, ((cab && cab.config) || {}).vesselH || 130);
+}
 function sinkBowlSet(cab){
   const c = cab.config || {};
   const bowls = c.bowls || 'double';
@@ -6302,20 +6329,54 @@ function ovenBaseStack(cab){
 function drawSinkHiddenOnElevation(d, cab, x, oy, Hm, s, benchTopY, benchT){
   const c = cab.config || {};
   const deepH = Math.max(80, c.bowlH || 200);
+  const mount = basinMountOf(cab);
+  const shape = sinkBowlShape(cab);
   const top = oy + (Hm - benchTopY + benchT)*s;      // underside of the benchtop
+  const set = sinkBowlSet(cab);
+  // Corners as square or as soft as the shape asked for, so the elevation
+  // and the plan describe the same basin.
+  const rOf = (bw, bh)=> Math.min(bowlElevRadius(shape)*s, bw*0.45, bh*0.45);
   d.dashed(true);
-  sinkBowlSet(cab).forEach(b=>{
-    const h = (b.deep ? deepH : deepH*0.6);
-    d.rect(x + (b.u - b.w/2)*s, top, b.w*s, h*s, null, COL.ink3, LW.hairline);
+  // A basin standing on the bench has nothing under it but its waste — the
+  // bowl itself is above the top and is drawn there, in daylight.
+  if(mount !== 'above') set.forEach(b=>{
+    const h = (b.deep ? deepH : deepH*0.6)*s;
+    const bx = x + (b.u - b.w/2)*s, bw = b.w*s;
+    d.polygon(roundPoly([[bx, top],[bx + bw, top],[bx + bw, top + h],[bx, top + h]], rOf(bw, h)),
+      null, COL.ink3, LW.hairline);
   });
-  // Waste and trap under the first deep bowl.
-  const deep = sinkBowlSet(cab).find(b => b.deep);
+  // Waste and trap under the first deep bowl: from the bottom of the bowl
+  // where there is one under the top, and from the underside of the top
+  // where the basin is standing on it.
+  const deep = set.find(b => b.deep) || set[0];
   if(deep){
-    const wx = x + deep.u*s, wy = top + deepH*s;
+    const wx = x + deep.u*s, wy = (mount === 'above') ? top : top + deepH*s;
     d.rect(wx - 22*s, wy, 44*s, 40*s, null, COL.ink3, LW.hairline);
     d.rect(wx - 30*s, wy + 40*s, 60*s, 55*s, null, COL.ink3, LW.hairline);
   }
   d.dashed(false);
+}
+// Whatever of a basin is ABOVE the benchtop. It has to wait for the bench to
+// go down, the way the taps do, or the top is painted over it. It goes down
+// before them: the tap stands behind the basin and arcs over it, so the
+// spout has to read across the china rather than under it.
+function drawBasinOnBench(d, cab, x, deck, s){
+  const mount = basinMountOf(cab);
+  if(mount === 'undermount') return;
+  const shape = sinkBowlShape(cab);
+  sinkBowlSet(cab).forEach(b=>{
+    const bx = x + (b.u - b.w/2)*s, bw = b.w*s;
+    if(mount === 'inset'){
+      // A drop-in laps the top by 12 all round and stands a little proud of
+      // it, which is the whole of what you see of one from the front.
+      d.rect(bx - 12*s, deck - 10*s, bw + 24*s, 10*s, SAN.china, COL.ink2, LW.thin);
+      return;
+    }
+    const vh = vesselHeightOf(cab)*s;
+    const r = Math.min(bowlElevRadius(shape)*s, bw*0.45, vh*0.45);
+    d.polygon(roundPoly([[bx, deck - vh],[bx + bw, deck - vh],[bx + bw, deck],[bx, deck]], r),
+      SAN.china, COL.ink2, LW.thin);
+  });
 }
 
 // ---- Electrical + lighting on elevations ---------------------------------
@@ -7301,6 +7362,10 @@ const BOWL_SHAPES = {
 };
 // ru/rv are half the bowl. A round one takes the smaller of the two so it
 // stays round however the width and depth are set.
+// The same four shapes, short enough to sit on a pill bar.
+const BOWL_SHAPE_SHORT = {
+  'oval':'Oval', 'round':'Round', 'rect-soft':'Soft rect', 'rect':'Rect',
+};
 function bowlUV(cu, cv, ru, rv, shape){
   switch(shape){
     case 'round': { const r = Math.min(ru, rv); return ellipseUV(cu, cv, r, r, 30); }
@@ -9036,14 +9101,25 @@ function drawPlan(d, area, view, opts){
         const tapU = sinkCentreU;
         const tapV = 70;                       // 70 mm off the wall, behind the bowl
         const sinkCentreV = 130 + bowlD/2; // 130mm from wall to bowl front
+        const _shape = sinkBowlShape(cab);
+        const _mount = basinMountOf(cab);
         const drawBowl = (uCentre, w_, d_)=>{
-          const corners = [
-            planMap(w.id, uCentre - w_/2, sinkCentreV - d_/2, plan),
-            planMap(w.id, uCentre + w_/2, sinkCentreV - d_/2, plan),
-            planMap(w.id, uCentre + w_/2, sinkCentreV + d_/2, plan),
-            planMap(w.id, uCentre - w_/2, sinkCentreV + d_/2, plan),
-          ];
-          d.polygon(corners, '#E8E8E8', COL.ink2, LW.hairline);
+          const body = bowlUV(uCentre, sinkCentreV, w_/2, d_/2, _shape);
+          if(_mount === 'undermount'){
+            // Under the top, so on a plan it is what is under the top:
+            // hidden, and drawn the way hidden work is drawn.
+            d.dashed(true);
+            d.polygon(mapUV(w.id, 0, body, plan), null, COL.ink2, LW.hairline);
+            d.dashed(false);
+          } else {
+            if(_mount === 'inset'){
+              // The rim, lapping the top by 12 all round.
+              d.polygon(mapUV(w.id, 0, bowlUV(uCentre, sinkCentreV, w_/2 + 12, d_/2 + 12, _shape), plan),
+                '#F1F1F0', COL.ink2, LW.hairline);
+            }
+            d.polygon(mapUV(w.id, 0, body, plan), '#E8E8E8', COL.ink2,
+              _mount === 'above' ? LW.thin : LW.hairline);
+          }
           const cc = planMap(w.id, uCentre, sinkCentreV, plan);
           d.circle(cc[0], cc[1], 1.4, null, COL.ink2, LW.hairline);
         };
@@ -10042,6 +10118,8 @@ function drawElevation(d, area, wallId, opts){
   // benchtop, which is painted after the cabinets, so drawing one in the loop
   // put it behind the bench and the splashback.
   const _taps = [];
+  // Basins that stand on or in the benchtop, held back until it is drawn.
+  const _benchBasins = [];
   _kickCab = null;
   let u = startU;
   wall.baseRow.forEach((cab, idx)=>{
@@ -10373,6 +10451,7 @@ function drawElevation(d, area, wallId, opts){
       // The tap stands on the benchtop — noted here, drawn once the bench is down.
       _taps.push({ cx: x + (cab.W/2 + ((cab.config || {}).sinkOffsetU || 0))*s,
                    style: (cab.config || {}).tapStyle });
+      _benchBasins.push({ cab, x });
       // SINK SHELVES — dashed hidden lines inside the cabinet (under the bowl).
       const _shN = cab.config.shelves || 0;
       if(_shN > 0){
@@ -11015,6 +11094,7 @@ function drawElevation(d, area, wallId, opts){
   // Taps last of all — nothing on this wall stands in front of one. In a
   // bathroom that includes the mirror: the mirror is behind the basin tap, so
   // the taps have to wait for the wall row rather than going down before it.
+  _benchBasins.forEach(b => drawBasinOnBench(d, b.cab, b.x, oy + (Hm - benchTopY)*s, s));
   _taps.forEach(tp => drawTapOnElevation(d, tp.cx, oy + (Hm - benchTopY)*s, s, tp.style));
 
   // The bulkheads, once the run is laid out, so they come out as one board per
@@ -11905,6 +11985,8 @@ function scheduleNoteFor(cab){
   if(c.shelves) bits.push(`${c.shelves} adj shel${c.shelves > 1 ? 'ves' : 'f'}`);
   if(c.fixedShelf) bits.push('fixed shelf');
   if(isSinkCab(cab)) bits.push(`${c.bowls === '1.5' || c.bowls === '15' ? '1.5' : (c.bowls || 'double')} bowl`);
+  // The benchtop is fabricated to suit the mount, so the schedule says it.
+  if(isSinkCab(cab)) bits.push(`${BOWL_SHAPES[sinkBowlShape(cab)].toLowerCase()}, ${BASIN_MOUNTS[basinMountOf(cab)].note}`);
   if(cab.type === 'laundry-appliance'){
     bits.push(c.mode === 'dryer' ? 'dryer' : (c.mode === 'washer-dryer' ? 'washer over dryer' : 'washing machine'));
     bits.push(c.mount === 'integrated' ? 'integrated' : 'freestanding');
@@ -13762,6 +13844,21 @@ function renderEditPanel(){
     }
     editor.appendChild(_cfgRng('Bowl width',  'bowlW',     200, 700, 10));
     editor.appendChild(_cfgRng('Bowl depth',  'bowlD',     200, 500, 10));
+    editor.appendChild(el('div', { class:'ctrl' },
+      el('label', {}, 'Bowl shape'),
+      pillbar(Object.keys(BOWL_SHAPES), sinkBowlShape(cab), v=>{
+        cab.config.bowlShape = v; renderActive();
+      }, BOWL_SHAPE_SHORT)
+    ));
+    editor.appendChild(el('div', { class:'ctrl' },
+      el('label', {}, 'Basin mount'),
+      pillbar(Object.keys(BASIN_MOUNTS), basinMountOf(cab), v=>{
+        cab.config.basinMount = v; renderEditPanel(); renderActive();
+      }, Object.fromEntries(Object.entries(BASIN_MOUNTS).map(([k, m]) => [k, m.label])))
+    ));
+    // Only a basin that stands on the top has a height above it.
+    if(basinMountOf(cab) === 'above')
+      editor.appendChild(_cfgRng('Basin height above bench', 'vesselH', 60, 250, 5));
     const maxOff = Math.max(50, Math.floor((cab.W - 200)/2));
     editor.appendChild(_cfgRng('Sink offset (-L / +R)', 'sinkOffsetU', -maxOff, maxOff, 10));
     editor.appendChild(el('div', { class:'ctrl' },
@@ -19249,6 +19346,12 @@ function loadDesign(snap){
         if(c.config.dummyDrawerH === undefined) c.config.dummyDrawerH = 140;
         if(c.config.tapStyle === undefined)     c.config.tapStyle = 'gooseneck';
         if(c.config.sinkOffsetU === undefined)  c.config.sinkOffsetU = 0;
+        // A job drawn before there was a choice was drawn undermounted with a
+        // square bowl, so that is what it stays as until someone says other-
+        // wise. New defaults only ever reach new fixtures.
+        if(c.config.bowlShape === undefined)    c.config.bowlShape = 'rect';
+        if(c.config.basinMount === undefined)   c.config.basinMount = 'undermount';
+        if(c.config.vesselH === undefined)      c.config.vesselH = 130;
         if(c.config.doors === undefined)        c.config.doors = 2;
       }
       if(c.type === 'bath'){
