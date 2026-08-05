@@ -183,6 +183,9 @@ footer .info{flex:1;color:var(--muted);font-size:11.5px;letter-spacing:.02em}
    as the sidebar allows and wraps, so a long range stays a couple of rows. */
 .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(26px,1fr));gap:5px;margin-top:2px}
 .sw{height:24px;border-radius:4px;border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10);cursor:pointer;position:relative}
+/* Fifteen panel-heading rows each want a palette, so theirs is a slimmer one. */
+.swatches.mini{grid-template-columns:repeat(auto-fill,minmax(15px,1fr));gap:3px;margin:3px 0 6px}
+.swatches.mini .sw{height:13px;border-width:1px;border-radius:3px}
 .sw.on{border-color:var(--brand);box-shadow:0 0 0 2px rgba(31,78,95,.18)}
 .sw[title]:hover::after{content:attr(title);position:absolute;bottom:34px;left:50%;transform:translateX(-50%);background:#222;color:#fff;font-size:11px;padding:3px 6px;border-radius:4px;white-space:nowrap;z-index:2}
 
@@ -14335,6 +14338,15 @@ const COLOUR_PALETTES = {
     ['#E5C28B','Blackbutt'], ['#CFA875','Spotted gum'], ['#A5793F','Walnut'],
     ['#D6CCAE','Carpet'], ['#FFFFFF','White'],
   ],
+  // Panel headings in the sidebar. The first three are the looks the sidebar
+  // already uses; the rest are for telling one group of panels from another at
+  // a glance, which is the whole reason for colouring a heading.
+  heading: [
+    ['#1F4E5F','Brand'], ['#3C3C3C','Charcoal'], ['#6B7280','Muted grey'],
+    ['#111111','Black'],  ['#2C5F5A','Teal'],     ['#3A6B35','Green'],
+    ['#8A6D1F','Ochre'],  ['#A8632B','Amber'],    ['#A8332B','Red'],
+    ['#7A3B6B','Plum'],   ['#1F3A5F','Navy'],     ['#5C3B1E','Sepia'],
+  ],
   // Linework and dimensions.
   ink: [
     ['#111111','Black'], ['#2E2E2E','Near black'], ['#3C3C3C','Graphite'],
@@ -14354,8 +14366,31 @@ function syncSwatches(input){
     b.classList.toggle('on', (b.dataset.color || '').toLowerCase() === cur));
 }
 function _swatchHTML(pal){
+  // The background is set here as well as by initCollapsibles, so a strip built
+  // after that has run still comes up painted.
   return pal.map(([hex, name]) =>
-    `<div class="sw" data-color="${hex}" title="${name} · ${hex.toUpperCase()}"></div>`).join('');
+    `<div class="sw" data-color="${hex}" style="background:${hex}" title="${name} · ${hex.toUpperCase()}"></div>`).join('');
+}
+// A palette bound to a colour input, as an element rather than something hung
+// off an id — panel-heading rows are rebuilt every time the list is drawn, so
+// there is no id to find them by.
+function paletteStrip(input, paletteKey, cls){
+  const pal = COLOUR_PALETTES[paletteKey];
+  if(!input || !pal) return null;
+  const box = document.createElement('div');
+  box.className = 'swatches' + (cls ? ' ' + cls : '');
+  box.innerHTML = _swatchHTML(pal);
+  box.addEventListener('click', e => {
+    const t = e.target.closest('.sw');
+    if(!t || !box.contains(t)) return;
+    input.value = t.dataset.color;
+    input.dispatchEvent(new Event('input',  { bubbles:true }));
+    input.dispatchEvent(new Event('change', { bubbles:true }));
+    syncSwatches(input);
+  });
+  input.__swatches = box;
+  input.addEventListener('input', ()=> syncSwatches(input));
+  return box;
 }
 // Hang a palette on a colour picker, in the same markup the three hand-written
 // bars already used — so it looks like one thing, and initCollapsibles paints
@@ -14363,33 +14398,30 @@ function _swatchHTML(pal){
 // handler; that one is filled out rather than given a second bar beside it.
 function attachPalette(inputId, paletteKey, barId){
   const input = document.getElementById(inputId);
-  const pal = COLOUR_PALETTES[paletteKey];
-  if(!input || !pal) return;
-  let box = barId ? document.getElementById(barId) : null;
-  if(box){
-    box.innerHTML = _swatchHTML(pal);
+  if(!input) return;
+  const strip = paletteStrip(input, paletteKey);
+  if(!strip) return;
+  const existing = barId ? document.getElementById(barId) : null;
+  if(existing){
+    // A bar already in the markup with a click handler of its own: fill it out
+    // rather than stand a second one beside it, and let the strip's own
+    // handler ride along on the same clicks.
+    existing.innerHTML = strip.innerHTML;
+    existing.addEventListener('click', e => {
+      const t = e.target.closest('.sw');
+      if(!t || !existing.contains(t)) return;
+      input.value = t.dataset.color;
+      input.dispatchEvent(new Event('input',  { bubbles:true }));
+      input.dispatchEvent(new Event('change', { bubbles:true }));
+      syncSwatches(input);
+    });
+    input.__swatches = existing;
   } else {
     // Above the picker and inside the same control, so whatever shows and hides
     // that row takes the palette with it.
     const row = input.closest('.customRow') || input.parentElement;
-    box = document.createElement('div');
-    box.className = 'swatches';
-    box.innerHTML = _swatchHTML(pal);
-    row.insertAdjacentElement('beforebegin', box);
+    row.insertAdjacentElement('beforebegin', strip);
   }
-  box.addEventListener('click', e => {
-    const t = e.target.closest('.sw');
-    if(!t || !box.contains(t)) return;
-    input.value = t.dataset.color;
-    // The same events a hand-picked colour raises, so every listener already
-    // wired to this picker does its own job and nothing here has to know what
-    // that job is.
-    input.dispatchEvent(new Event('input',  { bubbles:true }));
-    input.dispatchEvent(new Event('change', { bubbles:true }));
-    syncSwatches(input);
-  });
-  input.__swatches = box;
-  input.addEventListener('input', ()=> syncSwatches(input));
   syncSwatches(input);
 }
 // Every front colour on the palette gets a name on the schedule. The four
@@ -16734,6 +16766,11 @@ function renderPanelStyleList(){
     });
     row.appendChild(lbl); row.appendChild(size); row.appendChild(col); row.appendChild(rst);
     host.appendChild(row);
+    // The presets, under the row they belong to. Picking one goes through the
+    // colour input, so it lands in setPanelStyle exactly as a hand-picked
+    // colour does.
+    const strip = paletteStrip(col, 'heading', 'mini');
+    if(strip) host.appendChild(strip);
   });
 }
 function _cssVarHex(name){
