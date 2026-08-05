@@ -768,6 +768,19 @@ header .project-label .dot.dirty{background:#F7C04A}
           <label class="toggle"><input type="checkbox" id="leftWallEnd"> <span>Left end panel</span></label>
           <label class="toggle"><input type="checkbox" id="rightWallEnd"> <span>Right end panel</span></label>
         </div>
+        <h3 style="font-size:10.5px;color:var(--muted);margin:10px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Low wall on this wall</h3>
+        <label class="toggle"><input type="checkbox" id="lowWallOn"> <span>Tiled low wall in front</span></label>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:2px">A stud wall built off this one, tiled to match. Anything starting below its top fixes to it and comes forward by its thickness; anything at or above its top goes on the wall behind.</div>
+        <div class="row2">
+          <div class="ctrl"><label>Height <span class="val"><input class="valInp" id="lowWallH" type="number" min="150" max="2400" step="10" value="1000"> mm</span></label></div>
+          <div class="ctrl"><label>Thickness <span class="val"><input class="valInp" id="lowWallT" type="number" min="50" max="400" step="5" value="120"> mm</span></label></div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="lowWallCap" checked> <span>Capping on top</span></label>
+        <div class="ctrl"><label>Capping depth <span class="val"><input class="valInp" id="lowWallCapD" type="number" min="0" max="400" step="5" value="40"> mm</span></label></div>
+        <div class="row2">
+          <div class="ctrl"><label>Starts at <span class="val"><input class="valInp" id="lowWallFrom" type="number" min="0" max="8000" step="10" value="0"> mm</span></label></div>
+          <div class="ctrl"><label>Ends at <span class="val"><input class="valInp" id="lowWallTo" type="number" min="0" max="8000" step="10" placeholder="full"> mm</span></label></div>
+        </div>
         <h3 style="font-size:10.5px;color:var(--muted);margin:10px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Bench on this wall</h3>
         <label class="toggle"><input type="checkbox" id="benchOn" checked> <span>Bench enabled</span></label>
         <div class="ctrl"><label>Bench extends left <span class="val"><input class="valInp" id="benchLeftExtVal" type="number" min="0" max="600" step="5" value="0"> mm</span></label><input id="benchLeftExt" type="range" min="0" max="600" step="5" value="0"></div>
@@ -2574,6 +2587,9 @@ function findWallForCab(cabId){
 function makeWall(id){
   return {
     id, baseRow:[], wallRow:[], openings:[], electrical:[],
+    // A low wall stood in front of this one. Height is to the top of the
+    // capping; from/to are along the wall, and to:null means all of it.
+    lowWall:{ on:false, height:1000, thickness:120, capping:true, cappingD:40, from:0, to:null },
     trim: {
       leftScribe:0, rightScribe:0,
       leftEnd:{ enabled:false, thickness:18, toFloor:true, waterfall:false },
@@ -7681,15 +7697,90 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
 // Wall-local (u along the wall from its start, v into the room) to page-mm.
 // Works off the room's outline, so a rectangle and a traced site measure go
 // through exactly the same path — the rectangle is just a four-edge loop.
+// The low wall on a given wall, resolved and clamped, or null where there is
+// none. Everything that draws or positions against it goes through this.
+function lowWallOf(wall){
+  const L = wall && wall.lowWall;
+  if(!L || !L.on) return null;
+  const len = wallLength(wall.id);
+  const from = Math.max(0, Math.min(len, L.from || 0));
+  const to   = (L.to === null || L.to === undefined) ? len : Math.max(from, Math.min(len, L.to));
+  if(to - from < 1) return null;
+  return { from, to, wall,
+           height:    Math.max(150, L.height || 1000),
+           t:         Math.max(50,  L.thickness || 120),
+           capping:   L.capping !== false,
+           cappingD:  Math.max(0,   (L.cappingD === undefined ? 40 : L.cappingD)) };
+}
+// Whether something occupying u0..u1 and starting at bottomY fixes to the low
+// wall. It has to overlap it along the wall AND start below its top: a mirror
+// at 1400 goes on the wall behind, which is the whole point of the thing.
+function onLowWall(wall, u0, u1, bottomY){
+  const L = lowWallOf(wall);
+  if(!L) return null;
+  if(u1 <= L.from + 1 || u0 >= L.to - 1) return null;
+  if((bottomY || 0) >= L.height - 1) return null;
+  return L;
+}
+// How far out an item is pushed by fixing to the low wall.
+function lowWallOffset(wall, u0, u1, bottomY){
+  const L = onLowWall(wall, u0, u1, bottomY);
+  return L ? L.t : 0;
+}
+// Set while a fixture that stands on the low wall is being drawn on the plan.
+// planMap adds it, so the item's back lands on the low wall's face rather than
+// on the tiles behind it — the alternative was threading an offset through
+// every call that draws a footprint, a door swing or a benchtop.
+let _planVOff = 0;
+function withPlanVOff(off, fn){
+  const was = _planVOff;
+  _planVOff = off || 0;
+  try { return fn(); } finally { _planVOff = was; }
+}
+// Plan: the low wall as a band standing off the wall face, tiled, with the
+// capping shown as a line along its front edge.
+function drawLowWallOnPlan(d, wall, plan){
+  const L = lowWallOf(wall);
+  if(!L) return;
+  const sp = state.splashback || {};
+  const fill = sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
+  planRectOnWall(d, wall.id, L.from, L.to - L.from, L.t, plan, fill, COL.ink, LW.thin);
+  if(L.capping && L.cappingD > 0){
+    const cd = Math.min(L.cappingD, L.t);
+    planBandOnWall(d, wall.id, L.from, L.to - L.from, L.t - cd, L.t, plan,
+      null, COL.ink2, LW.hairline);
+  }
+}
+// Elevation: the low wall stands from the floor to its top, tiled like the wall
+// it is built against, with a capping board across the top.
+function drawLowWallOnElevation(d, wall, ox, oy, Hm, s){
+  const L = lowWallOf(wall);
+  if(!L) return;
+  const x = ox + L.from*s, w = (L.to - L.from)*s;
+  const capT = (L.capping && L.cappingD > 0) ? Math.min(40, L.height * 0.06) : 0;
+  const yTop = oy + (Hm - L.height)*s;
+  const bodyY = yTop + capT*s;
+  // The face of it, in the wall's own tile.
+  d.rect(x, bodyY, w, oy + Hm*s - bodyY, '#F3F5F5', null, 0);
+  drawSplashbackBand(d, x, bodyY, w, oy + Hm*s - bodyY);
+  if(capT > 0){
+    d.rect(x, yTop, w, capT*s, benchDefOf(state.bench.material).color || '#EDEAE3',
+      COL.ink, LW.thin);
+  }
+  d.rect(x, yTop, w, oy + Hm*s - yTop, null, COL.ink, LW.thin);
+  d.text(x + w/2, yTop - 4, `LOW WALL ${Math.round(L.height)} H · ${Math.round(L.t)} THK`,
+    { align:'center', size:3.6, color:COL.muted, italic:true });
+}
 function planMap(wallId, u, v, plan){
   // A plan may carry its own wall-local frame — that is how an opening gets
   // drawn on an internal partition, which is not one of the loop's walls and so
   // has no segment of its own to look up.
-  if(plan && plan.mapUV) return plan.mapUV(u, v);
+  const vv = v + _planVOff;
+  if(plan && plan.mapUV) return plan.mapUV(u, vv);
   const seg = wallSegOf(wallId, null);
   if(!seg) return [plan.ox, plan.oy];
-  const x = seg.p1.x + u*seg.ux + v*seg.nx;
-  const y = seg.p1.y + u*seg.uy + v*seg.ny;
+  const x = seg.p1.x + u*seg.ux + vv*seg.nx;
+  const y = seg.p1.y + u*seg.uy + vv*seg.ny;
   return [ plan.ox + x*plan.s, plan.oy + y*plan.s ];
 }
 // Plan: a towel rail from over the top is a tube standing off the wall on two
@@ -8173,6 +8264,8 @@ function drawPlan(d, area, view, opts){
     const baseDepth = (w.baseRow.length ? Math.max(...w.baseRow.map(c=>c.D)) : 560) + CONST.FRONT_PROJ;
     let u = start;
     w.baseRow.forEach((cab, idx)=>{
+      // Standing on the low wall puts this item's back on the low wall's face.
+      _planVOff = lowWallOffset(w, u, u + cab.W, 0);
       if(cab.adj?.left?.filler > 0){
         drawAdjPlan(d, plan, w.id, u, cab.adj.left.filler, cab.D + CONST.FRONT_PROJ, cab.adj.left.kind === 'space' ? 'space' : 'filler', adjFillerDepth(cab, 'left'));
         u += cab.adj.left.filler;
@@ -8232,19 +8325,30 @@ function drawPlan(d, area, view, opts){
         drawAdjPlan(d, plan, w.id, u, cab.adj.right.filler, cab.D + CONST.FRONT_PROJ, cab.adj.right.kind === 'space' ? 'space' : 'filler', adjFillerDepth(cab, 'right'));
         u += cab.adj.right.filler;
       }
+      _planVOff = 0;
     });
   });
+
+  // Nothing is standing on a low wall yet. Reset rather than assume: a draw
+  // that threw part-way through the last sheet would otherwise carry its offset
+  // into this one and move everything on it.
+  _planVOff = 0;
+  // The low wall goes down before the joinery, so the joinery stands in front.
+  state.walls.forEach(w=> drawLowWallOnPlan(d, w, plan));
 
   // BENCHTOP (with overhang)
   state.walls.forEach(w=>{
     const start = runStartOffset(w, 'base');
+    const _lwOff = (function(){ const L = lowWallOf(w); return L ? L.t : 0; })();
     benchSegmentsFor(w).forEach(seg=>{
       const total = seg.depth + state.bench.overhang;
+      // A top on a low wall starts at its face, not at the tiles behind it.
+      const _o = onLowWall(w, start + seg.uStart, start + seg.uStart + seg.length, 0) ? _lwOff : 0;
       const corners = [
-        planMap(w.id, start + seg.uStart, 0, plan),
-        planMap(w.id, start + seg.uStart + seg.length, 0, plan),
-        planMap(w.id, start + seg.uStart + seg.length, total, plan),
-        planMap(w.id, start + seg.uStart, total, plan),
+        planMap(w.id, start + seg.uStart, _o, plan),
+        planMap(w.id, start + seg.uStart + seg.length, _o, plan),
+        planMap(w.id, start + seg.uStart + seg.length, _o + total, plan),
+        planMap(w.id, start + seg.uStart, _o + total, plan),
       ];
       const xs = corners.map(c=>c[0]), ys = corners.map(c=>c[1]);
       const bx = Math.min(...xs), by = Math.min(...ys), bxw = Math.max(...xs)-bx, bxh = Math.max(...ys)-by;
@@ -8264,6 +8368,7 @@ function drawPlan(d, area, view, opts){
       w.baseRow.forEach(cab=>{
         if(cab.adj && cab.adj.left  && cab.adj.left.filler  > 0) u += cab.adj.left.filler;
         if(cab.adj && cab.adj.left  && cab.adj.left.panel   > 0) u += cab.adj.left.panel;
+        _planVOff = lowWallOffset(w, u, u + cab.W, 0);
         const dwBench2 = (cab.type==='laundry-appliance' && cab.config && cab.config.benchOver);
         const benched = (cab.type==='base-drawer' || cab.type==='base-door' || isSinkCab(cab)
                       || cab.type==='filler-base' || cab.type==='corner-base' || dwBench2);
@@ -8293,6 +8398,7 @@ function drawPlan(d, area, view, opts){
           // dedicated CORNER L-LEGS pass that runs later.)
           d.dashed(false);
         }
+        _planVOff = 0;
         u += cab.W;
         if(cab.adj && cab.adj.right && cab.adj.right.panel  > 0) u += cab.adj.right.panel;
         if(cab.adj && cab.adj.right && cab.adj.right.filler > 0) u += cab.adj.right.filler;
@@ -8307,6 +8413,7 @@ function drawPlan(d, area, view, opts){
     w.baseRow.forEach(cab=>{
       if(cab.adj && cab.adj.left  && cab.adj.left.filler  > 0) u += cab.adj.left.filler;
       if(cab.adj && cab.adj.left  && cab.adj.left.panel   > 0) u += cab.adj.left.panel;
+      _planVOff = lowWallOffset(w, u, u + cab.W, 0);
       if(state.drawStyle.showCabDoorSwings !== false){
         drawCabinetDoorsOnPlan(d, w.id, u, cab, plan);
       }
@@ -8319,6 +8426,7 @@ function drawPlan(d, area, view, opts){
           drawDrawerLinesPlan(d, w.id, u, cab.W, cab.D, 1, plan);
         }
       }
+      _planVOff = 0;
       u += cab.W;
       if(cab.adj && cab.adj.right && cab.adj.right.panel  > 0) u += cab.adj.right.panel;
       if(cab.adj && cab.adj.right && cab.adj.right.filler > 0) u += cab.adj.right.filler;
@@ -9343,6 +9451,11 @@ function drawElevation(d, area, wallId, opts){
   // WALL TILING — the room's finish, before anything is stood in front of it.
   try { drawWallTiling(d, ox, oy, wL, Hm, s); }
   catch(e){ console.warn('[Bathroom] wall tiling failed', e.message); }
+
+  // The low wall stands on the floor in front of that tiling, and the joinery
+  // stands in front of it again.
+  try { drawLowWallOnElevation(d, wall, ox, oy, Hm, s); }
+  catch(e){ console.warn('[Bathroom] low wall failed', e.message); }
 
   // OPENINGS on this wall — rendered on the wall surface, behind cabinets. A
   // wall shared with an adjoining room shows that room's openings too.
@@ -14058,6 +14171,7 @@ function renderCabinetList(){
   setFieldValue('endTVal', wall.trim.leftEnd.thickness);
   chk('endToFloor',   wall.trim.leftEnd.toFloor);
   chk('endWaterfall', wall.trim.leftEnd.waterfall);
+  try { syncLowWallPanel(); } catch(_){}
 }
 // Live "does this run fit the wall?" readout in the sidebar. Kept separate from
 // renderCabinetList so it can also refresh on plain redraws (e.g. dragging the
@@ -17782,6 +17896,53 @@ document.getElementById('endWaterfall').addEventListener('change', e=>{
   const w = uiGetWall(state.ui.activeWall);
   w.trim.leftEnd.waterfall = e.target.checked; w.trim.rightEnd.waterfall = e.target.checked; renderActive();
 });
+// ---- Low wall -----------------------------------------------------------
+function _lowWallOf(){
+  const w = uiGetWall(state.ui.activeWall);
+  if(!w) return null;
+  if(!w.lowWall) w.lowWall = { on:false, height:1000, thickness:120, capping:true, cappingD:40, from:0, to:null };
+  return w.lowWall;
+}
+function syncLowWallPanel(){
+  const L = _lowWallOf();
+  if(!L) return;
+  const chk = (id, v)=>{ const e = document.getElementById(id); if(e) e.checked = !!v; };
+  chk('lowWallOn', L.on); chk('lowWallCap', L.capping !== false);
+  setFieldValue('lowWallH', L.height); setFieldValue('lowWallT', L.thickness);
+  setFieldValue('lowWallCapD', L.cappingD === undefined ? 40 : L.cappingD);
+  setFieldValue('lowWallFrom', L.from || 0);
+  const to = document.getElementById('lowWallTo');
+  if(to) to.value = (L.to === null || L.to === undefined) ? '' : String(L.to);
+}
+(function(){
+  const on = (id, ev, fn)=>{ const e = document.getElementById(id); if(e) e.addEventListener(ev, fn); };
+  const num = (id, key, lo, hi)=> on(id, 'change', e=>{
+    const L = _lowWallOf(); if(!L) return;
+    let v = parseFloat(e.target.value);
+    if(!isFinite(v)) v = L[key];
+    L[key] = Math.max(lo, Math.min(hi, v));
+    syncLowWallPanel(); pushHistory(); scheduleAutosave(); renderActive();
+  });
+  on('lowWallOn', 'change', e=>{
+    const L = _lowWallOf(); if(!L) return;
+    L.on = e.target.checked; pushHistory(); scheduleAutosave(); renderActive();
+  });
+  on('lowWallCap', 'change', e=>{
+    const L = _lowWallOf(); if(!L) return;
+    L.capping = e.target.checked; pushHistory(); scheduleAutosave(); renderActive();
+  });
+  num('lowWallH', 'height', 150, 2400);
+  num('lowWallT', 'thickness', 50, 400);
+  num('lowWallCapD', 'cappingD', 0, 400);
+  num('lowWallFrom', 'from', 0, 20000);
+  // Blank means all the way to the far corner, which is the usual case.
+  on('lowWallTo', 'change', e=>{
+    const L = _lowWallOf(); if(!L) return;
+    const raw = String(e.target.value).trim();
+    L.to = raw === '' ? null : Math.max(0, Math.min(20000, parseFloat(raw) || 0));
+    syncLowWallPanel(); pushHistory(); scheduleAutosave(); renderActive();
+  });
+})();
 // Measure tool wiring
 (function(){
   const btn = document.getElementById('measureToggle');
