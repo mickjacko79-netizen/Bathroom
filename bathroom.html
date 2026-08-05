@@ -1065,7 +1065,7 @@ const CATALOG = {
                     screenFinish:'matt-black', entryW:600, returnW:400, hinge:'R', swing:'out',
                     // A blade wall is a built return: tiled, not glass.
                     sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100, panelSide:'',
-                    base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40,
+                    base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40, hobW:100,
                     mixerH:1050, railH:1800, roseH:2050, roseType:'overhead',
                     roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450, mixerU:0,
                     labelText:'' } },
@@ -1141,6 +1141,19 @@ function showerMixer(cab){
   const c = cab.config || {};
   const u = (c.mixerU > 0) ? Math.min(cab.W, c.mixerU) : cab.W / 2;
   return { u, h: c.mixerH || 1050, plate: 68 };
+}
+// A hob has a height and a width, and they were the same number. hobH stood
+// for how tall the kerb is on the elevation AND how thick it is on the plan, so
+// a 40 high hob was drawn 40 thick — a kerb nobody builds. They are separate
+// now, and a drawing made before this gets a 100 wide hob rather than keeping
+// the 40 it never should have had.
+function showerHob(cab){
+  const c = (cab && cab.config) || {};
+  if(c.hob === false) return null;
+  const h = (typeof c.hobH === 'number' && c.hobH >= 0) ? c.hobH : 40;
+  if(h <= 0) return null;
+  const w = (typeof c.hobW === 'number' && c.hobW > 0) ? c.hobW : 100;
+  return { h, w };
 }
 function screenInk(cab){
   const f = SCREEN_FINISHES[(cab.config || {}).screenFinish];
@@ -7269,10 +7282,14 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
     // does read as its own object, so that one still fills.
     const _tiledBase = (c.base || 'tiled') === 'tiled';
     d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), _tiledBase ? null : '#FFFFFF', COL.ink3, LW.hairline);
-    if(c.hob !== false){
+    {
       // The hob is a kerb, so it is outlined rather than filled over the tiling.
-      d.polygon(P([[0,D-(c.hobH||40)],[W,D-(c.hobH||40)],[W,D],[0,D]]),
-        _tiledBase ? null : '#EFEFEC', COL.ink2, LW.thin);
+      const _hb = showerHob(cab);
+      if(_hb){
+        const _hw = Math.min(_hb.w, D);
+        d.polygon(P([[0,D-_hw],[W,D-_hw],[W,D],[0,D]]),
+          _tiledBase ? null : '#EFEFEC', COL.ink2, LW.thin);
+      }
     }
     // Waste.
     if((c.waste || 'linear') === 'linear'){
@@ -7608,7 +7625,8 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
   }
 
   if(cab.type === 'shower'){
-    const hobH = (c.hob === false) ? 0 : (c.hobH || 40);
+    const _hb = showerHob(cab);
+    const hobH = _hb ? _hb.h : 0;
     if(hobH > 0) R(0, 0, cab.W, hobH, '#EFEFEC', stroke, lw);
     // Screen — edge on, so it is the glass arris and the door's leading edge.
     (function(){
@@ -13344,6 +13362,7 @@ function renderEditPanel(){
       pick('Waste position', 'wasteAt', [['wall','At the wall'],['entry','At the entry']]);
       check('Tiled hob (no hob = flush / step-free)', 'hob');
       num('Hob height', 'hobH', 0, 150, 5);
+      num('Hob width', 'hobW', 50, 300, 5);
       num('Screen height', 'screenH', 1200, 2700, 10);
       num('Mixer height', 'mixerH', 700, 1600, 10);
       num('Mixer across (0 = centred)', 'mixerU', 0, 2400, 10);
