@@ -7727,6 +7727,18 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
     return;
   }
 
+  if(cab.type === 'blade'){
+    // Seen end on from the wall it comes off: as wide as it is thick, standing
+    // on the floor. It was in the wall-row accessory drawing, which is never
+    // called for a base-row item at all — so it was drawn nowhere. Y() is
+    // height above the floor, which is what a wall is built to.
+    const _bt = cab.W*s, _bx = X(0), _byT = Y(cab.H), _byB = Y(0);
+    d.rect(_bx, _byT, _bt, _byB - _byT, '#F3F5F5', null, 0);
+    withBladeFinish(cab, function(){ drawSplashbackBand(d, _bx, _byT, _bt, _byB - _byT); });
+    d.rect(_bx, _byT, _bt, _byB - _byT, null, stroke, lw);
+    return;
+  }
+
   if(cab.type === 'shower'){
     const _hb = showerHob(cab);
     const hobH = _hb ? _hb.h : 0;
@@ -7827,17 +7839,6 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
       d.dashed(false);
     }
     d.text(x + W/2, y + H/2, (c.labelText || 'MIRROR'), { align:'center', baseline:'middle', size:5, color:'#6E828C', italic:true });
-    return true;
-  }
-
-  if(cab.type === 'blade'){
-    // Looking at the wall it comes off, a blade is seen end on: as wide as it
-    // is thick, standing the full height it is built to.
-    d.rect(x, y, W, H, '#F3F5F5', null, 0);
-    withBladeFinish(cab, ()=> drawSplashbackBand(d, x, y, W, H));
-    d.rect(x, y, W, H, null, stroke, lw);
-    d.text(x + W/2, y - 4, (c.labelText || 'BLADE'),
-      { align:'center', size:3.6, color:COL.muted, italic:true });
     return true;
   }
 
