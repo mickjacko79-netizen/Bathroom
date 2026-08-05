@@ -10242,14 +10242,27 @@ function drawElevation(d, area, wallId, opts){
     }
     const x = ox + wu*s;
     // Fridge-wall sits on top of the fridge (custom bottom Y), not at the standard wall-cab height.
-    const _cabFloorY = (hasBottomOverride(cab) && cab.config && cab.config.cabBottomY)
+    // An item hung at its own height was taken at its word, so one set high
+    // enough for its top to pass the ceiling was drawn above it — off the top of
+    // the elevation, taking its tag and its dimension line off the sheet with
+    // it. The one that works its own height out has always been clamped; this
+    // one is now too, and says so rather than being quietly moved.
+    const _wantFloorY = (hasBottomOverride(cab) && cab.config && cab.config.cabBottomY)
       ? cab.config.cabBottomY
       : Math.min(wallBottomY, Math.max(0, Hm - cab.H - pelmetUnderH(cab) - 50));
+    const _ceilLimit = Math.max(0, Hm - cab.H - pelmetUnderH(cab));
+    const _cabFloorY = Math.min(_wantFloorY, _ceilLimit);
+    const _overCeil = Math.round(_wantFloorY - _cabFloorY);
     // A pelmet hangs off the carcass down to the top of the splashback, so the
     // carcass itself sits that much higher — the fascia closes the gap rather
     // than dropping into the splash.
     const _cabBottomY = _cabFloorY + pelmetUnderH(cab);
     const y = oy + (Hm - _cabBottomY - cab.H)*s;
+    if(_overCeil > 0){
+      d.text(ox + wu*s + (cab.W*s)/2, y - 2,
+        `SET DOWN ${_overCeil} — WILL NOT FIT UNDER THE CEILING`,
+        { align:'center', size:3.4, color:'#A8332B', bold:true });
+    }
     const isSel = state.ui.selectedCabId === cab.id;
     const handle = getCabHandle(cab);
     // Draw + step past this cabinet's RIGHT filler/panel. Several branches below
@@ -10744,8 +10757,11 @@ function drawElevation(d, area, wallId, opts){
       const _ohLetter = wallLetter(_roomObj, wallId);
       (wall.wallRow || []).forEach((c, i)=>{
         if(c.type === 'filler-wall') return;
-        const bot = (((c.type === 'fridge-wall' || c.type === 'dryer-wall') && c.config && c.config.cabBottomY)
+        const _want = (((c.type === 'fridge-wall' || c.type === 'dryer-wall') && c.config && c.config.cabBottomY)
           ? c.config.cabBottomY : (benchTopY + state.bench.splashback)) + pelmetUnderH(c);
+        // Held under the ceiling, exactly as the cupboard itself is, so the
+        // chain measures where the thing is actually drawn.
+        const bot = Math.max(0, Math.min(_want, Hm - c.H));
         const rec = { bot, H: c.H, un: pelmetUnderH(c), tp: pelmetTopH(c), drop: overheadDoorDrop(c) };
         const key = [rec.bot, rec.H, rec.un, rec.tp, rec.drop].join('/');
         const ref = _ohLetter + '.W' + (i + 1);
@@ -10797,8 +10813,16 @@ function drawElevation(d, area, wallId, opts){
     });
       // Wall-row top dim chain — above the wall cabs.
     if(wall.wallRow.length > 0){
-      const _maxWallH = Math.max(...wall.wallRow.map(c => c.H || 720));
-      const _wallTopY = oy + (Hm - wallBottomY - _maxWallH)*s - 12;
+      // The top of the highest thing actually drawn on this wall, which is not
+      // the same as where it was asked to go once it has been held under the
+      // ceiling.
+      const _topOfRow = Math.min(Hm, Math.max.apply(null, wall.wallRow.map(c=>{
+        const want = (hasBottomOverride(c) && c.config && c.config.cabBottomY)
+          ? c.config.cabBottomY
+          : Math.min(wallBottomY, Math.max(0, Hm - c.H - pelmetUnderH(c) - 50));
+        return Math.min(want, Math.max(0, Hm - c.H - pelmetUnderH(c))) + pelmetUnderH(c) + (c.H || 720);
+      })));
+      const _wallTopY = Math.max(oy + 4, oy + (Hm - _topOfRow)*s - 12);
       let cuW = wallStartU;
       wall.wallRow.forEach(cab=>{
         const lf = (cab.adj && cab.adj.left && cab.adj.left.filler)  || 0;
