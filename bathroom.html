@@ -19154,7 +19154,10 @@ function loadDesign(snap){
         // the drawing looked untouched however many times the mixer was fixed.
         // New defaults only reach new fixtures; an existing job has to be told.
         c.config = c.config || {};
-        if(c.config.wallTap === undefined) c.config.wallTap = 'plate-165';
+        // Falsy, not just absent: a bath that has been through a version where
+        // this was written as an empty string is in the same boat as one that
+        // never had the field, and both fall through to the old spout.
+        if(!c.config.wallTap) c.config.wallTap = 'plate-165';
       }
       if(c.type === 'dishwasher-int'){
         c.config = c.config || {};
