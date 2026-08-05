@@ -8999,10 +8999,20 @@ function drawPlan(d, area, view, opts){
     const start = runStartOffset(w, 'base');
     let u = start;
     w.baseRow.forEach(cab=>{
+      // Advance along the wall exactly as the cabinet outlines below do. What
+      // sits BETWEEN two units — a filler, an end panel, or the gap a drag
+      // leaves behind — is as much a part of where a unit is as its own width.
+      if(cab.adj?.left?.filler > 0) u += cab.adj.left.filler;
+      if(cab.adj?.left?.panel  > 0) u += cab.adj.left.panel;
+      const advance = ()=>{
+        u += cab.W;
+        if(cab.adj?.right?.panel  > 0) u += cab.adj.right.panel;
+        if(cab.adj?.right?.filler > 0) u += cab.adj.right.filler;
+      };
       // A freestanding cooker carries no benchtop, but its hotplates still need
       // to appear on the plan.
       const benched = (cab.type==='base-drawer' || cab.type==='base-door' || isSinkCab(cab));
-      if(!benched){ u += cab.W; return; }
+      if(!benched){ advance(); return; }
       const totalDepth = cab.D + state.bench.overhang;
       if(isSinkCab(cab)){
         // Tap + bowls — bowls are translatable along the cabinet via sinkOffsetU
@@ -9085,7 +9095,7 @@ function drawPlan(d, area, view, opts){
         }
         // (cooktop label suppressed on plan)
       }
-      u += cab.W;
+      advance();
     });
   });
 
