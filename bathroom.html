@@ -792,7 +792,10 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl"><label>Capping depth <span class="val"><input class="valInp" id="lowWallCapD" type="number" min="0" max="400" step="5" value="40"> mm</span></label></div>
         <div class="row2">
           <div class="ctrl"><label>Starts at <span class="val"><input class="valInp" id="lowWallFrom" type="number" min="0" max="8000" step="10" value="0"> mm</span></label></div>
-          <div class="ctrl"><label>Ends at <span class="val"><input class="valInp" id="lowWallTo" type="number" min="0" max="8000" step="10" placeholder="full"> mm</span></label></div>
+          <div class="ctrl"><label>Length <span class="val"><input class="valInp" id="lowWallLen" type="number" min="0" max="8000" step="10"> mm</span></label></div>
+        </div>
+        <div class="ctrl"><label>Ends at <span class="val"><input class="valInp" id="lowWallTo" type="number" min="0" max="8000" step="10" placeholder="to the corner"> mm</span></label>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px" id="lowWallSpanNote"></div>
         </div>
         <div class="ctrl"><label>Tile</label><select id="lowWallTile"></select></div>
         <div class="customRow" id="lowWallColourRow">
@@ -18227,6 +18230,17 @@ function syncLowWallPanel(){
   setFieldValue('lowWallFrom', L.from || 0);
   const to = document.getElementById('lowWallTo');
   if(to) to.value = (L.to === null || L.to === undefined) ? '' : String(L.to);
+  {
+    const w = uiGetWall(state.ui.activeWall);
+    const wl = w ? wallLength(w.id) : 0;
+    const from = Math.max(0, Math.min(wl, L.from || 0));
+    const to = (L.to === null || L.to === undefined) ? wl : Math.max(from, Math.min(wl, L.to));
+    setFieldValue('lowWallLen', Math.round(to - from));
+    const note = document.getElementById('lowWallSpanNote');
+    if(note) note.textContent = (L.to === null || L.to === undefined)
+      ? `Runs to the corner — ${Math.round(to - from)} of a ${Math.round(wl)} mm wall.`
+      : `${Math.round(from)} to ${Math.round(to)} of a ${Math.round(wl)} mm wall.`;
+  }
   const ts = document.getElementById('lowWallTile');
   if(ts) ts.value = L.tile || '';
   const t = L.tile && WALL_TILE_TYPES[L.tile];
@@ -18293,6 +18307,20 @@ function syncLowWallPanel(){
   });
   attachPalette('lowWallColor', 'tile');
   attachPalette('lowWallGrout', 'grout');
+  // Length is the same thing said the other way round — most people know how
+  // long they want the wall, not where along the room it stops. It writes the
+  // end, which is what everything else reads.
+  on('lowWallLen', 'change', e=>{
+    const L = _lowWallOf(); if(!L) return;
+    const w = uiGetWall(state.ui.activeWall);
+    const len = Math.max(0, Math.min(20000, parseFloat(e.target.value) || 0));
+    const wl = w ? wallLength(w.id) : 0;
+    const from = Math.max(0, Math.min(wl, L.from || 0));
+    // Running the full wall is left as "to the corner" rather than pinned to a
+    // number, so it still follows if the room is resized.
+    L.to = (len <= 0 || from + len >= wl - 0.5) ? null : from + len;
+    syncLowWallPanel(); pushHistory(); scheduleAutosave(); renderActive();
+  });
   // Blank means all the way to the far corner, which is the usual case.
   on('lowWallTo', 'change', e=>{
     const L = _lowWallOf(); if(!L) return;
