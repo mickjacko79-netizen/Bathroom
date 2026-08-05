@@ -6040,6 +6040,13 @@ const WALL_TAP_SPEC = {
                  mouthW:70, mouthH:42, spoutT:26 },
 };
 function wallTapSpec(style){ return WALL_TAP_SPEC[style] || WALL_TAP_SPEC['plate-165']; }
+// The wall mixer on a bath, if it has one. Both views ask this one question, so
+// they cannot disagree about it — and it does not consult the tap mode, because
+// a wall mixer is wall mounted by definition. Choosing one is the decision.
+function bathWallMixer(cab){
+  const c = (cab && cab.config) || {};
+  return (c.tapMode !== 'floor' && c.wallTap && WALL_TAP_SPEC[c.wallTap]) ? c.wallTap : null;
+}
 // Elevation, looking at the wall it is fixed to. The plate is seen square on;
 // the spout comes towards the viewer and so is seen end on, not as the bar in
 // profile a side elevation would show.
@@ -7616,7 +7623,7 @@ function drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D){
   d.circle(wp[0], wp[1], 2.4, null, COL.ink2, LW.hairline);
   d.line(wp[0] - 1.7, wp[1], wp[0] + 1.7, wp[1], COL.ink2, LW.hairline);
   d.line(wp[0], wp[1] - 1.7, wp[0], wp[1] + 1.7, COL.ink2, LW.hairline);
-  if(c.tapMode === 'wall' && c.wallTap && WALL_TAP_SPEC[c.wallTap]){
+  if(bathWallMixer(cab)){
     // On the wall: its plate lies against the tiles and its spout reaches out
     // over the bath, which is a set-out off the wall face and not off the rim.
     drawWallMixerOnPlan(d, wallId, plan, uOff + bathTapU(cab), c.wallTap);
@@ -7728,11 +7735,16 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       d.line(X(c.hobW||75), Y(rimH-22), X(cab.W-(c.hobW||75)), Y(rimH-22), COL.ink3, LW.hairline);
       d.dashed(false);
     }
-    if((c.tapMode || 'wall') === 'wall'){
+    if(bathWallMixer(cab)){
+      // A wall mixer IS wall mounted — that is what makes it one. Gating it on
+      // the tap mode as well meant a bath left on a deck tap kept drawing the
+      // deck symbol however many times the mixer itself was corrected, and the
+      // only clue was a dropdown two panels away.
+      drawWallMixerOnElevation(d, X(bathTapU(cab)), Y(c.tapH || 1050), s, bathWallMixer(cab));
+    } else if((c.tapMode || 'wall') === 'wall'){
       const tu = bathTapU(cab);
       const rightEnd = tu > cab.W / 2;
-      if(c.wallTap && WALL_TAP_SPEC[c.wallTap]) drawWallMixerOnElevation(d, X(tu), Y(c.tapH || 1050), s, c.wallTap);
-      else drawWallSpout(d, X(tu), Y(c.tapH || 1050), s, { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
+      drawWallSpout(d, X(tu), Y(c.tapH || 1050), s, { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
     } else if((c.tapMode) === 'deck'){
       drawTapOnElevation(d, X(bathTapU(cab)), Y(rimH), s, 'gooseneck');
     }
