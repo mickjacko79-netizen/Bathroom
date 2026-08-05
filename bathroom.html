@@ -6050,8 +6050,11 @@ function bathWallMixer(cab){
   // a bath in an adjoining room, or on the island, or one added since, was
   // never given the field and quietly went on drawing the old tap. Asking at
   // the moment of drawing reaches every one of them, wherever it lives.
-  if(c.wallTap === undefined || c.wallTap === null || c.wallTap === '') c.wallTap = 'plate-165';
-  return (c.tapMode !== 'floor' && c.wallTap && WALL_TAP_SPEC[c.wallTap]) ? c.wallTap : null;
+  // Anything that is not one of the mixers on the list becomes the default —
+  // including the empty string the old "plain spout" choice used to write, so a
+  // job carrying that comes over rather than being left with nothing.
+  if(!WALL_TAP_SPEC[c.wallTap]) c.wallTap = 'plate-165';
+  return (c.tapMode === 'floor') ? null : c.wallTap;
 }
 // Elevation, looking at the wall it is fixed to. The plate is seen square on;
 // the spout comes towards the viewer and so is seen end on, not as the bar in
@@ -7669,11 +7672,11 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
     if(cab.type === 'toilet' && (c.style === 'close-coupled' || c.style === 'back-to-wall')){
       d.circle(X(cu), Y((c.cisternH || cab.H) - 70), 7*s, '#F2F2F0', COL.ink2, LW.hairline);
     }
-    if(cab.type === 'bath' && (c.tapMode || 'wall') === 'wall'){
-      const tu = bathTapU(cab);
-      const rightEnd = tu > cab.W / 2;
-      drawWallSpout(d, X(tu), Y(c.tapH || 1050), s,
-        { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
+    // A bath's wall tap is drawn in two places on this sheet depending on which
+    // branch the fixture takes. Both go through the mixer, or one of them draws
+    // something else and which bath you look at decides what you see.
+    if(cab.type === 'bath' && bathWallMixer(cab)){
+      drawWallMixerOnElevation(d, X(bathTapU(cab)), Y(c.tapH || 1050), s, bathWallMixer(cab));
     }
     const pr = cabProduct(cab);
     d.text(X(cu), Y(-45), (c.labelText || (pr ? pr.code : '')),
@@ -7747,10 +7750,6 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       // deck symbol however many times the mixer itself was corrected, and the
       // only clue was a dropdown two panels away.
       drawWallMixerOnElevation(d, X(bathTapU(cab)), Y(c.tapH || 1050), s, bathWallMixer(cab));
-    } else if((c.tapMode || 'wall') === 'wall'){
-      const tu = bathTapU(cab);
-      const rightEnd = tu > cab.W / 2;
-      drawWallSpout(d, X(tu), Y(c.tapH || 1050), s, { dir: rightEnd ? 'L' : 'R', reach:230, handles:true });
     } else if((c.tapMode) === 'deck'){
       drawTapOnElevation(d, X(bathTapU(cab)), Y(rimH), s, 'gooseneck');
     }
@@ -13477,11 +13476,11 @@ function renderEditPanel(){
       num('Rim height', 'rimH', 400, 800, 5);
       num('Hob width', 'hobW', 0, 300, 5);
       num('Tap height above floor', 'tapH', 600, 1600, 10);
-      // Which wall mixer, where it is on the wall. Blank keeps the plain spout
-      // and pair of handles the app has always drawn.
+      // Which wall mixer. The plain spout and pair of handles that used to be
+      // the alternative is gone — it was not any particular product and there
+      // is no reason to draw one now there is a real fitting to draw.
       pick('Wall mixer', 'wallTap',
-        [['', 'Plain spout and handles']].concat(
-          Object.entries(WALL_TAP_SPEC).map(([k, t]) => [k, t.label])));
+        Object.entries(WALL_TAP_SPEC).map(([k, t]) => [k, t.label]));
     } else if(cab.type === 'shower'){
       // ---- Screen. Its own group, because it is ordered as its own item.
       editor.appendChild(el('h3', {}, 'Screen'));
