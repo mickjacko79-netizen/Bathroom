@@ -391,7 +391,7 @@ header .project-label .dot.dirty{background:#F7C04A}
       </div>
 
       <div class="group">
-        <h2>Finish (fronts)</h2>
+        <h2 id="finishHead" data-panel="Finish (fronts)">Finish (fronts)</h2>
         <div class="swatches" id="finishBar">
           <div class="sw on" data-color="#F4F2EC" title="Polytec Whisper White"></div>
           <div class="sw" data-color="#1F1E1B" title="Polytec Black Wenge"></div>
@@ -13222,8 +13222,21 @@ function el(tag, attrs={}, ...children){
   return e;
 }
 
+// A blade wall has no fronts on it, so while one is selected the panel that
+// colours fronts says what it is looking at instead. Only the words change —
+// underneath it is still the fronts panel, and the swatches still set the
+// job's front finish.
+function syncFinishHeading(sel){
+  const h = document.getElementById('finishHead');
+  if(!h) return;
+  const want = (sel && sel.cab && sel.cab.type === 'blade') ? 'Top of blade' : 'Finish (fronts)';
+  const t = Array.from(h.childNodes).find(x => x.nodeType === 3 && x.textContent.trim());
+  if(t) t.textContent = want;
+  else h.insertBefore(document.createTextNode(want), h.firstChild);
+}
 function renderEditPanel(){
   const sel = getSelectedCab();
+  syncFinishHeading(sel);
   const def = document.getElementById('defaultPanel');
   const editor = document.getElementById('editPanel');
   if(!sel){ def.classList.remove('hidden'); editor.classList.add('hidden'); editor.innerHTML=''; return; }
@@ -17625,6 +17638,9 @@ function applyPanelSides(){
 // The heading's own text, without the move button that lives inside it.
 function _panelName(h){
   if(!h) return '';
+  // A panel that renames itself on screen is still the same panel, so its
+  // own name wins over whatever it happens to be displaying.
+  if(h.dataset && h.dataset.panel) return h.dataset.panel;
   let s = '';
   h.childNodes.forEach(n=>{ if(n.nodeType === 3) s += n.textContent; });
   return s.trim() || h.textContent.replace(/[←→]/g, '').trim();
