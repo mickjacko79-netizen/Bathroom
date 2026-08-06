@@ -400,7 +400,9 @@ header .project-label .dot.dirty{background:#F7C04A}
         </div>
         <div class="customRow">
           <input type="color" id="finishColorCustom" value="#F4F2EC">
-          <span class="lbl">Custom front colour</span>
+          <span class="lbl" id="finishColorLbl">Custom front colour</span>
+          <button class="reset" id="finishColorReset" title="Back to the colour the walls are cut in"
+                  style="display:none">reset</button>
         </div>
         <div class="ctrl"><label>Door style</label>
           <select id="projDoorStyle"></select>
@@ -1078,7 +1080,7 @@ const CATALOG = {
   // a vanity, in a shower. The key stays 'shower-niche' so drawings already
   // saved still find it.
   'blade':       { label:'Blade wall',              defaultW:120, H:2100, D:900, row:'base', hasShelves:false,
-    defaultConfig:{ tile:null, color:null, grout:null, capping:false, cappingD:40, labelText:'' } },
+    defaultConfig:{ tile:null, color:null, grout:null, topColor:null, capping:false, cappingD:40, labelText:'' } },
   'shower-niche':{ label:'Niche',                   defaultW:600, H:300,  D:65,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1100, shelves:0, labelText:'' } },
 };
@@ -7520,8 +7522,10 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   if(cab.type === 'blade'){
     // Seen from above it is a rectangle running out from the wall: as thick as
     // it is wide and as long as it reaches.
-    // Drawn as wall, in the colour the room's walls are cut in.
-    d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), roomWallPlanFill(), COL.ink, LW.thin);
+    // Drawn as wall, in the colour the room's walls are cut in — unless this
+    // one has been given a top colour of its own, which is the whole of what
+    // you see of a blade from above.
+    d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), c.topColor || roomWallPlanFill(), COL.ink, LW.thin);
     // The free end, which is the one that gets a capping or a set-out.
     d.line.apply(d, P([[0,D],[W,D]]).flat().concat([COL.ink, LW.medium]));
     d.text.apply(d, (function(){ const p = P([[W/2, D + 40]])[0];
@@ -13226,17 +13230,43 @@ function el(tag, attrs={}, ...children){
 // colours fronts says what it is looking at instead. Only the words change —
 // underneath it is still the fronts panel, and the swatches still set the
 // job's front finish.
-function syncFinishHeading(sel){
+// The blade wall that is selected, if one is. The fronts panel points at it
+// while it is: same swatches, same custom colour, driving the top of the blade
+// instead of the job's fronts. A blade has no fronts, so there is nothing to
+// lose by lending it the panel, and a colour picker that names the thing on
+// screen and then changes something else would be worse than no picker.
+function selectedBladeCab(){
+  const sel = (typeof getSelectedCab === 'function') ? getSelectedCab() : null;
+  return (sel && sel.cab && sel.cab.type === 'blade') ? sel.cab : null;
+}
+function syncFinishPanel(sel){
+  const blade = (sel === undefined) ? selectedBladeCab()
+    : ((sel && sel.cab && sel.cab.type === 'blade') ? sel.cab : null);
   const h = document.getElementById('finishHead');
-  if(!h) return;
-  const want = (sel && sel.cab && sel.cab.type === 'blade') ? 'Top of blade' : 'Finish (fronts)';
-  const t = Array.from(h.childNodes).find(x => x.nodeType === 3 && x.textContent.trim());
-  if(t) t.textContent = want;
-  else h.insertBefore(document.createTextNode(want), h.firstChild);
+  if(h){
+    const want = blade ? 'Top of blade' : 'Finish (fronts)';
+    const t = Array.from(h.childNodes).find(x => x.nodeType === 3 && x.textContent.trim());
+    if(t) t.textContent = want;
+    else h.insertBefore(document.createTextNode(want), h.firstChild);
+  }
+  // A blade with no colour of its own follows the walls, so no swatch is lit —
+  // the same way an unset override reads everywhere else on this sidebar.
+  const cur = String((blade ? blade.config.topColor : state.finish.color) || '').toLowerCase();
+  document.querySelectorAll('#finishBar .sw').forEach(sw =>
+    sw.classList.toggle('on', (sw.dataset.color || '').toLowerCase() === cur));
+  const inp = document.getElementById('finishColorCustom');
+  if(inp){
+    const shown = (blade ? (blade.config.topColor || roomWallPlanFill()) : state.finish.color) || '#F4F2EC';
+    if(/^#[0-9a-f]{6}$/i.test(shown)) inp.value = shown;
+  }
+  const lbl = document.getElementById('finishColorLbl');
+  if(lbl) lbl.textContent = blade ? 'Custom top colour' : 'Custom front colour';
+  const rst = document.getElementById('finishColorReset');
+  if(rst) rst.style.display = blade ? '' : 'none';
 }
 function renderEditPanel(){
   const sel = getSelectedCab();
-  syncFinishHeading(sel);
+  syncFinishPanel(sel);
   const def = document.getElementById('defaultPanel');
   const editor = document.getElementById('editPanel');
   if(!sel){ def.classList.remove('hidden'); editor.classList.add('hidden'); editor.innerHTML=''; return; }
@@ -15477,6 +15507,8 @@ document.getElementById('finishBar').addEventListener('click', e=>{
   const t = e.target.closest('.sw'); if(!t) return;
   document.querySelectorAll('#finishBar .sw').forEach(s=>s.classList.remove('on'));
   t.classList.add('on');
+  const blade = selectedBladeCab();
+  if(blade){ blade.config.topColor = t.dataset.color; scheduleAutosave(); renderActive(); return; }
   state.finish.color = t.dataset.color;
   state.finish.label = FINISH_LABELS[t.dataset.color] || 'Custom';
   renderActive();
@@ -15904,10 +15936,20 @@ if(_bHV) _bHV.addEventListener('change', e=>{
   renderActive();
 });
 document.getElementById('finishColorCustom').addEventListener('input', e=>{
+  document.querySelectorAll('#finishBar .sw').forEach(s=> s.classList.remove('on'));
+  const blade = selectedBladeCab();
+  if(blade){ blade.config.topColor = e.target.value; scheduleAutosave(); renderActive(); return; }
   state.finish.color = e.target.value;
   state.finish.label = 'Custom (' + e.target.value + ')';
-  document.querySelectorAll('#finishBar .sw').forEach(s=> s.classList.remove('on'));
   renderActive();
+});
+// Back to the walls, which is where a blade starts and where it belongs unless
+// there is a reason to say otherwise.
+document.getElementById('finishColorReset').addEventListener('click', ()=>{
+  const blade = selectedBladeCab();
+  if(!blade) return;
+  blade.config.topColor = null;
+  syncFinishPanel(); scheduleAutosave(); renderActive();
 });
 document.getElementById('lineColorCustom').addEventListener('input', e=>{
   state.drawStyle.lineColor = e.target.value;
@@ -20059,6 +20101,9 @@ function syncSidebarFromState(){
   setVal('defHandleFinish', state.handleDefault.finish);
   document.querySelectorAll('#thickBar .pill').forEach(p=> p.classList.toggle('on', parseInt(p.dataset.v,10) === state.carcass.T));
   document.querySelectorAll('#finishBar .sw').forEach(s=> s.classList.toggle('on', s.dataset.color === state.finish.color));
+  // Last, so a blade under selection keeps the panel rather than having the
+  // job's own finish painted back over it.
+  try { syncFinishPanel(); } catch(_){}
   document.querySelectorAll('#lineColorBar .sw').forEach(s=> s.classList.toggle('on', s.dataset.color === state.drawStyle.lineColor));
   document.querySelectorAll('#dimColorBar .sw').forEach(s=> s.classList.toggle('on', s.dataset.color === state.drawStyle.dimColor));
   setVal('lineScale', state.drawStyle.lineScale * 100);
