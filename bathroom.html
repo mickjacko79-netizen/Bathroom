@@ -1035,12 +1035,12 @@ const CATALOG = {
   'filler-base': { label:'Filler — vanity (720H)', defaultW:50,  H:720,  D:460, row:'base', hasShelves:false, defaultConfig:{} },
   'filler-tall': { label:'Filler — tall (2100H)',  defaultW:50,  H:2100, D:460, row:'base', hasShelves:false, defaultConfig:{} },
   'filler-wall': { label:'Filler — wall (750H)',   defaultW:50,  H:750,  D:150, row:'wall', hasShelves:false, defaultConfig:{} },
-  'sink-base':       { label:'Vanity — basin + tap',       defaultW:900, H:720,  D:460, row:'base', hasShelves:true,  defaultConfig:{ doors:2, hingeSide:'L', bowls:'single', bowlW:420, bowlD:340, bowlShape:'rect-soft', basinMount:'undermount', vesselH:130, dummyDrawer:true, dummyDrawerH:140, tapStyle:'gooseneck', sinkOffsetU:0, shelves:0, shelfMode:'equal' } },
+  'sink-base':       { label:'Vanity — basin + tap',       defaultW:900, H:720,  D:460, row:'base', hasShelves:true,  defaultConfig:{ doors:2, hingeSide:'L', bowls:'single', bowlW:420, bowlD:340, bowlShape:'rect-soft', basinMount:'undermount', vesselH:130, dummyDrawer:true, dummyDrawerH:140, tapStyle:'gooseneck', tapMode:'deck', tapPos:'centre', tapAbove:200, wallTap:'plate-165', sinkOffsetU:0, shelves:0, shelfMode:'equal' } },
   // ---- Laundry ----------------------------------------------------------
   // A laundry tub is a sink base with a deep single bowl, so it shares the
   // sink-base renderers and picks up the sink + tap brand pickers unchanged.
   'laundry-tub':     { label:'Laundry tub + tap',          defaultW:600, H:720,  D:560, row:'base', hasShelves:true,
-    defaultConfig:{ doors:1, hingeSide:'L', bowls:'single', bowlW:450, bowlD:420, bowlClearance:400, bowlShape:'rect', basinMount:'inset', vesselH:130, dummyDrawer:false, dummyDrawerH:140, tapStyle:'gooseneck', sinkOffsetU:0, shelves:0, shelfMode:'equal', shelfPositions:[] } },
+    defaultConfig:{ doors:1, hingeSide:'L', bowls:'single', bowlW:450, bowlD:420, bowlClearance:400, bowlShape:'rect', basinMount:'inset', vesselH:130, dummyDrawer:false, dummyDrawerH:140, tapStyle:'gooseneck', tapMode:'deck', tapPos:'centre', tapAbove:200, wallTap:'plate-165', sinkOffsetU:0, shelves:0, shelfMode:'equal', shelfPositions:[] } },
   'laundry-appliance': { label:'Washer / dryer — under bench', defaultW:600, H:720, D:600, row:'base', hasShelves:false,
     defaultConfig:{ mode:'washer', mount:'freestanding', benchOver:true, showKick:false, porthole:true, labelText:'' } },
   'dryer-wall':      { label:'Dryer — wall mounted',       defaultW:600, H:700,  D:520, row:'wall', hasShelves:false,
@@ -6013,9 +6013,21 @@ function rangehoodUnderH(cab){
 // A mixer set out in real millimetres, so it keeps its proportions at any scale
 // and reads the same on the plan and on the elevation. It was a 1.5 mm dot with
 // a line off it, which at 1:50 said "something is here" and nothing else.
+// A basin mixer is a shorter thing than a kitchen tap, and a basin standing on
+// top of the bench needs one taller than either — a 150 riser behind a 130
+// vessel is a tap pouring into the side of it. The two originals keep their
+// numbers so nothing already drawn moves.
 const TAP_SPEC = {
-  'standard':  { base:36, riser:150, reach:150, spout:22, lever:80, curved:false },
-  'gooseneck': { base:38, riser:170, reach:180, spout:24, lever:85, curved:true  },
+  'basin':          { base:32, riser:105, reach:105, spout:20, lever:70, curved:false },
+  'standard':       { base:36, riser:150, reach:150, spout:22, lever:80, curved:false },
+  'gooseneck':      { base:38, riser:170, reach:180, spout:24, lever:85, curved:true  },
+  'tall':           { base:40, riser:250, reach:130, spout:24, lever:85, curved:false },
+  'tall-gooseneck': { base:42, riser:280, reach:165, spout:26, lever:90, curved:true  },
+};
+// Short enough to sit on a pill bar.
+const TAP_STYLE_SHORT = {
+  'basin':'Basin', 'standard':'Standard', 'gooseneck':'Gooseneck',
+  'tall':'Tall', 'tall-gooseneck':'Tall goose',
 };
 function tapSpec(style){ return TAP_SPEC[style] || TAP_SPEC['gooseneck']; }
 // Wall mixers, which are a different animal from a deck tap: one backplate
@@ -6051,7 +6063,9 @@ function wallMixerOf(cab){
   if(!cab) return null;
   const c = cab.config || {};
   if(cab.type === 'bath') return bathWallMixer(cab);
-  if(cab.type === 'basin-fs'){
+  // A vanity takes the same wall mixer a basin does, through the same rule —
+  // there is no second kind of wall tap and no reason to invent one.
+  if(cab.type === 'basin-fs' || isSinkCab(cab)){
     if((c.tapMode || 'deck') !== 'wall') return null;
     if(!WALL_TAP_SPEC[c.wallTap]) c.wallTap = 'plate-165';
     return c.wallTap;
@@ -6269,6 +6283,35 @@ function sinkBowlShape(cab){
 // under it does not.
 function vesselHeightOf(cab){
   return Math.max(60, ((cab && cab.config) || {}).vesselH || 130);
+}
+// Where the tap stands along the cabinet. Beside the bowl rather than behind it
+// is a real arrangement, not a mistake — it is what you do when a vessel basin
+// has no ledge to drill, or when the bowl is hard against a return wall — so
+// the drawing has to be able to say it.
+const TAP_POSITIONS = { 'left':'Left', 'centre':'Centre', 'right':'Right' };
+function vanityTapPos(cab){
+  const p = (cab && cab.config && cab.config.tapPos);
+  return TAP_POSITIONS[p] ? p : 'centre';
+}
+// In mm from the left end of the cabinet. Centred means centred on the bowls,
+// which is not the middle of the cabinet once the sink has been offset.
+function vanityTapU(cab){
+  const c = cab.config || {};
+  const pos = vanityTapPos(cab);
+  if(pos === 'centre') return cab.W/2 + (c.sinkOffsetU || 0);
+  const set = sinkBowlSet(cab);
+  const l = Math.min.apply(null, set.map(b => b.u - b.w/2));
+  const r = Math.max.apply(null, set.map(b => b.u + b.w/2));
+  // Clear of the bowls by 60, and never off the end of the cabinet.
+  const want = (pos === 'left') ? l - 60 : r + 60;
+  return Math.max(70, Math.min(cab.W - 70, want));
+}
+// A wall mixer over a vanity is set out off the floor, but it is chosen off
+// the bench — 200 above it is where one goes — so that is what is asked for
+// and the height above floor follows whatever the bench turns out to be.
+function vanityTapH(cab, benchTopY){
+  const c = (cab && cab.config) || {};
+  return benchTopY + Math.max(50, c.tapAbove || 200);
 }
 function sinkBowlSet(cab){
   const c = cab.config || {};
@@ -9097,8 +9140,9 @@ function drawPlan(d, area, view, opts){
         const bowlD = cab.config.bowlD || 380;
         const sinkOff = (cab.config.sinkOffsetU !== undefined) ? cab.config.sinkOffsetU : 0;
         const sinkCentreU = u + cab.W/2 + sinkOff;
-        // Tap — drawn after the bowls so it reads over them.
-        const tapU = sinkCentreU;
+        // Tap — drawn after the bowls so it reads over them. Where it stands is
+        // its own setting now: behind the bowls, or clear of them either side.
+        const tapU = u + vanityTapU(cab);
         const tapV = 70;                       // 70 mm off the wall, behind the bowl
         const sinkCentreV = 130 + bowlD/2; // 130mm from wall to bowl front
         const _shape = sinkBowlShape(cab);
@@ -9138,7 +9182,8 @@ function drawPlan(d, area, view, opts){
           drawBowl(startU2 + bowlW/2, bowlW, bowlD);
           drawBowl(startU2 + bowlW + gap + bowlW/2, bowlW, bowlD);
         }
-        drawTapOnPlan(d, w.id, plan, tapU, tapV, cab.config.tapStyle);
+        if(wallMixerOf(cab)) drawWallMixerOnPlan(d, w.id, plan, tapU, wallMixerOf(cab));
+        else drawTapOnPlan(d, w.id, plan, tapU, tapV, cab.config.tapStyle);
       } else if(cab.type === 'oven-base' && !(cab.config && cab.config.cooktopOver !== false)){
         // An under-bench oven with no cooktop over it — nothing on the benchtop.
       } else if(cab.type === 'cooktop-base' || cab.type === 'oven-freestanding'
@@ -10449,8 +10494,7 @@ function drawElevation(d, area, wallId, opts){
       // under it — dashed through the front is how you read what is behind it.
       drawSinkHiddenOnElevation(d, cab, x, oy, Hm, s, benchTopY, benchT);
       // The tap stands on the benchtop — noted here, drawn once the bench is down.
-      _taps.push({ cx: x + (cab.W/2 + ((cab.config || {}).sinkOffsetU || 0))*s,
-                   style: (cab.config || {}).tapStyle });
+      _taps.push({ cab, cx: x + vanityTapU(cab)*s });
       _benchBasins.push({ cab, x });
       // SINK SHELVES — dashed hidden lines inside the cabinet (under the bowl).
       const _shN = cab.config.shelves || 0;
@@ -11094,8 +11138,17 @@ function drawElevation(d, area, wallId, opts){
   // Taps last of all — nothing on this wall stands in front of one. In a
   // bathroom that includes the mirror: the mirror is behind the basin tap, so
   // the taps have to wait for the wall row rather than going down before it.
+  // Taps first, then the basins that stand on the bench — because on an
+  // elevation the tap is BEHIND the bowl. Drawing it afterwards laid the
+  // escutcheon and the riser across the china, which reads as a tap standing
+  // in the basin. The bowl now laps over the foot of its own tap, and what
+  // shows above the rim is the spout, which is all you would see.
+  _taps.forEach(tp => {
+    const wm = wallMixerOf(tp.cab);
+    if(wm) drawWallMixerOnElevation(d, tp.cx, oy + (Hm - vanityTapH(tp.cab, benchTopY))*s, s, wm);
+    else drawTapOnElevation(d, tp.cx, oy + (Hm - benchTopY)*s, s, (tp.cab.config || {}).tapStyle);
+  });
   _benchBasins.forEach(b => drawBasinOnBench(d, b.cab, b.x, oy + (Hm - benchTopY)*s, s));
-  _taps.forEach(tp => drawTapOnElevation(d, tp.cx, oy + (Hm - benchTopY)*s, s, tp.style));
 
   // The bulkheads, once the run is laid out, so they come out as one board per
   // run rather than one per carcass — the way the kick strip reads. The fascias
@@ -11987,6 +12040,9 @@ function scheduleNoteFor(cab){
   if(isSinkCab(cab)) bits.push(`${c.bowls === '1.5' || c.bowls === '15' ? '1.5' : (c.bowls || 'double')} bowl`);
   // The benchtop is fabricated to suit the mount, so the schedule says it.
   if(isSinkCab(cab)) bits.push(`${BOWL_SHAPES[sinkBowlShape(cab)].toLowerCase()}, ${BASIN_MOUNTS[basinMountOf(cab)].note}`);
+  if(isSinkCab(cab)) bits.push(`${wallMixerOf(cab) ? 'wall mixer' :
+    (TAP_STYLE_SHORT[c.tapStyle || 'gooseneck'] || 'mixer').toLowerCase() + ' tap'}` +
+    (vanityTapPos(cab) === 'centre' ? '' : ` to the ${vanityTapPos(cab)}`));
   if(cab.type === 'laundry-appliance'){
     bits.push(c.mode === 'dryer' ? 'dryer' : (c.mode === 'washer-dryer' ? 'washer over dryer' : 'washing machine'));
     bits.push(c.mount === 'integrated' ? 'integrated' : 'freestanding');
@@ -13862,10 +13918,27 @@ function renderEditPanel(){
     const maxOff = Math.max(50, Math.floor((cab.W - 200)/2));
     editor.appendChild(_cfgRng('Sink offset (-L / +R)', 'sinkOffsetU', -maxOff, maxOff, 10));
     editor.appendChild(el('div', { class:'ctrl' },
-      el('label', {}, 'Tap style'),
-      pillbar(['standard','gooseneck'], cab.config.tapStyle || 'gooseneck', v=>{
-        cab.config.tapStyle = v; renderActive();
-      })
+      el('label', {}, 'Tap mount'),
+      pillbar(['deck','wall'], ((cab.config.tapMode || 'deck') === 'wall') ? 'wall' : 'deck', v=>{
+        cab.config.tapMode = v; renderEditPanel(); renderActive();
+      }, { deck:'On the bench', wall:'Wall mixer' })
+    ));
+    // A wall mixer has no riser and no style to pick — it has a height.
+    if((cab.config.tapMode || 'deck') === 'wall'){
+      editor.appendChild(_cfgRng('Wall tap above bench', 'tapAbove', 50, 600, 10));
+    } else {
+      editor.appendChild(el('div', { class:'ctrl' },
+        el('label', {}, 'Tap style'),
+        pillbar(Object.keys(TAP_SPEC), cab.config.tapStyle || 'gooseneck', v=>{
+          cab.config.tapStyle = v; renderActive();
+        }, TAP_STYLE_SHORT)
+      ));
+    }
+    editor.appendChild(el('div', { class:'ctrl' },
+      el('label', {}, 'Tap position'),
+      pillbar(Object.keys(TAP_POSITIONS), vanityTapPos(cab), v=>{
+        cab.config.tapPos = v; renderActive();
+      }, TAP_POSITIONS)
     ));
     editor.appendChild(el('h3', {}, 'False front'));
     editor.appendChild(el('label', { class:'toggle' },
@@ -19352,6 +19425,12 @@ function loadDesign(snap){
         if(c.config.bowlShape === undefined)    c.config.bowlShape = 'rect';
         if(c.config.basinMount === undefined)   c.config.basinMount = 'undermount';
         if(c.config.vesselH === undefined)      c.config.vesselH = 130;
+        // A tap drawn before any of this stood on the bench, centred on the
+        // bowls, which is where it stays.
+        if(c.config.tapMode === undefined)      c.config.tapMode = 'deck';
+        if(c.config.tapPos === undefined)       c.config.tapPos = 'centre';
+        if(c.config.tapAbove === undefined)     c.config.tapAbove = 200;
+        if(!WALL_TAP_SPEC[c.config.wallTap])    c.config.wallTap = 'plate-165';
         if(c.config.doors === undefined)        c.config.doors = 2;
       }
       if(c.type === 'bath'){
