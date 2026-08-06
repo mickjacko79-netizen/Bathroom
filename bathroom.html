@@ -7520,9 +7520,8 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   if(cab.type === 'blade'){
     // Seen from above it is a rectangle running out from the wall: as thick as
     // it is wide and as long as it reaches.
-    // Filled the way a low wall is, through the same call.
-    let fill; withBladeFinish(cab, ()=>{ fill = tiledWallPlanFill(); });
-    d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), fill, COL.ink, LW.thin);
+    // Drawn as wall, in the colour the room's walls are cut in.
+    d.polygon(P([[0,0],[W,0],[W,D],[0,D]]), roomWallPlanFill(), COL.ink, LW.thin);
     // The free end, which is the one that gets a capping or a set-out.
     d.line.apply(d, P([[0,D],[W,D]]).flat().concat([COL.ink, LW.medium]));
     d.text.apply(d, (function(){ const p = P([[W/2, D + 40]])[0];
@@ -7686,9 +7685,9 @@ function drawShowerScreenOnPlan(d, wallId, uOff, cab, plan){
   if(L.blade){
     const bl = L.blade;
     const u0 = (bl.side === 'R') ? L.W - bl.t : 0;
-    // Filled the way a low wall is, through the same call.
-    let fill; withBladeFinish(cab, ()=>{ fill = tiledWallPlanFill(); });
-    d.polygon(P([[u0, 0],[u0 + bl.t, 0],[u0 + bl.t, bl.d],[u0, bl.d]]), fill, COL.ink, LW.thin);
+    // Drawn as wall, in the colour the room's walls are cut in.
+    d.polygon(P([[u0, 0],[u0 + bl.t, 0],[u0 + bl.t, bl.d],[u0, bl.d]]),
+      roomWallPlanFill(), COL.ink, LW.thin);
     // The nib end gets the same line weight the room's own walls carry.
     const tp = planMap(wallId, uOff + u0 + bl.t / 2, bl.d + 95, plan);
     d.text(tp[0], tp[1], 'BLADE ' + Math.round(bl.t), { align:'center', size:4, color:COL.muted });
@@ -8279,15 +8278,22 @@ function setLowWallEnd(wall, end, u){
 // Plan: the low wall as a band standing off the wall face, tiled, with the
 // capping shown as a line along its front edge.
 let _lwView = null;
-// What a built, tiled wall is filled with when it is seen from above. A low
-// wall and a blade wall are the same thing — brickwork or studwork, tiled,
-// cut through by the plan — so they are filled by the same line of code and
-// cannot drift apart into looking like two different kinds of object. Call it
-// inside withLowWallFinish or withBladeFinish and it picks up that wall's own
-// tile; call it outside one and it gives the room's finish.
+// What a tiled wall is filled with when it is seen from above. Call it inside
+// withLowWallFinish and it picks up that wall's own tile; call it outside one
+// and it gives the room's finish.
 function tiledWallPlanFill(){
   const sp = state.splashback || {};
   return sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
+}
+// What the room's own walls are cut in. A blade wall is a wall, so on a plan
+// it is drawn as one. Filling it in its tile colour instead put another flat
+// tone into a drawing that already carries the floor, the walls and the
+// joinery, and made a blade read as a piece of furniture standing in the room
+// rather than as a piece of the building. The elevation still shows it tiled,
+// because on an elevation you are looking at the tiling.
+function roomWallPlanFill(){
+  const wm = wallMaterial(state.room.wallMaterial);
+  return state.room.wallColorOverride || (wm && wm.color) || COL.poche;
 }
 function drawLowWallOnPlan(d, wall, plan){
   const L = lowWallOf(wall);
