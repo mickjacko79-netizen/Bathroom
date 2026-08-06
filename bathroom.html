@@ -8278,13 +8278,6 @@ function setLowWallEnd(wall, end, u){
 // Plan: the low wall as a band standing off the wall face, tiled, with the
 // capping shown as a line along its front edge.
 let _lwView = null;
-// What a tiled wall is filled with when it is seen from above. Call it inside
-// withLowWallFinish and it picks up that wall's own tile; call it outside one
-// and it gives the room's finish.
-function tiledWallPlanFill(){
-  const sp = state.splashback || {};
-  return sp.colorOverride || SPLASHBACK_FILL[sp.type] || '#EDEAE3';
-}
 // What the room's own walls are cut in. A blade wall is a wall, so on a plan
 // it is drawn as one. Filling it in its tile colour instead put another flat
 // tone into a drawing that already carries the floor, the walls and the
@@ -8298,10 +8291,11 @@ function roomWallPlanFill(){
 function drawLowWallOnPlan(d, wall, plan){
   const L = lowWallOf(wall);
   if(!L) return;
-  withLowWallFinish(L, ()=>{
-    planRectOnWall(d, wall.id, L.from, L.to - L.from, L.t, plan,
-      tiledWallPlanFill(), COL.ink, LW.thin);
-  });
+  // Cut as wall, like the blade and like the room's own walls. It is built the
+  // same way and it is the same thing in section; its tile belongs on the
+  // elevation, where you can see it.
+  planRectOnWall(d, wall.id, L.from, L.to - L.from, L.t, plan,
+    roomWallPlanFill(), COL.ink, LW.thin);
   if(L.capping && L.cappingD > 0){
     const cd = Math.min(L.cappingD, L.t);
     planBandOnWall(d, wall.id, L.from, L.to - L.from, L.t - cd, L.t, plan,
