@@ -533,6 +533,10 @@ header .project-label .dot.dirty{background:#F7C04A}
         </div>
         <div class="ctrl"><label>Vanity top height <span class="val"><input class="valInp" id="benchHeightVal" type="number" min="700" max="1100" step="5" value="850"> mm</span></label><input id="benchHeight" type="range" min="700" max="1100" step="5" value="850"></div>
         <div class="ctrl"><label>Front overhang <span class="val"><input class="valInp" id="oVal" type="number" min="0" max="80" step="5" value="30"> mm</span></label><input id="o" type="range" min="0" max="80" step="5" value="30"></div>
+        <div class="ctrl"><label>Top thickness <span class="val"><input class="valInp" id="benchThickVal" type="number" min="6" max="120" step="1" value="20"> mm</span></label><input id="benchThick" type="range" min="6" max="120" step="1" value="20">
+          <div class="customRow" style="margin-top:4px"><span class="lbl">Overrides the material</span>
+            <button class="reset" id="benchThickReset" title="Back to the thickness the material is made in">reset</button></div>
+        </div>
         <div style="font-size:10.5px;color:var(--muted);margin:12px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Specification</div>
         <div class="ctrl"><label>Brand</label><select id="benchBrand"></select></div>
         <div class="ctrl"><label>Product / colour name</label><input id="benchProduct" type="text" placeholder="e.g. Sirius, Calacatta Oro"></div>
@@ -1411,7 +1415,7 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><th>Panel</th><th>What it sets</th></tr>
               <tr><td>Finish (fronts)</td><td>Colour and door style for every front on the job — slab, shaker, V-groove, fluted, glass in a frame, mirror in a frame. One cabinet can differ in its own panel.</td></tr>
               <tr><td>Carcass</td><td>Board thickness, kick height, filler depth.</td></tr>
-              <tr><td>Vanity top</td><td>Material, height, front overhang, edge profile, brand and product name, surface finish, and the hatch it is drawn in. Stone, laminate, timber and concrete at their real thicknesses.</td></tr>
+              <tr><td>Vanity top</td><td>Material, height, front overhang, top thickness, edge profile, brand and product name, surface finish, and the hatch it is drawn in. Porcelain and sintered stone, natural stone, terrazzo, solid surface, timber, laminate, concrete and a tiled top, each at the thickness it is made in — and a thickness of your own where the same material comes more than one way.</td></tr>
               <tr><td>Wall tiling</td><td>The job's tile: type, brand, product, size, bond and laying pattern, tiling height, the datum a part course is set out from and which end it goes. Mosaics through subway and squares to 1200 × 2400 slab.</td></tr>
               <tr><td>Tile on this wall</td><td>In <span class="ui">Run trim</span>: one wall's tile, colour and grout. Leave it on the job's tile and the wall follows the project; set it and only that wall changes.</td></tr>
               <tr><td>Floor</td><td>Material and laying pattern — boards, herringbone, chevron, parquet, planks, tiles from 100 × 100 to slab — the size, the angle it is laid at, and where the set-out starts, nudged across and along until the cuts fall where you want them.</td></tr>
@@ -1795,18 +1799,53 @@ const FINISH_LABELS = {
   '#8C7152':'Navurban Berkeley Oak',
   '#6E6F70':'Polytec Concrete Mineral',
 };
+// Vanity top materials. Nothing engineered has been added to this list on
+// purpose: engineered stone has been banned in Australia for new benchtops
+// since 1 July 2024, and the panel already warns about it. The two Caesarstone
+// entries stay because documenting or repairing an existing installation is
+// exactly what they are still legal for. Everything added here is what the
+// warning itself names as unaffected — porcelain, sintered and natural stone —
+// plus the materials a bathroom actually uses beside them.
 const BENCH_DEFS = {
+  // Engineered stone — existing installations only.
   'stone-white':       { label:'Caesarstone Pure White, 20mm',  thick:20, color:'#FAFAF7', hatch:'stone' },
-  'stone-blackmarble': { label:'Black marble, 20mm',             thick:20, color:'#1F1F22', hatch:'stone-dark' },
-  'laminex-natural':   { label:'Laminex Natural Oak, 33mm',      thick:33, color:'#B28B5C', hatch:'timber' },
-  'concrete':          { label:'Polished concrete, 40mm',         thick:40, color:'#8E8B85', hatch:'concrete' },
-  // Island-only options offered by the "Island benchtop material" picker.
   'stone-dark':        { label:'Caesarstone Raven, 20mm',        thick:20, color:'#2E2E31', hatch:'stone-dark' },
+  // Porcelain and sintered stone.
+  'porcelain-12':      { label:'Porcelain / sintered stone, 12mm', thick:12, color:'#F4F3F0', hatch:'stone-fine' },
+  'porcelain-20':      { label:'Porcelain / sintered stone, 20mm', thick:20, color:'#EDEBE7', hatch:'stone-fine' },
+  'porcelain-dark':    { label:'Porcelain — dark, 12mm',           thick:12, color:'#33343A', hatch:'stone-dark' },
+  // Natural stone.
+  'marble-carrara':    { label:'Marble — Carrara, honed, 20mm',   thick:20, color:'#EFEFEC', hatch:'marble' },
+  'marble-statuario':  { label:'Marble — heavy veining, 20mm',    thick:20, color:'#F6F5F2', hatch:'marble-heavy' },
+  'stone-blackmarble': { label:'Black marble, 20mm',             thick:20, color:'#1F1F22', hatch:'stone-dark' },
+  'granite':           { label:'Granite, 30mm',                   thick:30, color:'#6E6B68', hatch:'granite' },
+  'travertine':        { label:'Travertine, honed, 20mm',         thick:20, color:'#DCCFB8', hatch:'stone-fine' },
+  'limestone':         { label:'Limestone, honed, 20mm',          thick:20, color:'#DAD4C6', hatch:'stone-fine' },
+  // Terrazzo and solid surface.
+  'terrazzo':          { label:'Terrazzo, 30mm',                  thick:30, color:'#E4E0D6', hatch:'terrazzo' },
+  'solid-surface':     { label:'Solid surface, 12mm',             thick:12, color:'#F7F6F3', hatch:'solid' },
+  // Timber.
   'timber-oak':        { label:'Solid oak benchtop, 40mm',       thick:40, color:'#C29A63', hatch:'timber' },
+  'timber-walnut':     { label:'Solid walnut, 40mm',              thick:40, color:'#7A5638', hatch:'timber' },
+  // Laminate.
+  'laminex-natural':   { label:'Laminex Natural Oak, 33mm',      thick:33, color:'#B28B5C', hatch:'timber' },
   'laminate-white':    { label:'Laminex white, 33mm',            thick:33, color:'#F2F1ED', hatch:'solid' },
+  'laminate-stone':    { label:'Laminate — stone look, 33mm',     thick:33, color:'#E9E7E2', hatch:'stone-fine' },
+  // Concrete and tiled.
+  'concrete':          { label:'Polished concrete, 40mm',         thick:40, color:'#8E8B85', hatch:'concrete' },
+  'concrete-20':       { label:'Polished concrete, 20mm',         thick:20, color:'#9A9792', hatch:'concrete' },
+  'tiled-top':         { label:'Tiled top, 20mm substrate',       thick:20, color:'#EDEAE3', hatch:'tile-grid' },
 };
 // Never let an unknown/legacy material key throw — every lookup goes through here.
 function benchDefOf(key){ return BENCH_DEFS[key] || BENCH_DEFS['stone-white']; }
+// The same material is fabricated at more than one thickness — 12 and 20
+// porcelain are the same slab — so the material's thickness is a starting
+// point rather than the answer. Null means follow the material, which is how
+// the freestanding vanity has always done it.
+function benchThick(){
+  const t = state.bench && state.bench.thickness;
+  return (t > 0) ? t : benchDefOf(state.bench.material).thick;
+}
 // ============================================================
 // BLUM HARDWARE
 // Ranges taken from blum.com (checked July 2026). Heights are drawer-side
@@ -2059,7 +2098,7 @@ function benchSpecLabel(){
   const brand = benchBrandLabel(b.brand);
   if(brand) bits.push(brand.replace(/ \(.*\)$/, ''));
   if(b.product) bits.push(b.product);
-  bits.push(benchDefOf(b.material).thick + ' mm');
+  bits.push(benchThick() + ' mm');
   if(SURFACE_FINISHES[b.finish]) bits.push(SURFACE_FINISHES[b.finish].toLowerCase());
   if(EDGE_PROFILES[b.edge]) bits.push(EDGE_PROFILES[b.edge].toLowerCase().replace('edge — ', ''));
   return bits.join(' · ');
@@ -10621,7 +10660,7 @@ function drawElevation(d, area, wallId, opts){
   state._viewOrigin[view] = { ox, s, wL, crop:_crop };
   const oy = area.y + RES_T + Math.max(0, (area.h - RES_T - RES_B - Hm*s)/2);
   let finishCol = state.finish.color;
-  const benchT = benchDefOf(state.bench.material).thick;
+  const benchT = benchThick();
   const wall = getWall(wallId);
   // The kick this elevation is dimensioned to. Reading CONST.KICK_H here took
   // whichever cabinet the LAST wall drawn happened to leave behind, so the
@@ -11228,7 +11267,7 @@ function drawElevation(d, area, wallId, opts){
             d.line(cx + extensionW*s, yT, cx + extensionW*s, yB, COL.ink2, LW.hairline);
           }
           // Bench + splashback continue across the leg projection
-          const _benchT = benchDefOf(state.bench.material).thick;
+          const _benchT = benchThick();
           const _yBench = oy + (Hm - benchTopY)*s;
           benchHatch(d, cx, _yBench, leg*s, _benchT*s, state.bench.material);
           d.rect(cx, _yBench, leg*s, _benchT*s, null, COL.ink, LW.thin);
@@ -16106,6 +16145,8 @@ document.getElementById('bench').addEventListener('change', e=>{
   state.bench.material = e.target.value;
   const def = BENCH_DEFS[e.target.value];
   if(def) document.getElementById('benchColorCustom').value = def.color;
+  // A thickness that is following the material follows it to the new one.
+  syncBenchThickFields();
   if(typeof propagateBenchHeightToCabs === 'function') propagateBenchHeightToCabs();
   renderActive();
 });
@@ -16490,7 +16531,7 @@ document.getElementById('benchColorReset').addEventListener('click', ()=>{
 })();
 function propagateBenchHeightToCabs(){
   try {
-    const benchT = benchDefOf(state.bench.material).thick;
+    const benchT = benchThick();
     // cab.H is total cabinet height from floor to top of cab (where bench sits).
     // Bench top = cab.H + benchT, so cab.H = benchHeight - benchT.
     const targetH = Math.max(300, (state.bench.height || 890) - benchT);
@@ -16760,9 +16801,45 @@ function _fillBrandSelect(id, groups, current, onPick){
     sel.addEventListener('change', ()=>{ if(sel.__onPick) sel.__onPick(sel.value); });
   }
 }
+// Both material pickers are built from BENCH_DEFS, so a material added once
+// turns up in both. They were two hand-written lists and they had already
+// drifted apart: the vanity top offered four of the seven the app knew and the
+// freestanding vanity offered a different four.
+function fillBenchMaterialSelects(){
+  const entries = Object.entries(BENCH_DEFS).map(([k, d]) => [k, d.label]);
+  const a = document.getElementById('bench');
+  if(a){
+    const cur = (state.bench && state.bench.material) || 'stone-white';
+    a.innerHTML = '';
+    entries.forEach(([v, l])=>{ const o = document.createElement('option');
+      o.value = v; o.textContent = l; a.appendChild(o); });
+    a.value = cur;
+  }
+  const b = document.getElementById('islandBenchMat');
+  if(b){
+    const cur = b.value;
+    b.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = ''; none.textContent = '(same as the job)';
+    b.appendChild(none);
+    entries.forEach(([v, l])=>{ const o = document.createElement('option');
+      o.value = v; o.textContent = l; b.appendChild(o); });
+    b.value = cur;
+  }
+}
+// What the thickness box should read when it is following the material.
+function syncBenchThickFields(){
+  const t = benchThick();
+  const r = document.getElementById('benchThick');
+  const v = document.getElementById('benchThickVal');
+  if(r) r.value = String(t);
+  if(v) v.value = String(t);
+}
 function renderSurfacePanel(){
   const b = state.bench, sp = state.splashback;
   if(!b || !sp) return;
+  fillBenchMaterialSelects();
+  syncBenchThickFields();
 
   _fillBrandSelect('benchBrand', BENCH_BRANDS, b.brand, v => { b.brand = v; renderSurfacePanel(); renderActive(); });
   _fillSelect('benchFinish', Object.entries(SURFACE_FINISHES), b.finish, v => { b.finish = v; renderActive(); });
@@ -19545,6 +19622,10 @@ function syncLowWallPanel(){
   });
   syncBtn();
 })();
+bindRange('benchThick', v=> { state.bench.thickness = v; }, 'benchThickVal');
+document.getElementById('benchThickReset').addEventListener('click', ()=>{
+  state.bench.thickness = null; syncBenchThickFields(); renderActive();
+});
 document.getElementById('benchOn').addEventListener('change', e=>{
   const w = uiGetWall(state.ui.activeWall);
   if(!w.bench) w.bench = { enabled:true, leftExt:0, rightExt:0 };
@@ -20684,7 +20765,9 @@ function syncSidebarFromState(){
   setVal('wallMaterial', state.room.wallMaterial || 'plaster');
   setVal('o', state.bench.overhang); setVal('oVal', state.bench.overhang);
   setVal('sp', state.bench.splashback); setVal('spVal', state.bench.splashback);
+  fillBenchMaterialSelects();
   setVal('bench', state.bench.material);
+  syncBenchThickFields();
   setVal('floorMaterial', state.room.floor && state.room.floor.material || 'timber-boards');
   setVal('defHandleStyle', state.handleDefault.style);
   setVal('defHandleFinish', state.handleDefault.finish);
