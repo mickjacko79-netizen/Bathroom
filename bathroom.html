@@ -146,6 +146,27 @@ header .meta{color:#9FB4C6;font-size:11.5px;letter-spacing:.02em}
 .sheet canvas.panning{cursor:grabbing}
 .viewer{display:none;flex:1;align-items:center;justify-content:center;width:100%;height:100%}
 .viewer.on{display:flex}
+/* The manual is read, not looked at: it scrolls, it is set in a measure you
+   can follow, and it does not sit centred on a piece of A3. */
+#v-manual{overflow:auto;align-items:flex-start;justify-content:center;background:var(--paper,#FDFDFC)}
+#v-manual.on{display:block}
+.man-wrap{max-width:760px;margin:0 auto;padding:30px 34px 90px;color:var(--ink,#1a1a1a);font-size:13.5px;line-height:1.62}
+.man-head h1{font-size:23px;margin:0 0 6px;letter-spacing:.01em}
+.man-lede{margin:0 0 22px;color:var(--muted);font-size:13px}
+.man-toc{display:flex;flex-wrap:wrap;gap:6px 10px;padding:14px 16px;margin:0 0 30px;border:1px solid var(--border);border-radius:7px;background:rgba(0,0,0,.015)}
+.man-toc a{font-size:12px;color:var(--brand);text-decoration:none;white-space:nowrap}
+.man-toc a:hover{text-decoration:underline}
+.man-wrap section{margin:0 0 30px;scroll-margin-top:14px}
+.man-wrap h2{font-size:15.5px;margin:0 0 9px;padding-bottom:6px;border-bottom:1px solid var(--border);letter-spacing:.01em}
+.man-wrap p{margin:0 0 10px}
+.man-wrap ul{margin:0 0 10px;padding-left:20px}
+.man-wrap li{margin:0 0 6px}
+.man-wrap b{font-weight:600}
+.man-tbl,.man-keys{border-collapse:collapse;width:100%;margin:4px 0 12px;font-size:12.5px}
+.man-tbl th,.man-tbl td,.man-keys td{border-top:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+.man-tbl th{width:150px;font-weight:600;color:var(--muted);white-space:nowrap}
+.man-keys td:first-child{width:190px;white-space:nowrap}
+.man-foot{color:var(--muted);font-size:12px}
 .hint{position:absolute;left:24px;bottom:14px;color:var(--muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
 /* Hidden file pickers must stay hidden wherever they sit. */
 input[type=file].hidden-file{display:none !important}
@@ -982,6 +1003,205 @@ header .project-label .dot.dirty{background:#F7C04A}
         <button class="btn small sm-back" id="smBackToPlan" title="Leave the drawing and go back to the floor plan">← Return to floor plan</button>
       </div>
       <iframe id="smFrame" title="SiteMeasure — trace the room"></iframe>
+    </div>
+    <!-- The manual is a document, not a sheet: it is not issued, it is not in
+         the PDF, and it scrolls rather than sitting on A3 paper. -->
+    <div class="viewer" id="v-manual">
+      <div class="man-wrap">
+        <div class="man-head">
+          <h1>User manual</h1>
+          <p class="man-lede">How this app is put together and how to draw a bathroom with it. Every panel named here is a panel in the sidebar beside you.</p>
+        </div>
+
+        <nav class="man-toc" aria-label="Contents">
+          <a href="#m-around">Getting around</a>
+          <a href="#m-start">Starting a job</a>
+          <a href="#m-room">The room</a>
+          <a href="#m-measure">Site measure</a>
+          <a href="#m-add">Adding fixtures</a>
+          <a href="#m-edit">Editing one</a>
+          <a href="#m-position">Position along a wall</a>
+          <a href="#m-vanity">Vanities and basins</a>
+          <a href="#m-shower">Showers</a>
+          <a href="#m-other">Baths, toilets, the rest</a>
+          <a href="#m-built">Built work</a>
+          <a href="#m-finish">Finishes</a>
+          <a href="#m-services">Services</a>
+          <a href="#m-hardware">Hardware</a>
+          <a href="#m-style">Drawing style</a>
+          <a href="#m-issue">Sheets and the PDF</a>
+          <a href="#m-keys">Keyboard and mouse</a>
+        </nav>
+
+        <section id="m-around">
+          <h2>Getting around</h2>
+          <p>The strip along the top is the drawing set. Each tab is a sheet, numbered in the order it prints. <b>Site measure</b> and <b>User manual</b> sit at the ends and are working tabs — they carry no number, they are not issued and they are not in the PDF.</p>
+          <p>A tab shown faintly is one you have turned off in <b>Sheets to issue</b>. It still opens and still draws; it just will not print.</p>
+          <ul>
+            <li><b>Scroll</b> to zoom, <b>shift-drag</b> to pan, or use <b>−&nbsp;Fit&nbsp;+</b> at the right of the tab strip.</li>
+            <li><b>[</b> and <b>]</b> step to the previous and next sheet.</li>
+            <li>The left sidebar is the job. The right sidebar holds the panels you reach for less often; drag a panel's <b>→</b> or <b>←</b> to move it between the two.</li>
+            <li><b>⌃ Fold panels</b> in the header collapses every panel at once, for when you want the drawing and nothing else.</li>
+          </ul>
+        </section>
+
+        <section id="m-start">
+          <h2>Starting a job</h2>
+          <p><b>Project</b> holds the project name, job name, client, who drew it, and a logo for the title block. All of it prints.</p>
+          <p><b>Library</b> in the header is where jobs live. A project holds jobs; a job is one drawing set. From there you can start a new project, save the current job as a new one, or import a job someone sent you as JSON. <b>Export</b> in the header writes the job you are in to a JSON file.</p>
+          <p>The job autosaves as you work. <b>Ctrl+S</b> saves it now and marks a point you can undo back to. <b>Reset to demo</b> at the bottom right throws the current job away and starts from the sample — it does not touch anything in the library.</p>
+        </section>
+
+        <section id="m-room">
+          <h2>The room</h2>
+          <p><b>Room</b> sets width, length, ceiling height and wall thickness, the north point, and what the walls are made of — the material decides the colour and the poché pattern they are cut in on the plan, and you can override either.</p>
+          <p>Walls are lettered A, B, C, D clockwise. Every wall gets its own elevation sheet. <b>Rooms</b> adds further rooms; each brings its own walls and its own elevations into the same set.</p>
+          <p><b>Openings</b> puts doors and windows in a wall, and they are drawn on the plan and on that wall's elevation.</p>
+        </section>
+
+        <section id="m-measure">
+          <h2>Site measure</h2>
+          <p>The <b>Site measure</b> tab is a tracing surface, not a sheet. Trace the room on it, then press <b>Bring in from Draw</b> — on that tab or in the <b>Site measure</b> panel — and the outline becomes the room, with one elevation per wall however many walls it has.</p>
+          <p><b>⤢ Expand</b> gives the tracing the whole window; <b>Esc</b> brings the tabs back. <b>Re-letter around the plan</b> renames the walls in order, and <b>Back to a rectangle</b> abandons a traced outline for a plain rectangular room.</p>
+        </section>
+
+        <section id="m-add">
+          <h2>Adding fixtures</h2>
+          <p>Everything is added in <b>Fixtures &amp; joinery</b>. Pick the <b>Room</b>, then the <b>Active wall</b> — those two pill bars decide what the rest of that panel, and the whole <b>Run trim</b> panel, are talking about.</p>
+          <p>A wall has two rows. The <b>base row</b> is what stands on the floor: vanities, the bath, the shower, the toilet, blade walls. The <b>wall row</b> is what hangs: shaving cabinets, mirrors, towel rails, niches. Each row has its own list and its own <b>＋</b> to add to it.</p>
+          <p>What you can add:</p>
+          <table class="man-tbl">
+            <tr><th>Sanitaryware</th><td>Toilet suite · Shower · Bath · Basin — wall hung / pedestal · Blade wall</td></tr>
+            <tr><th>Vanities</th><td>Vanity — basin + tap · Vanity — drawers · Vanity — door + shelves · Corner vanity (blind L)</td></tr>
+            <tr><th>Tall and wall</th><td>Linen tower / tallboy · Shaving / wall cabinet · Corner wall (blind L)</td></tr>
+            <tr><th>Hung on the wall</th><td>Mirror · Towel rail · Niche</td></tr>
+            <tr><th>Laundry</th><td>Laundry tub + tap · Washer / dryer under bench · Dryer — wall mounted</td></tr>
+            <tr><th>Fillers</th><td>Vanity 720 high · Tall 2100 high · Wall 750 high</td></tr>
+          </table>
+          <p>A <b>Freestanding vanity</b> is separate — it is not on a wall, so it has its own panel with a centre point, a length, a depth and an angle, and it gets its own elevation sheet.</p>
+        </section>
+
+        <section id="m-edit">
+          <h2>Editing one</h2>
+          <p>Click a fixture on any sheet and the sidebar becomes its edit panel. <b>Esc</b> lets go of it; <b>Del</b> removes it.</p>
+          <p>Every fixture starts with <b>Dimensions</b> — width, height, depth — and, where it applies, <b>Mounting</b>: on a kick or wall hung, with its own kick height. Below that come the settings for that kind of fixture, then the fillers and panels either side of it, then a label and dimension note, then the actions: copy settings, paste them onto another, or delete.</p>
+          <p>Anything set in a fixture's own panel overrides the job default for that one fixture. <b>Inherit project default</b> hands it back.</p>
+          <p>Some panels in the sidebar rename themselves for what you have selected. Select a blade wall and <b>Finish (fronts)</b> becomes <b>Top of blade</b>, and its swatches colour that blade's top instead of the job's fronts.</p>
+        </section>
+
+        <section id="m-position">
+          <h2>Position along a wall</h2>
+          <p>A wall is a run, laid out left to right in the order the list shows. To move something along the wall you put space beside it: every fixture has <b>Left filler</b>, <b>Left panel</b>, <b>Right filler</b> and <b>Right panel</b> in its own panel, and dragging a fixture along the plan does the same thing by opening a gap on its left.</p>
+          <p>So a fixture further along the wall moves when you move the one in front of it. That is the run behaving correctly, not the wrong thing being dragged.</p>
+          <p><b>Run trim (active wall)</b> holds what belongs to the whole run rather than to one unit: scribe fillers at each end, end-panel thickness, the wall's own tile, the low wall, and whether the bench runs on this wall and how far past the ends.</p>
+          <p><b>Elevation shows</b> crops an elevation to part of the wall — type the two numbers, or drag the break line on the sheet. <b>whole wall</b> puts it back.</p>
+        </section>
+
+        <section id="m-vanity">
+          <h2>Vanities and basins</h2>
+          <p>A <b>Vanity — basin + tap</b> carries the bowls and the tapware. Under <b>Sink</b>:</p>
+          <ul>
+            <li><b>Bowls</b> — single, 1.5 or double, with bowl width and depth.</li>
+            <li><b>Bowl shape</b> — oval, round, soft-cornered rectangle or rectangle. The plan and the elevation both follow it, so the two views describe the same basin.</li>
+            <li><b>Basin mount</b> — undermount, drop-in, or on top. This is what the benchtop is fabricated to: an undermount cut-out is polished on its edge, a drop-in is not because the rim covers it, and a basin standing on top needs nothing but a hole for the waste. On the plan an undermount bowl is dashed, a drop-in shows its rim, and one on top is drawn solid. On the elevation a basin on top stands on the bench, at a height you set.</li>
+            <li><b>Tap mount</b> — on the bench, or a wall mixer set at a height above the bench.</li>
+            <li><b>Tap style</b> — basin, standard, gooseneck, tall or tall gooseneck. A tall one is for a basin standing on the bench; a 150 riser behind a 130 vessel pours down its side.</li>
+            <li><b>Tap position</b> — behind the bowl, or clear of it left or right.</li>
+            <li><b>Sink offset</b> slides the bowls along the cabinet without moving the cabinet.</li>
+          </ul>
+          <p>The tap is drawn behind the basin on the elevation, so a basin standing on the bench laps over the foot of its tap and you see the spout above the rim.</p>
+          <p>A <b>Basin — wall hung / pedestal</b> is the same family without a cabinet: wall hung with a bottle trap whose length you can set, pedestal, or semi-recessed, with the same bowl shapes and the same choice of deck tap or wall mixer.</p>
+          <p><b>Vanity top</b> sets the benchtop for the job — material, height, front overhang, edge profile, brand and product name, and the hatch it is drawn in.</p>
+        </section>
+
+        <section id="m-shower">
+          <h2>Showers</h2>
+          <p>A shower is a tray, a waste, a screen and a rose, and each is set in its own right.</p>
+          <ul>
+            <li><b>Screen</b> — walk-in with no screen, fixed panel, panel + hinged door, hinged door, pivot, two-panel slider, panel + return, or a corner return with a door. The glass thickness, which way it hinges and which way it swings are all set here.</li>
+            <li><b>Hardware finish</b> — matt black, brushed brass, brushed nickel, chrome, or frameless with no hardware colour. It shows as the colour of the glass edge.</li>
+            <li><b>Rose</b> — rainhead on a wall arm, rainhead from the ceiling, a rail shower, or a rail with a rainhead on a twin outlet. A ceiling rose is dashed on the plan, the way anything overhead is.</li>
+            <li><b>Base</b> — tiled or a manufactured tray. A tiled base is floor, so the floor tiling runs through it on the plan and the falls are drawn from each corner to the waste.</li>
+            <li><b>Waste</b> — linear or square, at the entry or at the back.</li>
+            <li><b>Hob</b> — a kerb across the front, outlined rather than filled over the tiling.</li>
+            <li><b>Side wall</b> — none, or a tiled blade wall on either side, with its own thickness, depth and height. It replaces the glass on the side it stands on, and it is drawn whether or not there is any glass beside it.</li>
+          </ul>
+        </section>
+
+        <section id="m-other">
+          <h2>Baths, toilets and the rest</h2>
+          <ul>
+            <li><b>Bath</b> — inset in a hob surround or freestanding, with the hob width and inner inset set, the waste drawn on the plan, and a wall mixer at a height you choose, or a floor or deck tap instead.</li>
+            <li><b>Toilet suite</b> — back to wall, close coupled or wall hung, with the pan set-out drawn.</li>
+            <li><b>Mirror</b> — width, height and how far above the floor it sits. It goes in the wall row, so it draws over the fixtures below it.</li>
+            <li><b>Towel rail</b> — single or ladder, at a height you set.</li>
+            <li><b>Niche</b> — formed inside the wall, so the panel tells you how deep the wall it is going into will actually allow once it is lined, and warns you when you ask for more.</li>
+          </ul>
+        </section>
+
+        <section id="m-built">
+          <h2>Built work</h2>
+          <p><b>Low wall</b>, in <b>Run trim (active wall)</b>, is a stud wall built off the wall in front of it — height, thickness, where it starts and stops, a capping across the top and its own tile. Anything starting below its top fixes to it and comes forward by its thickness; anything at or above its top goes on the wall behind.</p>
+          <p><b>Blade wall</b> is a fixture in the base row: a built, tiled wall running out from the wall into the room. Its width is its thickness and its depth is how far it reaches.</p>
+          <p>Both are walls, so on a plan both are cut in the same colour the room's own walls are cut in, and both show their tiling on the elevation, where you can see it. A blade can be given a top colour of its own with a blade selected: the swatch panel renames itself to <b>Top of blade</b> and colours that blade, with a <b>reset</b> beside the colour picker to put it back to matching the walls.</p>
+        </section>
+
+        <section id="m-finish">
+          <h2>Finishes</h2>
+          <ul>
+            <li><b>Finish (fronts)</b> — the colour and door style of every front on the job. A single cabinet can be set differently in its own panel.</li>
+            <li><b>Carcass</b> — board thickness, kick height, filler depth.</li>
+            <li><b>Wall tiling</b> — the job's tile: type, brand, product, tile size, bond, laying pattern, tiling height, and the datum a part course is worked from and which end it goes.</li>
+            <li><b>Tile on this wall</b>, in <b>Run trim</b>, sets one wall's tile, colour and grout on its own. Leave it on the job's tile and the wall follows the project; set it and only that wall changes.</li>
+            <li><b>Floor</b> — material, laying pattern, board or tile size, the angle it is laid at, and where the setting-out starts, nudged across and along until the cuts fall where you want them.</li>
+            <li><b>Finishes board</b> — materials, colours and photographs of samples, kept in the job and printed with it. Photographs are scaled down on the way in, so a phone photo does not make the job file unusable.</li>
+          </ul>
+        </section>
+
+        <section id="m-services">
+          <h2>Services</h2>
+          <p><b>Electrical &amp; lighting</b> places power points, switches, lights and cabinet lighting. Choose the brand and plate finish and a default mounting height, press <b>Place</b>, then click where it goes on an elevation or the plan. A fitting inside a cabinet is drawn as hidden detail, because that is what it is. Click one to select it and <b>Del</b> to remove it.</p>
+          <p>Floor wastes are placed the same way, from the <b>Floor</b> panel.</p>
+          <p><b>Measure</b> is a tape: press <b>Start measuring</b>, click two points on a sheet, and the distance is drawn. <b>Esc</b> or <b>Clear</b> puts the tape away.</p>
+        </section>
+
+        <section id="m-hardware">
+          <h2>Hardware</h2>
+          <p><b>Project handle default</b> sets the handle style for the job — shark nose, J-pull, knob, bar or none — with its finish, and the finger gap and rail dimensions where the style uses them. Any cabinet can carry a different one in its own panel.</p>
+          <p><b>Blum hardware</b> records the runner and hinge specification the job is built to: system, drawer side height, load class, motion, colour, hinge family and opening angle, cup fixing, and AVENTOS lift systems. It is schedule information — it is what gets ordered.</p>
+        </section>
+
+        <section id="m-style">
+          <h2>Drawing style</h2>
+          <p><b>Drawing style</b> controls how the drawings look rather than what is in them: object and dimension line weights and colours, dimension text size, and the angle door swings are drawn at.</p>
+          <p>The dim note fields — kick, cabinet face, bench thickness, bench height, splashback, room height — append your own words to those dimensions, so a set can carry the wording your office uses.</p>
+          <p><b>Panel headings</b> sizes and colours each sidebar heading on its own, which is how you tell one group of panels from another at a glance.</p>
+        </section>
+
+        <section id="m-issue">
+          <h2>Sheets and the PDF</h2>
+          <p><b>Sheets to issue</b> lists every sheet with a switch. Turn one off and it drops out of the PDF and out of the cover index, and its tab goes faint. <b>All on</b> and <b>All off</b> do the lot.</p>
+          <p><b>Download drawing set (PDF)</b> at the bottom right writes every issued sheet, in order, at A3 landscape.</p>
+          <p>Two sheets are built for you and are worth checking before you issue. The <b>Fixture schedule</b> lists every cabinet with its sizes and settings. The <b>Sanitaryware schedule</b> lists the fixtures and tapware with brands, models and cut-outs. Both are generated from the job, so if something reads wrong there it is wrong in the drawing.</p>
+        </section>
+
+        <section id="m-keys">
+          <h2>Keyboard and mouse</h2>
+          <table class="man-keys">
+            <tr><td><b>Scroll</b></td><td>Zoom</td></tr>
+            <tr><td><b>Shift-drag</b></td><td>Pan</td></tr>
+            <tr><td><b>Click</b></td><td>Select a fixture and open its panel</td></tr>
+            <tr><td><b>Drag</b></td><td>Move a fixture along its wall</td></tr>
+            <tr><td><b>[</b> · <b>]</b></td><td>Previous · next sheet</td></tr>
+            <tr><td><b>Esc</b></td><td>Deselect, cancel placing, close the library, leave full-window tracing</td></tr>
+            <tr><td><b>Del</b> · <b>Backspace</b></td><td>Delete the selected fixture or fitting</td></tr>
+            <tr><td><b>Ctrl+Z</b></td><td>Undo</td></tr>
+            <tr><td><b>Ctrl+Shift+Z</b> · <b>Ctrl+Y</b></td><td>Redo</td></tr>
+            <tr><td><b>Ctrl+S</b></td><td>Save now</td></tr>
+          </table>
+          <p class="man-foot">Inside a text field, Ctrl+Z undoes your typing rather than the drawing.</p>
+        </section>
+      </div>
     </div>
     <div class="viewer on" id="v-cover"><div class="sheet"><canvas id="cCover"></canvas></div></div>
     <div class="viewer" id="v-plan"><div class="sheet"><canvas id="cPlan"></canvas></div></div>
@@ -12342,6 +12562,8 @@ const SHEETS_ELEV = [
 const SHEETS_TAIL = [
   { view:'schedule',    title:'FIXTURE SCHEDULE',                  canvas:'cSchedule',   indexTitle:'Fixture schedule' },
   { view:'appliances',  title:'SANITARYWARE SCHEDULE',                canvas:'cAppliances', indexTitle:'Sanitaryware schedule' },
+  // Not a sheet — a working tab, like Draw. Out of the index and the PDF.
+  { view:'manual',      title:'USER MANUAL',                       canvas:null,          indexTitle:'User manual', noSheet:true },
 ];
 // Kept for anything that still reads the old flat list.
 const FIXED_SHEETS = SHEETS_HEAD.concat(SHEETS_ELEV, SHEETS_TAIL);
@@ -15087,6 +15309,7 @@ function renderTabs(){
   // letter identifies the wall, so 18 tabs still fit two rows.
   const groupOf = s =>
     (s.view === 'draw') ? 'draw'
+    : (s.view === 'manual') ? 'manual'
     : (s.view === 'cover' || s.view === 'summary') ? 'cover'
     : /^plan/.test(s.view) ? 'plan'
     : (s.view === 'schedule' || s.view === 'appliances') ? 'schedule'
@@ -15132,6 +15355,12 @@ function showView(v){
   // sheet tabs have to come back or there is no way out.
   if(v !== 'draw' && document.body.classList.contains('sm-full')){
     try { setSiteMeasureFull(false); } catch(_){}
+  }
+  if(v === 'manual'){
+    // A document. There is no canvas behind it and nothing to render.
+    hint.textContent = 'User manual';
+    document.getElementById('tabInfo').textContent = hint.textContent;
+    return;
   }
   if(v === 'draw'){
     // Load the drawing surface the first time it is actually opened.
