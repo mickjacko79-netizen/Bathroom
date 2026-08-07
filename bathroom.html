@@ -1263,12 +1263,14 @@ header .project-label .dot.dirty{background:#F7C04A}
             <div class="note"><b>Two things cannot stand in the same place.</b> Put a fixture down on top
               of another and that other steps aside — by the overlap and no further, and only for as long
               as it is genuinely in the way. Drag straight past it and it goes back to its own set-out.</div>
+            <p>Nothing travels with anything unless you have grouped it. Group two fixtures and they move
+              together, keeping the spacing between them; that is what a group is for, and it is the only
+              thing that does it.</p>
             <p><b>Left filler</b>, <b>Left panel</b>, <b>Right filler</b> and <b>Right panel</b> in the same
-              panel are what goes beside a fixture rather than where it stands. A panel is an end panel and
-              a filler is a strip of board — and because board holds two things together, a fixture with a
-              filler on its left travels with whatever is in front of it, keeping that board the width it
-              was made. A gap opened by moving something is space, is drawn as nothing, and holds nothing
-              to anything.</p>
+              panel say what fills the space beside a fixture, not where that fixture stands. A panel is an
+              end panel, and a filler is a strip of board across the gap in front — so the gap is the
+              figure, and the filler is how it is drawn. Move either fixture and the gap between them
+              changes, which means the filler across it changes with it.</p>
             <p><span class="ui">Run trim (active wall)</span> holds what belongs to the run rather than to
               one unit: left and right scribe fillers, end-panel thickness, the wall's own tile, the low
               wall, and the bench — whether it runs on this wall at all, and how far past each end.</p>
@@ -13930,20 +13932,16 @@ function rowPositions(arr, startOff){
 }
 // What is fixed to an item and goes wherever it goes.
 function adjRightExtra(c){ const R = (c.adj && c.adj.right) || {}; return (R.filler || 0) + (R.panel || 0); }
-// A filler is board, and board holds two things together. An item with one on
-// its left travels with what is in front of it and keeps that board the width it
-// was made — resizing it behind the joiner's back changes what gets cut. A gap
-// is air: the item stands at its own figure and stays there.
-function tiedToRunLeft(c){
-  const L = (c.adj && c.adj.left) || {};
-  return (L.filler || 0) > 0 && L.kind !== 'space';
-}
-// The solid on an item's left — its end panel, and its filler when that filler
-// is board. Air does not count: something can be pushed up into a gap, but not
-// into a panel.
+// The solid on an item's left. Its end panel, and nothing else: the gap in front
+// of a fitting is where it is standing, whether that gap is drawn as board or as
+// nothing, and something can always be moved up into it.
+//
+// A gap did once hold two fittings together when it was drawn as board, so
+// moving one took the other with it. Nothing on the sheet told the two kinds of
+// gap apart — the same 400 either travelled or did not, depending only on
+// whether it had been dragged or typed — which is exactly as random as it looked.
 function adjLeftSolid(c){
-  const L = (c.adj && c.adj.left) || {};
-  return (L.panel || 0) + (tiedToRunLeft(c) ? (L.filler || 0) : 0);
+  return ((c.adj && c.adj.left && c.adj.left.panel) || 0);
 }
 // How much wall an item takes up once what is fixed to it is counted: its left
 // panel, its carcass, and whatever is on its right.
@@ -13985,7 +13983,6 @@ function applyRowPositions(arr, startOff, want, free){
     const c = arr[i];
     let l;
     if(moving(c)) l = blockL(i);
-    else if(tiedToRunLeft(c)) l = cursor + (c.adj.left.filler || 0);  // board keeps its width
     else l = Math.max(blockL(i), cursor);
     if(!moving(c)){
       // Step over anything pinned that it now lands on, and check again — one
@@ -14012,26 +14009,13 @@ function applyRowPositions(arr, startOff, want, free){
       // keeps its kind — a move is not the place to reclassify it.
       if(gap > 0 && c.adj.left.kind !== 'filler') c.adj.left.kind = 'space';
     }
+    // Where the gap in front of it has gone, so has any depth set for filling it.
+    if(!(c.adj.left.filler > 0)) c.adj.left.kind = null;
     run = at[i] + cabOuterW(c);
   });
   const out = laid.map(i => arr[i]);
   arr.length = 0;
   out.forEach(c => arr.push(c));
-}
-// Whatever is joined to the moving items by board goes with them, and so does
-// whatever is joined to that. Fills `want` and `free` out until it stops growing.
-function carryTiedFollowers(arr, base, want, free, shift){
-  let again = true;
-  while(again){
-    again = false;
-    arr.forEach((c, k)=>{
-      const prev = arr[k - 1];
-      if(!prev || !free.has(prev) || free.has(c) || !tiedToRunLeft(c)) return;
-      want[k] = base[k] + shift;
-      free.add(c);
-      again = true;
-    });
-  }
 }
 // Where a dragged item comes to rest: where it was dropped, unless that is
 // within the snap distance of something to butt up against — the start of the
@@ -14096,7 +14080,6 @@ function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home){
       free.add(c);
     }
   });
-  carryTiedFollowers(arr, base, want, free, shift);
   applyRowPositions(arr, startOff, want, free);
   // Other rows have no home to be laid out from, so they take the step.
   slideGroupBy(cab, delta, arr);
@@ -14137,7 +14120,6 @@ function slideGroupBy(cab, delta, skip){
       want[k] = pos[k] + delta;
       free.add(c);
     });
-    carryTiedFollowers(arr, pos, want, free, delta);
     applyRowPositions(arr, startOff, want, free);
   });
 }
