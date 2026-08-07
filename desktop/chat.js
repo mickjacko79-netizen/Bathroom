@@ -335,7 +335,65 @@ function createChat({ userDataDir, bridgeUrl, send }) {
     });
   }
 
+  // ------------------------------------------------------------- dictation --
+  // Windows' own speech engine, driven by dictate.ps1. Chromium's recogniser is
+  // present in Electron but non-functional in it — it fails with a network error
+  // the instant it is started, because the build has no backend to call. This
+  // one runs on the machine: no key, no account, no audio going anywhere.
+  let dictateProc = null;
+
+  function dictateStart(lang) {
+    if (process.platform !== 'win32') {
+      return { error: 'Dictation here uses the Windows speech engine, and this is not Windows.' };
+    }
+    if (dictateProc) return { started: true, already: true };
+    const script = path.join(__dirname, 'dictate.ps1');
+    let proc;
+    try {
+      proc = spawn('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+        { windowsHide: true, env: Object.assign({}, process.env,
+            lang ? { BATHROOM_DICTATE_LANG: String(lang) } : {}) });
+    } catch (err) {
+      return { error: 'Could not start dictation: ' + err.message };
+    }
+    dictateProc = proc;
+
+    let buf = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', chunk => {
+      buf += chunk;
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let msg; try { msg = JSON.parse(line); } catch (_) { continue; }
+        if (msg.error) { emit('dictate-error', { message: msg.error }); return; }
+        if (msg.ready) { emit('dictate-ready', { culture: msg.culture }); continue; }
+        if (msg.text)  emit('dictate-text', { text: msg.text, confidence: msg.confidence });
+      }
+    });
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', () => {});
+    proc.on('error', err => {
+      dictateProc = null;
+      emit('dictate-error', { message: 'Could not start dictation: ' + err.message });
+    });
+    proc.on('close', () => { dictateProc = null; emit('dictate-done', {}); });
+    return { started: true };
+  }
+
+  function dictateStop() {
+    if (!dictateProc) return { stopped: false };
+    try { dictateProc.kill(); } catch (_) {}
+    dictateProc = null;
+    emit('dictate-done', {});
+    return { stopped: true };
+  }
+
   return { status, ask, stop, reset, loginStart, loginCode, loginCancel,
+           dictateStart, dictateStop,
            isRunning: () => !!child };
 }
 

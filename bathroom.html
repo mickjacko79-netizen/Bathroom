@@ -363,6 +363,11 @@ header .project-label .dot.dirty{background:#F7C04A}
   padding:7px 8px;font:inherit;font-size:12.5px;background:#fff;letter-spacing:.02em}
 .chat-signin .row{display:flex;align-items:center;gap:8px}
 .chat-signin a{color:var(--muted);text-decoration:underline;cursor:pointer}
+.chat-ask .mic{border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;
+  font:inherit;font-size:11px;padding:4px 9px;color:var(--muted);white-space:nowrap}
+.chat-ask .mic:hover{color:var(--ink);border-color:var(--brand)}
+.chat-ask .mic.listening{border-color:#B4453A;color:#B4453A;background:#FBF1F0}
+.chat-ask .mic[disabled]{opacity:.45;cursor:default}
 </style>
 </head>
 <body>
@@ -22420,6 +22425,7 @@ try {
   <div class="chat-ask">
     <textarea id="chatInput" placeholder="Put a roll holder next to the toilet on wall D…"></textarea>
     <div class="row">
+      <button class="mic" id="chatMic" title="Speak instead of typing">🎤 Speak</button>
       <span class="hintline" id="chatHint">Enter to send · Shift+Enter for a new line</span>
       <button class="go" id="chatSend">Send</button>
     </div>
@@ -22480,6 +22486,16 @@ try {
     }
     if(evt.type === 'error'){ add('chat-err', evt.message); reply = null; return; }
     if(evt.type === 'done'){ setBusy(false); reply = null; renderActive(); return; }
+    // Dictation. The words land in the box, not in the conversation — they are
+    // a draft to correct, not something already said.
+    if(evt.type === 'dictate-text'){
+      input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + evt.text;
+      input.scrollTop = input.scrollHeight;
+      return;
+    }
+    if(evt.type === 'dictate-done'){ setListening(false); input.focus(); return; }
+    if(evt.type === 'dictate-error'){ add('chat-err', evt.message); setListening(false); return; }
+    if(evt.type === 'dictate-ready'){ return; }
     // The address to sign in at, in case the browser did not open by itself.
     if(evt.type === 'auth-url'){ if(signinBox) signinBox.__url = evt.url; return; }
     if(evt.type === 'auth-done'){
@@ -22504,6 +22520,29 @@ try {
   input.addEventListener('keydown', e => {
     if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); ask(); }
   });
+
+  // ---- speaking instead of typing ---------------------------------------
+  // What is recognised goes into the box rather than straight to Claude, so a
+  // sentence that came out wrong can be fixed before it is sent — which matters,
+  // because the engine doing the listening is the one built into Windows and it
+  // is right about most of a sentence rather than all of it.
+  const mic = document.getElementById('chatMic');
+  let listening = false;
+
+  function setListening(on){
+    listening = on;
+    mic.classList.toggle('listening', on);
+    mic.textContent = on ? '● Listening' : '🎤 Speak';
+    mic.title = on ? 'Stop listening' : 'Speak instead of typing';
+  }
+
+  mic.addEventListener('click', async () => {
+    if(listening){ await bridge.dictateStop(); setListening(false); return; }
+    setListening(true);
+    const r = await bridge.dictateStart();
+    if(r && r.error){ add('chat-err', r.error); setListening(false); }
+  });
+
 
   document.getElementById('chatReset').addEventListener('click', async () => {
     await bridge.reset();
@@ -22577,10 +22616,20 @@ try {
     return false;
   }
 
+  // The sheet tabs wrap onto a second line on a narrow window, so where they end
+  // is not a number that can be written into the stylesheet. Sit the panel under
+  // whatever height they happen to be, or it covers the last few sheets.
+  function sitBelowTabs(){
+    const tabs = document.getElementById('tabs');
+    if(tabs) panel.style.top = Math.round(tabs.getBoundingClientRect().bottom) + 'px';
+  }
+  window.addEventListener('resize', () => { if(panel.classList.contains('on')) sitBelowTabs(); });
+
   let greeted = false;
   btn.addEventListener('click', async () => {
     panel.classList.toggle('on');
     if(!panel.classList.contains('on')) return;
+    sitBelowTabs();
     input.focus();
     if(greeted) return;
     greeted = true;

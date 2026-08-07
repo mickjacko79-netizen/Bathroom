@@ -33,6 +33,10 @@ contextBridge.exposeInMainWorld('bathroomChat', {
   loginCode:   (code) => ipcRenderer.invoke('chat:loginCode', String(code == null ? '' : code)),
   loginCancel: () => ipcRenderer.invoke('chat:loginCancel'),
 
+  // Speaking instead of typing. Windows does the recognising, on this machine.
+  dictateStart: (lang) => ipcRenderer.invoke('chat:dictateStart', lang || null),
+  dictateStop:  () => ipcRenderer.invoke('chat:dictateStop'),
+
   // Start a fresh conversation rather than continuing the last one.
   reset: () => ipcRenderer.invoke('chat:reset'),
 

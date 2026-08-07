@@ -159,6 +159,8 @@ ipcMain.handle('chat:reset',  () => chatFor().reset());
 ipcMain.handle('chat:loginStart',  () => chatFor().loginStart());
 ipcMain.handle('chat:loginCode',   (_e, code) => chatFor().loginCode(code));
 ipcMain.handle('chat:loginCancel', () => chatFor().loginCancel());
+ipcMain.handle('chat:dictateStart', (_e, lang) => chatFor().dictateStart(lang));
+ipcMain.handle('chat:dictateStop',  () => chatFor().dictateStop());
 
 // The address carries a token, so it is not something to be typed from memory.
 // This hands the whole command over ready to paste.

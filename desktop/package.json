@@ -34,6 +34,7 @@
       "mcp-server.js",
       "chat.js",
       "preload.js",
+      "dictate.ps1",
       "icon.ico",
       "icon.png",
       "bundled/**/*",
