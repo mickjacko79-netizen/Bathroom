@@ -1347,10 +1347,11 @@ header .project-label .dot.dirty{background:#F7C04A}
             <h3>Tray and outlet</h3>
             <table>
               <tr><td>Base</td><td>Tiled, or a manufactured tray. A tiled base is floor, so the floor tiling runs through it on the plan rather than being hidden — which is the one place the set-out is most often argued about.</td></tr>
-              <tr><td>Waste · position</td><td>Linear or square, at the entry or at the back. The falls are drawn from each corner to the waste, dashed, the way a waterproofer reads them.</td></tr>
+              <tr><td>Waste · position</td><td>Linear or square, and where it sits: centre, left, right, inside against the wall or outside at the entry. A linear waste laid across the shower runs the width; one down a side turns with it. The falls are drawn from each corner to wherever the waste actually is, dashed, the way a waterproofer reads them.</td></tr>
               <tr><td>Hob height · width</td><td>A kerb across the front. It is outlined rather than filled, so the tiling still reads through it.</td></tr>
               <tr><td>Mixer height · across</td><td>Where the mixer sits; 0 across means centred. It is drawn on the plan as well as the elevation, because it is a set-out a plumber works to.</td></tr>
               <tr><td>Outlet</td><td>Rainhead on a wall arm · rainhead from the ceiling · rail shower, handheld · rail + rainhead, twin outlet · rail + ceiling rainhead.</td></tr>
+<tr><td>Outlet position</td><td>The same five: centre, left, right, inside or outside. Left, right and centre move it across the shower; inside and outside move it in depth, which a rail on the wall has no use for and ignores.</td></tr>
               <tr><td>Rainhead shape · size · height · out from wall</td><td>Round or square, and where it sits. A ceiling rose is dashed on the plan, the way anything overhead is.</td></tr>
               <tr><td>Arm reach</td><td>How far the arm comes off the wall.</td></tr>
               <tr><td>Rail top</td><td>Top of the rail, for a rail shower.</td></tr>
@@ -1660,9 +1661,9 @@ const CATALOG = {
                     screenFinish:'matt-black', entryW:600, returnW:400, hinge:'R', swing:'out',
                     // A blade wall is a built return: tiled, not glass.
                     sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100, panelSide:'',
-                    base:'tiled', waste:'linear', wasteAt:'wall', hob:true, hobH:40, hobW:100,
+                    base:'tiled', waste:'linear', wastePos:'inside', hob:true, hobH:40, hobW:100,
                     mixerH:1050, railH:1800, roseH:2050, roseType:'overhead',
-                    roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450, mixerU:0,
+                    roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450, rosePos:'centre', mixerU:0,
                     labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1000, edge:'polished', ledFrame:false, labelText:'' } },
@@ -1720,16 +1721,65 @@ const SHOWER_OUTLETS = {
   'rail-ceil': { label:'Rail + ceiling rainhead',     rain:true,  rail:true,  ceiling:true  },
 };
 function showerOutlet(t){ return SHOWER_OUTLETS[t] || SHOWER_OUTLETS['overhead']; }
+// Where something sits in a shower tray. Left, right and centre place it
+// across the shower; inside and outside place it in depth — inside against the
+// wall the shower is on, outside at the open edge you step over. Both the
+// waste and the outlet are set the same way, because they are the two things
+// on the drawing a plumber has to be told the position of.
+const SHOWER_POS = {
+  'centre':  'Centre',
+  'left':    'Left',
+  'right':   'Right',
+  'inside':  'Inside — at the wall',
+  'outside': 'Outside — at the entry',
+};
+// The waste, as a position and a direction rather than a pair of guesses made
+// twice. A linear waste laid across the shower runs in u; one down a side runs
+// in v. A point waste is a point wherever it goes.
+function showerWaste(cab){
+  const c = (cab && cab.config) || {};
+  const W = cab.W, D = cab.D;
+  const linear = (c.waste || 'linear') === 'linear';
+  // A drawing made before this said wall or entry; those are inside and
+  // outside, so it comes over rather than jumping to the middle of the tray.
+  const pos = SHOWER_POS[c.wastePos] ? c.wastePos
+    : ((c.wasteAt === 'entry') ? 'outside' : 'inside');
+  const edge = 90, entry = 120;
+  let u = W/2, v = D/2, along = 'u';
+  switch(pos){
+    case 'left':    u = edge;        along = 'v'; break;
+    case 'right':   u = W - edge;    along = 'v'; break;
+    case 'outside': v = D - entry;   along = 'u'; break;
+    case 'centre':  v = D/2;         along = 'u'; break;
+    default:        v = edge;        along = 'u'; break;   // inside
+  }
+  return { linear, pos, u, v, along };
+}
 function showerRose(cab){
   const c = cab.config || {};
   const type = c.roseType || 'overhead';
-  const u = (c.roseU > 0) ? Math.min(cab.W, c.roseU) : cab.W / 2;
+  let u = (c.roseU > 0) ? Math.min(cab.W, c.roseU) : cab.W / 2;
   const dia = Math.max(80, c.roseDia || 250);
   const def = showerOutlet(type);
   let v;
   if(def.ceiling)      v = Math.max(60, Math.min(cab.D, c.roseV || 450));
   else if(!def.rain)   v = 60;                       // only a rail on the wall
   else                 v = Math.max(80, Math.min(cab.D, c.roseArm || 400));
+  // A named position overrides the numbers, in the axis it is about: left,
+  // right and centre move it across the shower, inside and outside move it in
+  // depth. A rail on the wall has no head out over the tray, so depth means
+  // nothing to it and is left alone.
+  if(SHOWER_POS[c.rosePos]){
+    const inset = Math.min(350, cab.W * 0.30);
+    if(c.rosePos === 'left')        u = inset;
+    else if(c.rosePos === 'right')  u = cab.W - inset;
+    else if(c.rosePos === 'centre') u = cab.W / 2;
+    else if(def.rain || def.ceiling){
+      u = cab.W / 2;
+      v = (c.rosePos === 'inside') ? Math.max(80, Math.min(v, 260))
+                                   : Math.max(v, Math.max(80, cab.D - 260));
+    }
+  }
   return { type, def, u, v, dia, shape: c.roseShape || 'round',
            rain: def.rain, rail: def.rail, ceiling: def.ceiling,
            h: c.roseH || 2050 };
@@ -8419,24 +8469,37 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
           _tiledBase ? null : '#EFEFEC', COL.ink2, LW.thin);
       }
     }
-    // Waste.
-    if((c.waste || 'linear') === 'linear'){
-      const wv = (c.wasteAt === 'entry') ? D - 120 : 90;
-      d.polygon(P([[110,wv-25],[W-110,wv-25],[W-110,wv+25],[110,wv+25]]), wasteFill(), COL.ink2, LW.thin);
-      for(let g = 130; g < W-130; g += 45){
-        const a = planMap(wallId, uOff+g, wv-25, plan), b = planMap(wallId, uOff+g, wv+25, plan);
-        d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
+    // Waste, where it has been put.
+    (function(){
+      const _w = showerWaste(cab);
+      if(!_w.linear){
+        d.polygon(P(roundRectUV(_w.u-50, _w.v-50, _w.u+50, _w.v+50, 8)), wasteFill(), COL.ink2, LW.thin);
+        return;
       }
-    } else {
-      d.polygon(P(roundRectUV(cu-50, D/2-50, cu+50, D/2+50, 8)), wasteFill(), COL.ink2, LW.thin);
-    }
+      if(_w.along === 'u'){
+        d.polygon(P([[110,_w.v-25],[W-110,_w.v-25],[W-110,_w.v+25],[110,_w.v+25]]), wasteFill(), COL.ink2, LW.thin);
+        for(let g = 130; g < W-130; g += 45){
+          const a = planMap(wallId, uOff+g, _w.v-25, plan), b = planMap(wallId, uOff+g, _w.v+25, plan);
+          d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
+        }
+      } else {
+        // Down one side, so the strip and its grate bars turn with it.
+        d.polygon(P([[_w.u-25,110],[_w.u+25,110],[_w.u+25,D-110],[_w.u-25,D-110]]), wasteFill(), COL.ink2, LW.thin);
+        for(let g = 130; g < D-130; g += 45){
+          const a = planMap(wallId, uOff+_w.u-25, g, plan), b = planMap(wallId, uOff+_w.u+25, g, plan);
+          d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
+        }
+      }
+    })();
     // Falls. One from each corner of the tray to the waste, which is how the
     // grade is actually set out and how a waterproofer reads it. Kept light and
     // dashed so they sit behind the fixture rather than competing with it.
     (function(){
-      const linear = (c.waste || 'linear') === 'linear';
-      const wasteV = linear ? ((c.wasteAt === 'entry') ? D - 120 : 90) : D / 2;
-      const wasteU = W / 2;
+      // The falls run to wherever the waste actually is. They used to run to the
+      // middle of the width whatever had been set, so a waste down one side had
+      // the tray falling to a point it was not at.
+      const _wf = showerWaste(cab);
+      const wasteV = _wf.v, wasteU = _wf.u;
       const inset = 60;
       d.dashed(true);
       [[inset, inset], [W - inset, inset], [W - inset, D - inset], [inset, D - inset]].forEach(([cu0, cv0])=>{
@@ -14649,7 +14712,7 @@ function renderEditPanel(){
       editor.appendChild(el('h3', {}, 'Tray and outlet'));
       pick('Base', 'base', [['tiled','Tiled, on-site'],['acrylic','Acrylic base'],['stone','Stone base']]);
       pick('Waste', 'waste', [['linear','Linear / strip drain'],['point','Point / square grate']]);
-      pick('Waste position', 'wasteAt', [['wall','At the wall'],['entry','At the entry']]);
+      pick('Waste position', 'wastePos', Object.entries(SHOWER_POS));
       check('Tiled hob (no hob = flush / step-free)', 'hob');
       num('Hob height', 'hobH', 0, 150, 5);
       num('Hob width', 'hobW', 50, 300, 5);
@@ -14657,6 +14720,7 @@ function renderEditPanel(){
       num('Mixer height', 'mixerH', 700, 1600, 10);
       num('Mixer across (0 = centred)', 'mixerU', 0, 2400, 10);
       pick('Outlet', 'roseType', Object.entries(SHOWER_OUTLETS).map(([k, v]) => [k, v.label]));
+      pick('Outlet position', 'rosePos', Object.entries(SHOWER_POS));
       const _od = showerOutlet(c.roseType || 'overhead');
       if(_od.rain){
         pick('Rainhead shape', 'roseShape', [['round','Round'],['square','Square']]);
