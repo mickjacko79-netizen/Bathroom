@@ -6735,6 +6735,176 @@ const TAP_BODY = '#C9CCCF', TAP_DARK = '#8E9296';
 // An LED extrusion is a slim thing — drawn any deeper it reads as a rail.
 const LED_STRIP_T = 10;
 // Plan: the base plate, the lever behind it and the spout reaching over the bowl.
+// ---- The toilet ---------------------------------------------------------
+// One fixture, drawn from its own dimensions rather than from a stored outline.
+// It used to draw a traced product where one had been chosen and a generic
+// symbol where one had not, which is why the suite type worked on some toilets
+// and did nothing on others: the traced path never read it. Everything below is
+// derived here, once, so the plan and the elevation cannot describe different
+// toilets.
+const TOILET_STYLES = {
+  'back-to-wall':  'Back to wall',
+  'close-coupled': 'Close coupled',
+  'wall-hung':     'Wall hung, concealed cistern',
+};
+function toiletGeom(cab){
+  const c = (cab && cab.config) || {};
+  // Caroma calls an in-wall cistern "concealed" and the app calls the same
+  // thing wall-hung, so a suite brought in from the product list arrives with
+  // a style this app does not otherwise use. It is the same toilet.
+  const raw = (c.style === 'concealed') ? 'wall-hung' : c.style;
+  const style = TOILET_STYLES[raw] ? raw : 'back-to-wall';
+  const panW  = Math.max(250, c.panW || 360);
+  const panD  = Math.max(400, c.panD || 640);
+  const seatH = Math.max(320, c.seatH || 400);
+  const cistD = Math.max(120, c.cisternD || 200);
+  const cistH = Math.max(seatH + 140, c.cisternH || 830);
+  const wallHung = (style === 'wall-hung');
+  const closeC   = (style === 'close-coupled');
+  // The seat and lid, which are a moulding sitting on the rim rather than part
+  // of the china.
+  const seatT = 45;
+  // A wall-hung pan floats; anything else stands on the floor.
+  const panBase = wallHung ? Math.max(140, seatH - 255) : 0;
+  // Seen from the front, a close-coupled cistern is a separate vessel bolted on
+  // and reads WIDER than the pan. A back-to-wall shroud is the same piece of
+  // china carried up, so it reads narrower. Getting these the same way round is
+  // most of what tells the two apart on an elevation.
+  const cistW = closeC ? panW + 70 : panW * 0.88;
+  // And it sits on the seat with a step, or grows out of the pan with none.
+  const cistBase = closeC ? seatH + seatT + 14 : seatH + seatT;
+  return { style, wallHung, closeC, panW, panD, seatH, seatT, panBase,
+           cistW, cistH, cistBase, cistD,
+           trap: (c.trap === 's-trap') ? 's-trap' : 'p-trap',
+           setOut: Math.max(0, c.setOut || 140) };
+}
+// A pan in plan is not an ellipse. It is close to flat where it meets the
+// cistern, widest about half way along, and finishes in a round nose — which is
+// the difference between a toilet and an egg.
+function toiletPanUV(cu, v0, v1, w){
+  const L = v1 - v0, hw = w/2, N = 26, pts = [];
+  const half = (t)=>{
+    const bulge = Math.sin(Math.PI * Math.min(1, t * 0.92 + 0.08));
+    const base  = 0.60 + 0.40 * bulge;
+    const nose  = (t > 0.80) ? Math.sqrt(Math.max(0, 1 - Math.pow((t - 0.80) / 0.20, 2))) : 1;
+    return hw * base * nose;
+  };
+  for(let i = 0; i <= N; i++){ const t = i/N; pts.push([cu + half(t), v0 + L*t]); }
+  for(let i = N; i >= 0; i--){ const t = i/N; pts.push([cu - half(t), v0 + L*t]); }
+  return pts;
+}
+function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
+  const g = toiletGeom(cab);
+  const cu = cab.W/2;
+  const P = (pts)=> mapUV(wallId, uOff, pts, plan);
+  // The cistern: a vessel against the wall, or one buried in it.
+  if(g.wallHung){
+    d.dashed(true);
+    d.polygon(P(roundRectUV(cu - g.cistW/2, -115, cu + g.cistW/2, -8, 12)), null, COL.ink3, LW.hairline);
+    d.dashed(false);
+    // The flush plate is on the face of the wall, so on a plan it is the only
+    // part of the cistern you can actually see.
+    d.polygon(P(roundRectUV(cu - 110, -4, cu + 110, 16, 5)), SAN.metal, COL.ink2, LW.thin);
+  } else {
+    d.polygon(P(roundRectUV(cu - g.cistW/2, 0, cu + g.cistW/2, g.cistD, 24)), SAN.china, line, lw);
+    // The lid, as the line across it that says the top lifts off.
+    (function(){
+      const a = planMap(wallId, uOff + cu - g.cistW/2 + 16, g.cistD - 34, plan);
+      const b = planMap(wallId, uOff + cu + g.cistW/2 - 16, g.cistD - 34, plan);
+      d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
+    })();
+  }
+  // The pan, lapping under the cistern so the two read as one fixture.
+  const v0 = g.wallHung ? 26 : Math.max(20, g.cistD - 24);
+  d.polygon(P(toiletPanUV(cu, v0, g.panD, g.panW)), SAN.china, line, lw);
+  // The seat, just inside the rim.
+  d.polygon(P(toiletPanUV(cu, v0 + 16, g.panD - 12, g.panW - 26)), null, COL.ink3, LW.hairline);
+  // The water surface.
+  d.polygon(P(toiletPanUV(cu, v0 + 66, g.panD - 62, g.panW - 104)), SAN.water, COL.ink3, LW.hairline);
+  // The waste, which is the whole reason the trap setting exists: an S-trap
+  // goes down through the floor and a P-trap goes back through the wall. Both
+  // are under the fixture, so both are drawn as hidden work.
+  d.dashed(true);
+  if(g.trap === 's-trap'){
+    const wv = v0 + (g.panD - v0) * 0.30;
+    d.polygon(P(ellipseUV(cu, wv, 48, 48, 20)), null, COL.ink3, LW.hairline);
+  } else {
+    d.polygon(P([[cu - 45, 0],[cu + 45, 0],[cu + 45, v0 + 70],[cu - 45, v0 + 70]]),
+      null, COL.ink3, LW.hairline);
+  }
+  d.dashed(false);
+  // The centreline, and the set-out that every other trade works to.
+  (function(){
+    d.dashed(true);
+    const a = planMap(wallId, uOff + cu, -10, plan);
+    const b = planMap(wallId, uOff + cu, g.panD + 46, plan);
+    d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
+    d.dashed(false);
+    const t = planMap(wallId, uOff + cu, g.panD + 82, plan);
+    d.text(t[0], t[1], 'SO ' + Math.round(g.setOut), { align:'center', size:4.5, color:COL.muted });
+  })();
+}
+function drawToiletOnElevation(d, cab, X, Y, s, stroke, lw){
+  const g = toiletGeom(cab), c = cab.config || {};
+  const cu = cab.W/2;
+  const poly = (pts, fill, st, w)=> d.polygon(pts.map(p=>[X(p[0]), Y(p[1])]), fill, st, w);
+  const hline = (u0, u1, h, col, w)=> d.line(X(u0), Y(h), X(u1), Y(h), col, w);
+  const hw = g.panW/2;
+  // The pan, in one piece. China is moulded, so it narrows towards the foot
+  // rather than standing as a box.
+  const foot = hw * (g.wallHung ? 0.74 : g.closeC ? 0.80 : 0.93);
+  poly(roundPoly([[cu - foot, g.panBase],[cu + foot, g.panBase],
+                  [cu + hw, g.seatH],[cu - hw, g.seatH]],
+                 g.wallHung ? 42 : 30), SAN.china, stroke, lw);
+  // The seat and lid, overhanging the rim, with the shadow that overhang casts.
+  poly(roundPoly([[cu - hw - 12, g.seatH],[cu + hw + 12, g.seatH],
+                  [cu + hw + 12, g.seatH + g.seatT],[cu - hw - 12, g.seatH + g.seatT]], 15),
+    SAN.china, stroke, lw);
+  hline(cu - hw - 12, cu + hw + 12, g.seatH + 2, COL.ink3, LW.hairline);
+  if(g.wallHung){
+    // The cistern is inside the wall, so it is hidden work — and the plate is
+    // the only part of it anyone will ever see.
+    d.dashed(true);
+    poly([[cu - (g.panW + 120)/2, g.seatH + 130],[cu + (g.panW + 120)/2, g.seatH + 130],
+          [cu + (g.panW + 120)/2, 1180],[cu - (g.panW + 120)/2, 1180]], null, COL.ink3, LW.hairline);
+    d.dashed(false);
+    poly(roundPoly([[cu - 110, 940],[cu + 110, 940],[cu + 110, 1090],[cu - 110, 1090]], 18),
+      '#F2F2F0', COL.ink2, LW.thin);
+    // Two buttons, which is what a flush plate is.
+    d.circle(X(cu - 46), Y(1015), 22*s, SAN.metal, COL.ink2, LW.hairline);
+    d.circle(X(cu + 46), Y(1015), 15*s, SAN.metal, COL.ink2, LW.hairline);
+  } else {
+    poly(roundPoly([[cu - g.cistW/2, g.cistBase],[cu + g.cistW/2, g.cistBase],
+                    [cu + g.cistW/2, g.cistH],[cu - g.cistW/2, g.cistH]],
+                   g.closeC ? 26 : 20), SAN.china, stroke, lw);
+    // A close-coupled cistern is a separate piece bolted down, so the joint
+    // shows. A back-to-wall shroud is the same china carried up, so it does not.
+    if(g.closeC) hline(cu - g.cistW/2 + 8, cu + g.cistW/2 - 8, g.cistBase, COL.ink3, LW.hairline);
+    // The lid, as the line that says the top lifts off.
+    hline(cu - g.cistW/2 + 10, cu + g.cistW/2 - 10, g.cistH - 42, COL.ink3, LW.hairline);
+    // The button sits ON the lid, so from the front it straddles the top edge
+    // rather than floating in the middle of the face.
+    poly(roundPoly([[cu - 48, g.cistH - 12],[cu + 48, g.cistH - 12],
+                    [cu + 48, g.cistH + 16],[cu - 48, g.cistH + 16]], 9),
+      SAN.metal, COL.ink2, LW.hairline);
+  }
+  // The waste. Seen from the front an S-trap runs down the back of the pan to
+  // the floor; a P-trap goes straight away from you into the wall, so it is a
+  // pipe seen end on.
+  d.dashed(true);
+  if(g.trap === 's-trap'){
+    // Down the back of the pan and through the floor. It starts inside the
+    // pan, because that is where the trap is.
+    const top = g.wallHung ? g.panBase + 40 : Math.min(300, g.seatH - 90);
+    poly([[cu - 48, top],[cu + 48, top],[cu + 48, 0],[cu - 48, 0]],
+      null, COL.ink3, LW.hairline);
+  } else {
+    d.circle(X(cu), Y(Math.min(220, g.seatH - 120)), 48*s, null, COL.ink3, LW.hairline);
+  }
+  d.dashed(false);
+  d.text(X(cu), Y(-45), (c.labelText || 'WC'),
+    { align:'center', baseline:'middle', size:4.5, color:COL.muted, italic:true });
+}
 function drawTapOnPlan(d, wallId, plan, u, v, style){
   const T = tapSpec(style);
   const P = (uu, vv)=> planMap(wallId, uu, vv, plan);
@@ -8063,40 +8233,21 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
 
   // A selected Caroma product draws its own outline, traced from the model
   // Caroma publishes, rather than the app's generic symbol.
-  const traced = productOutline(cab, 'plan');
+  // A toilet is drawn from its own numbers, never from a traced outline. The
+  // outline ignored the suite type, so a job where some toilets carried a
+  // product and some did not had the setting working on half of them.
+  const traced = (cab.type === 'toilet') ? null : productOutline(cab, 'plan');
   if(traced){
     if(sel) d.polygon(P(traced), null, COL.selected, LW.medium);
     d.polygon(P(traced), SAN.china, line, lw);
-    if(cab.type === 'toilet'){
-      const tp = planMap(wallId, uOff + cu, (c.panD || cab.D) + 70, plan);
-      d.text(tp[0], tp[1], 'SO ' + (c.setOut || 140), { align:'center', size:4.5, color:COL.muted });
-    } else if(cab.type === 'bath'){
+    if(cab.type === 'bath'){
       drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D);
     }
     return;
   }
 
   if(cab.type === 'toilet'){
-    const panW = c.panW || 360, panD = c.panD || 640;
-    const cistD = c.cisternD || 200, cistW = Math.min(W, panW + 70);
-    const style = c.style || 'back-to-wall';
-    // Cistern (or the flush plate, where the cistern is inside the wall).
-    if(style === 'wall-hung' || style === 'concealed'){
-      d.dashed(true);
-      d.polygon(P([[cu-cistW/2,-90],[cu+cistW/2,-90],[cu+cistW/2,0],[cu-cistW/2,0]]), null, COL.ink3, LW.hairline);
-      d.dashed(false);
-    } else {
-      d.polygon(P(roundPoly([[cu-cistW/2,0],[cu+cistW/2,0],[cu+cistW/2,cistD],[cu-cistW/2,cistD]], 45)),
-        SAN.china, line, lw);
-    }
-    // Pan + seat.
-    const v0 = (style === 'wall-hung' || style === 'concealed') ? 0 : cistD;
-    const cv = (v0 + panD)/2, rv = (panD - v0)/2;
-    d.polygon(P(ellipseUV(cu, cv, panW/2, rv)), SAN.china, line, lw);
-    d.polygon(P(ellipseUV(cu, cv + rv*0.10, panW/2 - 45, rv - 55)), SAN.water, COL.ink3, LW.hairline);
-    // The set-out is the number the drawing exists to carry, so it is on the plan.
-    const tp = planMap(wallId, uOff + cu, panD + 70, plan);
-    d.text(tp[0], tp[1], 'SO ' + (c.setOut || 140), { align:'center', size:4.5, color:COL.dim || COL.muted });
+    drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw);
     return;
   }
 
@@ -8416,12 +8567,10 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
   const poly = (pts, fill, st, w)=> d.polygon(pts.map(p=>[X(p[0]), Y(p[1])]), fill, st, w);
   const cu = cab.W/2;
 
-  const tracedE = productOutline(cab, 'elev');
+  // As on the plan: a toilet is built from its numbers, not traced.
+  const tracedE = (cab.type === 'toilet') ? null : productOutline(cab, 'elev');
   if(tracedE){
     poly(tracedE, SAN.china, stroke, lw);
-    if(cab.type === 'toilet' && (c.style === 'close-coupled' || c.style === 'back-to-wall')){
-      d.circle(X(cu), Y((c.cisternH || cab.H) - 70), 7*s, '#F2F2F0', COL.ink2, LW.hairline);
-    }
     // A bath's wall tap is drawn in two places on this sheet depending on which
     // branch the fixture takes. Both go through the mixer, or one of them draws
     // something else and which bath you look at decides what you see.
@@ -8435,28 +8584,7 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
   }
 
   if(cab.type === 'toilet'){
-    const style = c.style || 'back-to-wall';
-    const panW = c.panW || 360, seatH = c.seatH || 400, cistH = c.cisternH || 830;
-    const floating = (style === 'wall-hung');
-    const panBase = floating ? seatH - 260 : 0;
-    poly(roundPoly([[cu-panW*0.31, panBase],[cu+panW*0.31, panBase],
-                    [cu+panW/2, seatH],[cu-panW/2, seatH]], 55), SAN.china, stroke, lw);
-    // Seat and lid, radiused like the moulding they are.
-    poly(roundPoly([[cu-panW/2-12, seatH],[cu+panW/2+12, seatH],
-                    [cu+panW/2+12, seatH+45],[cu-panW/2-12, seatH+45]], 18), SAN.china, stroke, lw);
-    if(style === 'wall-hung' || style === 'concealed'){
-      d.dashed(true);
-      R(cu-(panW+120)/2, seatH+120, cu+(panW+120)/2, 1180, null, COL.ink3, LW.hairline);
-      d.dashed(false);
-      poly(roundPoly([[cu-110, 940],[cu+110, 940],[cu+110, 1090],[cu-110, 1090]], 22),
-        '#F2F2F0', COL.ink2, LW.thin);                                       // flush plate
-      d.text(X(cu), Y(1015), 'FLUSH', { align:'center', baseline:'middle', size:3.6, color:COL.muted });
-    } else {
-      poly(roundPoly([[cu-(panW+70)/2, seatH+45],[cu+(panW+70)/2, seatH+45],
-                      [cu+(panW+70)/2, cistH],[cu-(panW+70)/2, cistH]], 32), SAN.china, stroke, lw);
-      d.circle(X(cu), Y(cistH-70), 7*s, '#F2F2F0', COL.ink2, LW.hairline);   // button
-    }
-    d.text(X(cu), Y(-45), (c.labelText || 'WC'), { align:'center', baseline:'middle', size:4.5, color:COL.muted, italic:true });
+    drawToiletOnElevation(d, cab, X, Y, s, stroke, lw);
     return;
   }
 
@@ -14313,7 +14441,8 @@ function renderEditPanel(){
       }
     }
     if(cab.type === 'toilet'){
-      pick('Suite type', 'style', [['back-to-wall','Back to wall'],['close-coupled','Close coupled'],['wall-hung','Wall hung, concealed cistern']]);
+      pick('Suite type', 'style', Object.entries(TOILET_STYLES));
+      num('Cistern projection', 'cisternD', 120, 320, 5);
       pick('Trap', 'trap', [['p-trap','P-trap'],['s-trap','S-trap']]);
       num('Set-out (wall to pan centre)', 'setOut', 60, 400, 5);
       num('Pan width', 'panW', 250, 600, 5);
