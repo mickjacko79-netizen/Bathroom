@@ -1349,7 +1349,9 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><td>Base</td><td>Tiled, or a manufactured tray. A tiled base is floor, so the floor tiling runs through it on the plan rather than being hidden — which is the one place the set-out is most often argued about.</td></tr>
               <tr><td>Waste · position</td><td>Linear or square, and where it sits: centre, left, right, inside against the wall or outside at the entry. A linear waste laid across the shower runs the width; one down a side turns with it. The falls are drawn from each corner to wherever the waste actually is, dashed, the way a waterproofer reads them.</td></tr>
               <tr><td>Hob height · width</td><td>A kerb across the front. It is outlined rather than filled, so the tiling still reads through it.</td></tr>
-              <tr><td>Mixer height · across</td><td>Where the mixer sits. Left at 0 it follows the outlet, so moving the head takes the mixer with it; give it a number and it stays there instead. It is drawn on the plan as well as the elevation, because it is a set-out a plumber works to.</td></tr>
+              <tr><td>Mixer wall</td><td>The back wall, or either return. A mixer on the return is what you put in when you do not want to reach through the water to turn it on. On the return the fitting turns with the wall, and on the elevation it is dashed, because it is on a wall at right angles to that sheet.</td></tr>
+<tr><td>Mixer position</td><td>Under the head, or any of the same five the waste and outlet use. On the back wall left, right and centre place it across; on a return inside and outside place it in depth. A set-out typed into <b>Mixer across</b> still wins, and is only offered for the back wall.</td></tr>
+<tr><td>Mixer height</td><td>How high it sits. It is drawn on the plan as well as the elevation, because it is a set-out a plumber works to.</td></tr>
               <tr><td>Outlet</td><td>Rainhead on a wall arm · rainhead from the ceiling · rail shower, handheld · rail + rainhead, twin outlet · rail + ceiling rainhead.</td></tr>
 <tr><td>Outlet position</td><td>The same five: centre, left, right, inside or outside. Left, right and centre move it across the shower; inside and outside move it in depth, which a rail on the wall has no use for and ignores.</td></tr>
               <tr><td>Rainhead shape · size · height · out from wall</td><td>Round or square, and where it sits. A ceiling rose is dashed on the plan, the way anything overhead is.</td></tr>
@@ -1663,7 +1665,8 @@ const CATALOG = {
                     sideWall:'none', bladeSide:'L', bladeT:90, bladeD:0, bladeH:2100, panelSide:'',
                     base:'tiled', waste:'linear', wastePos:'inside', hob:true, hobH:40, hobW:100,
                     mixerH:1050, railH:1800, roseH:2050, roseType:'overhead',
-                    roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450, rosePos:'centre', mixerU:0,
+                    roseShape:'round', roseDia:250, roseArm:400, roseU:0, roseV:450, rosePos:'centre',
+                    mixerU:0, mixerWall:'back', mixerPos:'head',
                     labelText:'' } },
   'mirror':      { label:'Mirror',                  defaultW:900, H:900,  D:25,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1000, edge:'polished', ledFrame:false, labelText:'' } },
@@ -1784,15 +1787,42 @@ function showerRose(cab){
            rain: def.rain, rail: def.rail, ceiling: def.ceiling,
            h: c.roseH || 2050 };
 }
+// Which wall of the shower the mixer is on. A mixer on the return is what you
+// put in when you do not want to reach through the water to turn it on, and it
+// is common enough that a drawing that cannot say it is a drawing that gets
+// asked about.
+const MIXER_WALLS = {
+  'back':  'Back wall',
+  'left':  'Left return',
+  'right': 'Right return',
+};
+// Where along that wall. Under the head is the default and is what it did
+// before it could be set at all.
+const MIXER_POS = Object.assign({ 'head': 'Under the head' }, SHOWER_POS);
 function showerMixer(cab){
   const c = cab.config || {};
-  // The mixer belongs under the head. You reach for it where the water comes
-  // from, and a plumber runs one wall chase for the pair. It used to sit in the
-  // middle of the shower whatever the outlet did, so moving the head to one
-  // side left the mixer stranded in the centre with the pipework crossing the
-  // wall to reach it. Given a number of its own it stays where it is put.
-  const u = (c.mixerU > 0) ? Math.min(cab.W, c.mixerU) : showerRose(cab).u;
-  return { u, h: c.mixerH || 1050, plate: 68 };
+  const W = cab.W, D = cab.D;
+  const wall = MIXER_WALLS[c.mixerWall] ? c.mixerWall : 'back';
+  const pos  = MIXER_POS[c.mixerPos] ? c.mixerPos : 'head';
+  const inset = Math.min(350, W * 0.30), deep = Math.min(260, D * 0.30);
+  let u, v;
+  if(wall === 'back'){
+    v = 0;
+    // A number typed in still wins — that is what the field is for.
+    if(c.mixerU > 0)          u = Math.min(W, c.mixerU);
+    else if(pos === 'left')   u = inset;
+    else if(pos === 'right')  u = W - inset;
+    else if(pos === 'head')   u = showerRose(cab).u;
+    // Inside and outside are about depth, and the back wall has none to give.
+    else                      u = W / 2;
+  } else {
+    u = (wall === 'left') ? 0 : W;
+    // On a return it is depth that can vary, and left and right that cannot.
+    if(pos === 'inside')      v = deep;
+    else if(pos === 'outside') v = D - deep;
+    else                      v = D / 2;
+  }
+  return { wall, pos, u, v: (v || 0), h: c.mixerH || 1050, plate: 68 };
 }
 // A hob has a height and a width, and they were the same number. hobH stood
 // for how tall the kerb is on the elevation AND how thick it is on the plan, so
@@ -7129,10 +7159,11 @@ function drawTapOnPlan(d, wallId, plan, u, v, style){
 // hundred millimetres tall on the floor: tucked in by the wall it climbs into
 // it, and far enough out to clear it, it is under the floor waste. The basin
 // tap goes unlabelled for the same reason and is no harder to read for it.
-function drawShowerMixerOnPlan(d, wallId, plan, u, M){
+function drawShowerMixerOnPlan(d, wallId, uOff, plan, M){
+  const u = uOff + M.u, v = M.v || 0;
   const P = (uu, vv)=> planMap(wallId, uu, vv, plan);
   // Page-mm per real mm, off the map itself — same as the tap.
-  const a0 = P(u, 0), a1 = P(u + 10, 0);
+  const a0 = P(u, v), a1 = P(u + 10, v);
   const sc = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) / 10 || (plan && plan.s) || 1;
   const plate = (M && M.plate) || 68;
   // True to scale, but grown as one piece if the plate would come out under
@@ -7143,10 +7174,23 @@ function drawShowerMixerOnPlan(d, wallId, plan, u, M){
   const bw = plate * 0.40 * g;       // half the body
   const bl = 62 * g;                 // how far the body reaches into the room
   const shape = pts => mapUV(wallId, 0, pts, plan);
-  // Body first, so the escutcheon reads over it where the two meet.
-  d.polygon(shape(roundRectUV(u - bw, pt, u + bw, pt + bl, bw * 0.45)),
+  const box = (u0, v0, u1, v1, r)=> shape(roundRectUV(
+    Math.min(u0, u1), Math.min(v0, v1), Math.max(u0, u1), Math.max(v0, v1), r));
+  if(!M || M.wall === 'back' || !M.wall){
+    // Body first, so the escutcheon reads over it where the two meet.
+    d.polygon(box(u - bw, v + pt, u + bw, v + pt + bl, bw * 0.45),
+      TAP_BODY, COL.ink2, LW.hairline);
+    d.polygon(box(u - hw, v, u + hw, v + pt, pt * 0.35),
+      TAP_BODY, COL.ink, LW.thin);
+    return;
+  }
+  // On a return the fitting turns with the wall: the escutcheon lies along
+  // the return and the body reaches across the shower rather than out of the
+  // wall behind it.
+  const dir = (M.wall === 'left') ? 1 : -1;
+  d.polygon(box(u + dir*pt, v - bw, u + dir*(pt + bl), v + bw, bw * 0.45),
     TAP_BODY, COL.ink2, LW.hairline);
-  d.polygon(shape(roundRectUV(u - hw, 0, u + hw, pt, pt * 0.35)),
+  d.polygon(box(u, v - hw, u + dir*pt, v + hw, pt * 0.35),
     TAP_BODY, COL.ink, LW.thin);
 }
 // Elevation: drawn in profile, which is how a tap is read on a kitchen
@@ -8550,7 +8594,7 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
       // it belongs on the plan and not only on the elevation.
       (function(){
         const M = showerMixer(cab);
-        drawShowerMixerOnPlan(d, wallId, plan, uOff + M.u, M);
+        drawShowerMixerOnPlan(d, wallId, uOff, plan, M);
       })();
       // The rail, on the wall, where there is one.
       if(R.rail){
@@ -8895,8 +8939,13 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
     })();
     // Mixer, rail and rose.
     const _M = showerMixer(cab);
-    d.circle(X(_M.u), Y(_M.h), (_M.plate / 2)*s, '#F2F2F0', COL.ink2, LW.thin);
-    d.circle(X(_M.u), Y(_M.h), 12*s, SAN.metal, COL.ink2, LW.hairline);
+    // A mixer on a return is on a wall at right angles to this sheet, so it is
+    // drawn where it is but dashed — it is not on the wall you are looking at.
+    const _mixAway = (_M.wall && _M.wall !== 'back');
+    if(_mixAway) d.dashed(true);
+    d.circle(X(_M.u), Y(_M.h), (_M.plate / 2)*s, _mixAway ? null : '#F2F2F0', COL.ink2, LW.thin);
+    d.circle(X(_M.u), Y(_M.h), 12*s, _mixAway ? null : SAN.metal, COL.ink2, LW.hairline);
+    if(_mixAway) d.dashed(false);
     (function(){
       const R2 = showerRose(cab);
       // A twin outlet puts the rail beside the rainhead rather than under it,
@@ -14751,7 +14800,12 @@ function renderEditPanel(){
       num('Hob width', 'hobW', 50, 300, 5);
       num('Screen height', 'screenH', 1200, 2700, 10);
       num('Mixer height', 'mixerH', 700, 1600, 10);
-      num('Mixer across (0 = under the head)', 'mixerU', 0, 2400, 10);
+      pick('Mixer wall', 'mixerWall', Object.entries(MIXER_WALLS));
+      pick('Mixer position', 'mixerPos', Object.entries(MIXER_POS));
+      // A typed set-out only means anything along the back wall; on a return
+      // the position is the whole of it.
+      if((c.mixerWall || 'back') === 'back')
+        num('Mixer across (0 = use the position)', 'mixerU', 0, 2400, 10);
       pick('Outlet', 'roseType', Object.entries(SHOWER_OUTLETS).map(([k, v]) => [k, v.label]));
       pick('Outlet position', 'rosePos', Object.entries(SHOWER_POS));
       const _od = showerOutlet(c.roseType || 'overhead');
