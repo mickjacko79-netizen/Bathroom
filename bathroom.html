@@ -15968,10 +15968,40 @@ function renderTabs(){
     bar.insertBefore(el, anchor);
   });
 }
+// Opening an elevation makes that wall the active one. The panel headed
+// "Run trim (active wall)" — and the row lists, and Openings — all act on the
+// active wall, and nothing moved it when you changed sheet. So you could sit on
+// elevation D, turn on a low wall, and have it built on B because B was the
+// last wall you happened to click. The panel was doing what it said; what it
+// said just had nothing to do with the drawing in front of you.
+function syncActiveWallToView(v){
+  if(!v) return false;
+  let room = null, wall = null;
+  if(v.indexOf('room:') === 0){
+    const p = v.split(':');
+    room = p[1] || null; wall = p[2] || null;
+  } else {
+    // Only the lettered wall elevations. The island has no wall behind it and
+    // the plans, schedules and working tabs are not looking at one wall.
+    const m = /^elev-([A-Z]+)$/.exec(v);
+    if(m){ room = 'kitchen'; wall = m[1]; }
+  }
+  if(!wall) return false;
+  const changed = (state.ui.activeWall !== wall)
+    || (room && state.ui.activeRoom !== room);
+  if(!changed) return false;
+  if(room) state.ui.activeRoom = room;
+  state.ui.activeWall = wall;
+  return true;
+}
 function showView(v){
   // A room can be removed while one of its elevations is on screen.
   if(!activeSheets().some(s => s.view === v)) v = 'plan';
   state.ui.view = v;
+  if(syncActiveWallToView(v)){
+    try { syncSidebarFromState(); } catch(_){}
+    try { renderCabinetList(); } catch(_){}
+  }
   SHEETS.forEach(s=>{
     const node = document.getElementById('v-' + s.view);
     if(node) node.classList.toggle('on', s.view === v);
