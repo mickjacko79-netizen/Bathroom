@@ -1260,9 +1260,11 @@ header .project-label .dot.dirty{background:#F7C04A}
             </ul>
             <p>The list order follows the wall: move a fixture past another and the two change places in
               the list, because that is now the order they stand in.</p>
-            <div class="note"><b>Two things cannot stand in the same place.</b> Put a fixture down on top
-              of another and that other steps aside — by the overlap and no further, and only for as long
-              as it is genuinely in the way. Drag straight past it and it goes back to its own set-out.</div>
+            <div class="note"><b>Nothing is ever pushed out of the way.</b> Two things cannot stand in the
+              same place, so a fixture dropped on top of another goes alongside it instead — whichever
+              side is nearer. Take it well past and it goes where you took it, stepping over what it
+              passed rather than shoving it along the wall. The fixture in your hand is the only one that
+              moves, and that holds however tightly the wall is packed.</div>
             <p>Nothing travels with anything unless you have grouped it. Group two fixtures and they move
               together, keeping the spacing between them; that is what a group is for, and it is the only
               thing that does it.</p>
@@ -14037,18 +14039,23 @@ function snapPositionU(cab, arr, pos, startOff, endOff, u){
   cand.forEach(v=>{ const d = Math.abs(v - u); if(d <= near){ near = d; best = v; } });
   return Math.round(best);
 }
-// Move one fitting to a place on the wall. One fitting moves; everything else
-// stays where it stands, bar what is grouped with it, which travels the same
-// distance, and anything it is put on top of, which has to give way.
+// Move one fitting to a place on the wall. One fitting moves and nothing else
+// does — bar what is grouped with it, which travels the same distance.
+//
+// It goes to the nearest place it will actually fit. Dropped on open wall that is
+// exactly where it was dropped; dropped on top of something it goes alongside,
+// whichever side is nearer; dragged well past something it goes where it was
+// taken, stepping over what it passed rather than shoving it down the wall. A
+// fitting is never made to give way for another, which is the whole promise —
+// and stepping over is what keeps that promise without walling a fitting in
+// between its neighbours, which simply refusing to move it would have done.
 //
 // `snap` is for a drag; a figure typed in is taken as given. `home` is where the
-// row stood when the move began, by item id — during a drag everything is laid
-// out from there rather than from where it has got to, so an item passed over is
-// shoved only while it is genuinely in the way and comes back the moment it is
-// clear. Without it the row is laid out from where it stands now.
+// row stood when the move began, by item id, so every frame of a drag is worked
+// out from the same starting point. Without it the row is read as it stands now.
 //
-// Returns how far the item has come from home, which is nothing when it is
-// already there.
+// Returns how far the item has come from home, which is nothing when it has not
+// moved, and nothing when there is nowhere on the wall it will go.
 function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home){
   if(!cab || !Array.isArray(arr)) return 0;
   const i = arr.indexOf(cab);
@@ -14056,30 +14063,56 @@ function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home){
   if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
   if(!cab.adj.left)  cab.adj.left  = { filler:0, panel:0 };
   if(!cab.adj.right) cab.adj.right = { filler:0, panel:0 };
+  const s0 = startOff || 0;
   const pos  = rowPositions(arr, startOff);
   const base = arr.map((c, k)=> (home && home[c.id] != null) ? home[c.id] : pos[k]);
   const lp = cab.adj.left.panel || 0;
-  const re = adjRightExtra(cab);
-  const floor = (startOff || 0) + lp;
   let u = Math.round(targetU);
   if(snap !== false) u = snapPositionU(cab, arr, base, startOff, endOff, u);
-  // It cannot be moved off either end of the wall it is standing on.
-  u = Math.max(floor, u);
-  if(endOff != null) u = Math.min(u, Math.max(floor, endOff - re - cab.W));
-  const shift = u - base[i];              // how far it has come from home
-  const delta = u - pos[i];               // and how far in this step alone
-  if(!shift && !delta) return 0;
-  const want = base.slice();
+  // What is travelling: this fitting, and anything grouped with it in this row.
   const free = new Set([cab]);
-  want[i] = u;
-  // Anything grouped with it in the same row goes the same distance and keeps
-  // its spacing — a group is what things that belong together are for.
+  arr.forEach(c=>{ if(c !== cab && cab.groupId && c.groupId === cab.groupId) free.add(c); });
+  // Where each fitting's block sits on the wall, taken from home.
+  const blockL = k => base[k] - ((arr[k].adj && arr[k].adj.left && arr[k].adj.left.panel) || 0);
+  const blockR = k => blockL(k) + cabOuterW(arr[k]);
+  // The whole of what is travelling, as one body — a group keeps its spacing, so
+  // it has to find room for all of itself at once.
+  let bodyL = Infinity, bodyR = -Infinity;
   arr.forEach((c, k)=>{
-    if(c !== cab && cab.groupId && c.groupId === cab.groupId){
-      want[k] = base[k] + shift;
-      free.add(c);
-    }
+    if(!free.has(c)) return;
+    bodyL = Math.min(bodyL, blockL(k));
+    bodyR = Math.max(bodyR, blockR(k));
   });
+  const need = bodyR - bodyL;
+  // Everything it has to keep out of the way of. Anything standing inside the
+  // body's own span is not an obstacle to it — it is already there.
+  const blocked = [];
+  arr.forEach((c, k)=>{
+    if(free.has(c)) return;
+    const l = blockL(k), r = blockR(k);
+    if(r <= bodyL || l >= bodyR) blocked.push({ l, r });
+  });
+  blocked.sort((a, b)=> a.l - b.l);
+  // The clear stretches of wall left between them.
+  const wallEnd = (endOff != null) ? endOff : Infinity;
+  const clear = [];
+  let edge = s0;
+  blocked.forEach(b=>{ if(b.l > edge) clear.push([edge, b.l]); edge = Math.max(edge, b.r); });
+  clear.push([edge, wallEnd]);
+  // The one that can hold it and comes nearest to where it was asked to go.
+  const askedL = bodyL + ((u - lp) - blockL(i));
+  let landL = null, nearest = Infinity;
+  clear.forEach(([lo, hi])=>{
+    if(hi - lo < need) return;
+    const cand = Math.min(Math.max(askedL, lo), hi - need);
+    const d = Math.abs(cand - askedL);
+    if(d < nearest){ nearest = d; landL = cand; }
+  });
+  if(landL == null) return 0;             // nowhere on this wall it will fit
+  const shift = Math.round(landL - bodyL);
+  const delta = (base[i] + shift) - pos[i];
+  if(!shift && !delta) return 0;
+  const want = base.map((v, k)=> free.has(arr[k]) ? v + shift : v);
   applyRowPositions(arr, startOff, want, free);
   // Other rows have no home to be laid out from, so they take the step.
   slideGroupBy(cab, delta, arr);
