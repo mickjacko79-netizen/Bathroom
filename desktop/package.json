@@ -32,6 +32,8 @@
     "files": [
       "main.js",
       "mcp-server.js",
+      "chat.js",
+      "preload.js",
       "icon.ico",
       "icon.png",
       "bundled/**/*",

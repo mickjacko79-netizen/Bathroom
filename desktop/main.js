@@ -10,6 +10,7 @@ const { app, BrowserWindow, Menu, shell, dialog, ipcMain, clipboard } = require(
 const path = require('path');
 const fs = require('fs');
 const mcp = require('./mcp-server');
+const chat = require('./chat');
 
 const APP_ID = 'com.joinerystudio.bathroom';
 const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
@@ -130,6 +131,31 @@ function stopClaudeBridge() {
   buildMenu();
   return handle.stop();
 }
+
+// ------------------------------------------------------------- chat panel ----
+// The other direction: the panel in the page asks a question, the shell runs
+// Claude Code headless, and what comes back is streamed into the panel. It talks
+// to the drawing through the bridge above, so the two halves are the same thing
+// seen from either end.
+let chatSession = null;
+
+function chatFor() {
+  if (!chatSession) {
+    chatSession = chat.createChat({
+      userDataDir: app.getPath('userData'),
+      bridgeUrl: () => mcpUrl,
+      send: payload => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', payload);
+      },
+    });
+  }
+  return chatSession;
+}
+
+ipcMain.handle('chat:status', () => chatFor().status());
+ipcMain.handle('chat:ask',    (_e, text) => chatFor().ask(text));
+ipcMain.handle('chat:stop',   () => chatFor().stop());
+ipcMain.handle('chat:reset',  () => chatFor().reset());
 
 // The address carries a token, so it is not something to be typed from memory.
 // This hands the whole command over ready to paste.
@@ -396,6 +422,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      // The chat panel's only way through. See preload.js for what it hands over
+      // — four functions, and nothing else.
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
   if (saved.maximized) mainWindow.maximize();

@@ -1,0 +1,41 @@
+// The only thing the page is given.
+//
+// The window runs with context isolation on and Node off, which is how it should
+// stay: bathroom.html is a drawing app that also has to run in a plain browser,
+// and handing it require() would be both unnecessary and a way in. So the page
+// gets four functions and no more — ask a question, watch the answer arrive,
+// stop it, and find out whether any of this is available at all.
+//
+// `window.bathroomChat` being undefined is the signal the page uses to hide the
+// chat panel when it is opened in a browser rather than the desktop app.
+
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('bathroomChat', {
+  // Whether the desktop shell is on the other side of this at all.
+  available: true,
+
+  // Is the CLI installed, and is it logged in? The panel asks before it lets
+  // someone type, so the answer is a sentence about what to do rather than a
+  // request that fails a few seconds later for a reason nobody can see.
+  status: () => ipcRenderer.invoke('chat:status'),
+
+  // Ask a question. Resolves once the turn is finished; the running commentary
+  // arrives through onEvent below.
+  ask: (text) => ipcRenderer.invoke('chat:ask', String(text == null ? '' : text)),
+
+  // Stop the turn that is running.
+  stop: () => ipcRenderer.invoke('chat:stop'),
+
+  // Start a fresh conversation rather than continuing the last one.
+  reset: () => ipcRenderer.invoke('chat:reset'),
+
+  // Text as it is written, tools as they are called, and the end of the turn.
+  // Returns the function that unsubscribes, so a re-render cannot stack
+  // listeners up and print everything twice.
+  onEvent: (handler) => {
+    const wrapped = (_evt, payload) => { try { handler(payload); } catch (_) {} };
+    ipcRenderer.on('chat:event', wrapped);
+    return () => ipcRenderer.removeListener('chat:event', wrapped);
+  },
+});

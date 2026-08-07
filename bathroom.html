@@ -326,6 +326,36 @@ header .project-label .dot.dirty{background:#F7C04A}
 .lib-add-job input{flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font:inherit;font-size:12px;background:#fff}
 .lib-add-job button{padding:5px 10px;border:1px solid var(--brand);background:#fff;color:var(--brand);border-radius:4px;cursor:pointer;font-size:11.5px;font-weight:600}
 .lib-add-job button:hover{background:var(--brand);color:#fff}
+/* Ask Claude — the chat panel. Docked to the right edge rather than given a
+   column in the app grid, so the sheet keeps every pixel it had and a browser
+   that never shows this panel is not laid out around a gap where it would be. */
+.chat{position:fixed;top:54px;right:0;bottom:0;width:360px;z-index:60;
+  background:var(--panel);border-left:1px solid var(--border);
+  display:none;flex-direction:column;box-shadow:-6px 0 18px rgba(0,0,0,.06)}
+.chat.on{display:flex}
+.chat-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border)}
+.chat-head h3{margin:0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.chat-head .sp{flex:1}
+.chat-head button{border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;
+  font:inherit;font-size:11px;padding:3px 8px;color:var(--muted)}
+.chat-head button:hover{color:var(--ink);border-color:var(--brand)}
+.chat-log{flex:1;overflow-y:auto;padding:14px;font-size:12.5px;line-height:1.55}
+.chat-msg{margin:0 0 14px;white-space:pre-wrap;word-wrap:break-word}
+.chat-msg.you{color:var(--ink);font-weight:600}
+.chat-msg.you::before{content:'You  ';color:var(--muted);font-weight:600;font-size:11px;letter-spacing:.05em}
+.chat-msg.claude{color:var(--ink)}
+.chat-tool{color:var(--muted);font-size:11px;font-style:italic;margin:0 0 8px}
+.chat-note{color:var(--muted);font-size:11.5px;line-height:1.5;margin:0 0 12px}
+.chat-err{color:#B4453A;font-size:11.5px;line-height:1.5;margin:0 0 12px}
+.chat-ask{border-top:1px solid var(--border);padding:10px 12px 12px}
+.chat-ask textarea{width:100%;box-sizing:border-box;resize:none;min-height:56px;
+  border:1px solid var(--border);border-radius:4px;padding:8px;font:inherit;font-size:12.5px;background:#fff}
+.chat-ask textarea:disabled{background:#F4F2EC;color:var(--muted)}
+.chat-ask .row{display:flex;align-items:center;gap:8px;margin-top:7px}
+.chat-ask .hintline{flex:1;font-size:10.5px;color:var(--muted);letter-spacing:.03em}
+.chat-ask .go{border:1px solid var(--brand);background:var(--brand);color:#fff;border-radius:4px;
+  cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;padding:5px 12px}
+.chat-ask .go[disabled]{opacity:.45;cursor:default}
 </style>
 </head>
 <body>
@@ -341,6 +371,9 @@ header .project-label .dot.dirty{background:#F7C04A}
     <button class="header-btn" id="btnExport" title="Export current job as JSON">Export</button>
     <button class="header-btn" id="btnFoldPanels" title="Fold every side panel away (or open them again)">⌃ Fold panels</button>
     <button class="header-btn" id="btnLibrary" title="Open library">Library</button>
+    <!-- Only ever shown in the desktop app: it needs a Claude Code to talk to,
+         and a browser has no way to reach one. -->
+    <button class="header-btn" id="btnChat" title="Ask Claude about this drawing" style="display:none">Ask Claude</button>
     <div class="meta">AS 1100 · Metric · 1:50</div>
   </header>
 
@@ -22358,6 +22391,127 @@ try {
 } catch(err){
   console.error('[Bathroom init]', err);
 }
+</script>
+
+<!-- ============================================================ ASK CLAUDE ===
+     A chat panel that talks to Claude Code running on this machine, which in
+     turn drives this drawing through the desktop shell's bridge — so asking for
+     a towel rail and watching one appear are the same gesture.
+
+     The whole thing hangs off window.bathroomChat, which only the desktop shell
+     provides. Opened as a file in a browser there is no such object, the button
+     never appears, and nothing below runs. That is deliberate: this file has to
+     go on working with nothing installed. -->
+<div class="chat" id="chatPanel">
+  <div class="chat-head">
+    <h3>Ask Claude</h3>
+    <div class="sp"></div>
+    <button id="chatReset" title="Forget the conversation so far and start again">New</button>
+    <button id="chatClose" title="Close">Close</button>
+  </div>
+  <div class="chat-log" id="chatLog"></div>
+  <div class="chat-ask">
+    <textarea id="chatInput" placeholder="Put a roll holder next to the toilet on wall D…"></textarea>
+    <div class="row">
+      <span class="hintline" id="chatHint">Enter to send · Shift+Enter for a new line</span>
+      <button class="go" id="chatSend">Send</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const bridge = window.bathroomChat;
+  if(!bridge || !bridge.available) return;      // a plain browser: nothing to talk to
+
+  const btn   = document.getElementById('btnChat');
+  const panel = document.getElementById('chatPanel');
+  const log   = document.getElementById('chatLog');
+  const input = document.getElementById('chatInput');
+  const send  = document.getElementById('chatSend');
+  const hint  = document.getElementById('chatHint');
+  btn.style.display = '';
+
+  let busy = false;
+  let reply = null;                              // the paragraph being written into
+
+  const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  const scroll   = was => { if(was) log.scrollTop = log.scrollHeight; };
+  function add(cls, text){
+    const was = atBottom();
+    const p = document.createElement('p');
+    p.className = cls;
+    p.textContent = text || '';
+    log.appendChild(p);
+    scroll(was);
+    return p;
+  }
+
+  function setBusy(on){
+    busy = on;
+    send.disabled = on;
+    send.textContent = on ? 'Working…' : 'Send';
+    input.disabled = on;
+    hint.textContent = on ? 'Working — the drawing will change as it goes.'
+                          : 'Enter to send · Shift+Enter for a new line';
+  }
+
+  // Text arrives in pieces; they belong in one paragraph rather than one each.
+  bridge.onEvent(evt => {
+    if(evt.type === 'start'){ reply = null; return; }
+    if(evt.type === 'text'){
+      const was = atBottom();
+      if(!reply) reply = add('chat-msg claude', '');
+      reply.textContent += evt.text;
+      scroll(was);
+      return;
+    }
+    if(evt.type === 'tool'){
+      // Seeing which tool ran is how you know what a Ctrl+Z would take back.
+      add('chat-tool', '· ' + evt.name.replace(/_/g, ' '));
+      reply = null;                              // any further text starts fresh
+      return;
+    }
+    if(evt.type === 'error'){ add('chat-err', evt.message); reply = null; return; }
+    if(evt.type === 'done'){ setBusy(false); reply = null; renderActive(); return; }
+  });
+
+  async function ask(){
+    const text = input.value.trim();
+    if(!text || busy) return;
+    input.value = '';
+    add('chat-msg you', text);
+    setBusy(true);
+    try { await bridge.ask(text); }
+    catch(err){ add('chat-err', String(err && err.message || err)); setBusy(false); }
+  }
+
+  send.addEventListener('click', ask);
+  input.addEventListener('keydown', e => {
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); ask(); }
+  });
+
+  document.getElementById('chatReset').addEventListener('click', async () => {
+    await bridge.reset();
+    log.innerHTML = '';
+    add('chat-note', 'Started again. It has forgotten what was said before this point.');
+  });
+  document.getElementById('chatClose').addEventListener('click', () => panel.classList.remove('on'));
+
+  let greeted = false;
+  btn.addEventListener('click', async () => {
+    panel.classList.toggle('on');
+    if(!panel.classList.contains('on')) return;
+    input.focus();
+    if(greeted) return;
+    greeted = true;
+    // Say what is wrong before they type into something that cannot answer.
+    const state = await bridge.status();
+    if(!state.ready){ add('chat-err', state.message); setBusy(false); return; }
+    add('chat-note',
+        'Ask about the drawing that is open, or ask for a change to it. Everything it '
+      + 'does is one undo step, so Ctrl+Z takes it back.');
+  });
+})();
 </script>
 </body>
 </html>
