@@ -1395,7 +1395,7 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><td>Vanity — drawers</td><td>Drawer count and how the heights are split, equal or set by hand.</td></tr>
               <tr><td>Vanity — door + shelves</td><td>Door count, hinge side, shelves.</td></tr>
               <tr><td>Linen tower / tallboy</td><td>Doors and shelves, plus <b>Side panels</b> — end panels outside the carcass, to the floor or to the ceiling, at a thickness you set.</td></tr>
-              <tr><td>Shaving / wall cabinet</td><td>The wall row equivalent, with doors and shelves.</td></tr>
+              <tr><td>Shaving / wall cabinet</td><td>The wall row equivalent, with doors and shelves, and a bottom height above FFL of its own. Left alone it follows the bench and splashback.</td></tr>
               <tr><td>Corner vanity · corner wall</td><td>Blind L corners, with the blind return set so the door and the return do not fight.</td></tr>
               <tr><td>Fillers</td><td>Vanity, tall and wall height. A filler beside a tall unit is a vertical scribe running the full height of that cabinet, so the benchtop stops at the base run rather than running over it.</td></tr>
               <tr><td>Laundry tub + tap</td><td>A sink cabinet with a deep single bowl; it shares the sink controls and the tapware.</td></tr>
@@ -10240,7 +10240,12 @@ function drawPlan(d, area, view, opts){
         // it. Only the cabinets did, so a pan set against a low wall was drawn
         // standing on the tiles behind it — out by the thickness of the wall it
         // is actually bolted to, which is the number the plumber sets out from.
-        _planVOff = lowWallOffset(w, u, u + cab.W, 0);
+        //
+        // A blade wall is the exception, and not a small one: it is built off
+        // the structure and runs out past whatever is stood in front of it. It
+        // starts at the main wall. Pushing it forward by the low wall would
+        // draw a blade floating clear of the wall it is tied into.
+        _planVOff = (cab.type === 'blade') ? 0 : lowWallOffset(w, u, u + cab.W, 0);
         try { drawSanitaryOnPlan(d, w.id, u, cab, plan, V); }
         catch(e){ console.warn('[Bathroom] fixture plan failed', cab.type, e.message); }
         finally { _planVOff = 0; }
@@ -14892,6 +14897,32 @@ function renderEditPanel(){
     noteInp.addEventListener('input', ()=>{ c.labelText = noteInp.value; renderActive(); });
     noteRow.appendChild(noteInp);
     editor.appendChild(noteRow);
+  }
+
+  // ----- WALL CABINET: how high it hangs
+  // The drawing has always been able to hang one at a height of its own —
+  // hasBottomOverride has listed it all along — but there was no control, so it
+  // took whatever the bench and the splashback implied. A shaving cabinet is
+  // set out off the floor like everything else on the wall it shares.
+  if(cab.type === 'wall'){
+    editor.appendChild(el('h3', {}, 'Height'));
+    (function(){
+      const cur = wallCabBottomY(cab);
+      const valInp = el('input', { type:'number', class:'valInp', min:'300', max:'2400', step:'10', value:String(cur) });
+      const rng = el('input', { type:'range', min:'300', max:'2400', step:'10', value:String(cur) });
+      const put = (v)=>{ cab.config.cabBottomY = v; valInp.value = String(v); rng.value = String(v); renderActive(); };
+      rng.addEventListener('input', ()=> put(parseInt(rng.value, 10)));
+      valInp.addEventListener('change', ()=>{
+        let v = parseInt(valInp.value, 10); if(isNaN(v)) return;
+        put(Math.max(300, Math.min(2400, v)));
+      });
+      const wrap = el('div', { class:'ctrl' });
+      wrap.appendChild(el('label', {}, 'Bottom above FFL', el('span', { class:'val' }, valInp, ' mm')));
+      wrap.appendChild(rng);
+      editor.appendChild(wrap);
+      editor.appendChild(el('div', { class:'ctrl', style:'font-size:11px;color:var(--muted);margin-top:-2px' },
+        'Left alone it follows the bench and splashback.'));
+    })();
   }
 
   // ----- TALL PANTRY: side panel extensions to ceiling / floor
