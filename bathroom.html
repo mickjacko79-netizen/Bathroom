@@ -1386,7 +1386,7 @@ header .project-label .dot.dirty{background:#F7C04A}
             <table>
               <tr><td>Mirror</td><td>Width and height from Dimensions, <b>Bottom above floor</b>, and an <b>Edge</b> treatment.</td></tr>
               <tr><td>Towel rail</td><td><b>Height above floor</b> and the number of <b>Rails</b>, so a single, a double and a ladder are all drawn properly — on the plan as well, which used to show one tube however many were ordered.</td></tr>
-<tr><td>Toilet roll holder</td><td>The open sort: a round plate, a short elbow and a bar running along the wall with a cap on the end. Height above floor and the length of the bar. The roll itself is not drawn — it is the fitting being specified.</td></tr>
+<tr><td>Toilet roll holder</td><td>The open sort: a round plate, a short elbow and a bar running along the wall with a cap on the end. Height above floor, the length of the bar, and which hand it is — the bar runs away from the plate, and which way decides whether it reaches over the pan or over the wall beside it. The roll itself is not drawn; it is the fitting being specified.</td></tr>
 <tr><td>Hand towel holder</td><td>A ring or a short bar, at a height.</td></tr>
 <tr><td>Towel hook</td><td>One to four hooks on a plate, at a height.</td></tr>
 <tr><td>Soap dish</td><td>Small for a bar or large for a bottle, at a height. The two are different products rather than one scaled, so they are drawn at their own sizes — 130 across for the small and 190 for the large.</td></tr>
@@ -1690,7 +1690,7 @@ const CATALOG = {
   // normally set out at, which is the point of having them in the catalogue
   // rather than being drawn in by hand each time.
   'toilet-roll': { label:'Toilet roll holder',       defaultW:230, H:80,   D:85,  row:'wall', hasShelves:false,
-    defaultConfig:{ cabBottomY:700, bar:200, labelText:'' } },
+    defaultConfig:{ cabBottomY:700, bar:200, hand:'right', labelText:'' } },
   'hand-towel':  { label:'Hand towel holder',        defaultW:190, H:200,  D:90,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1100, style:'ring', labelText:'' } },
   'towel-hook':  { label:'Towel hook',               defaultW:60,  H:70,   D:70,  row:'wall', hasShelves:false,
@@ -3551,6 +3551,11 @@ function minWidthFor(type){
   // A blade wall is as narrow as the stud it is built off. Three hundred is the
   // floor for a cabinet, and it was quietly widening a 120 blade to 300.
   if(type === 'blade') return 50;
+  // The small accessories are fittings. A hook is 60 across and a roll holder
+  // a couple of hundred; three hundred is a floor for joinery and nonsense for
+  // these. It was quietly widening every one of them to 300 as it was made, so
+  // the sizes set in the catalogue never survived being added.
+  if(WALL_ACCESSORIES.indexOf(type) >= 0) return 60;
   return 300;
 }
 function makeCab(type, opts={}){
@@ -9124,15 +9129,20 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     // is being specified, and an empty one is what turns up in the box.
     d.rect(x, y, W, H, null, null, 0);
     const cy = y + H*0.55, tube = 10*s;
-    const px = x + 33*s;                       // the plate, on the wall
-    const bx = x + W - 10*s;                   // the far end of the bar
+    // Handed. The bar runs away from the plate, and which way it runs is what
+    // decides whether it reaches over the pan or over the wall beside it.
+    const lh = (c.hand === 'left');
+    const px = lh ? (x + W - 33*s) : (x + 33*s);   // the plate, on the wall
+    const bx = lh ? (x + 10*s)     : (x + W - 10*s); // the far end of the bar
     d.polygon(roundPoly([[px, cy - tube],[bx, cy - tube],
                          [bx, cy + tube],[px, cy + tube]], tube, 3),
       SAN.metal, COL.ink2, LW.thin);
     // The cap on the end, a little proud of the bar.
-    d.polygon(roundPoly([[bx - 6*s, cy - 14*s],[bx + 4*s, cy - 14*s],
-                         [bx + 4*s, cy + 14*s],[bx - 6*s, cy + 14*s]], 5*s, 3),
-      SAN.metal, COL.ink2, LW.hairline);
+    (function(){ const e = lh ? -1 : 1;
+      d.polygon(roundPoly([[bx - 6*s*e, cy - 14*s],[bx + 4*s*e, cy - 14*s],
+                           [bx + 4*s*e, cy + 14*s],[bx - 6*s*e, cy + 14*s]], 5*s, 3),
+        SAN.metal, COL.ink2, LW.hairline);
+    })();
     accPlate(px, cy, 33*s);
     accLabel('TOILET ROLL');
     return true;
@@ -9569,11 +9579,14 @@ function drawAccessoryOnPlan(d, wallId, u0, cab, plan){
     // From above: the plate flat on the wall, the elbow coming out of it, and
     // the bar running along the wall from there. The bar is the length of it,
     // and it is what a roll would sit on.
-    const pu = u0 + 33;
+    const lh = (c.hand === 'left');
+    const pu = lh ? (u0 + W - 33) : (u0 + 33);
+    const be = lh ? (u0 + 10) : (u0 + W - 10);
     d.polygon(shape(roundRectUV(pu - 33, 0, pu + 33, 14, 5)), SAN.metal, COL.ink2, LW.hairline);
     d.polygon(shape(roundRectUV(pu - 10, 14, pu + 10, D - 20, 8)), SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(shape(roundRectUV(pu - 10, D - 20, u0 + W - 10, D, 10)), SAN.metal, COL.ink2, LW.thin);
-    d.polygon(shape(roundRectUV(u0 + W - 16, D - 24, u0 + W - 4, D + 4, 4)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(Math.min(pu, be) - 10, D - 20, Math.max(pu, be) + 10, D, 10)),
+      SAN.metal, COL.ink2, LW.thin);
+    d.polygon(shape(roundRectUV(be - 6, D - 24, be + 6, D + 4, 4)), SAN.metal, COL.ink2, LW.hairline);
     return;
   }
   if(cab.type === 'hand-towel'){
@@ -15119,6 +15132,7 @@ function renderEditPanel(){
     } else if(cab.type === 'toilet-roll'){
       num('Height above floor', 'cabBottomY', 300, 1400, 10);
       num('Bar length', 'bar', 120, 320, 5);
+      pick('Hand', 'hand', [['right','Bar to the right'],['left','Bar to the left']]);
     } else if(cab.type === 'hand-towel'){
       num('Height above floor', 'cabBottomY', 300, 2000, 10);
       pick('Type', 'style', [['ring','Ring'],['bar','Short bar']]);
