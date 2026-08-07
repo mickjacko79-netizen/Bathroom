@@ -11,6 +11,7 @@ Same shell as `JoineryApp`, pointed at a different drawing file.
       sitemeasure/                        the site-measure app, loaded into the Draw tab
       desktop/                            <- you are here
         main.js                           window, native menu, save/print plumbing
+        mcp-server.js                     the Claude bridge — see below
         package.json                      also holds the electron-builder config
         sync-bundle.js                    copies the drawing app into bundled/
         icon.ico / icon.png               app icon (16–256 px)
@@ -80,6 +81,7 @@ Joinery's, so the two apps do not share window state or file overrides.
 | Edit | Undo, Redo, clipboard, delete selected fixture |
 | Sheets | Jump to any sheet (Ctrl+1…Ctrl+9), previous/next |
 | View | Sheet zoom, fit, full screen, reload, DevTools |
+| Claude | The bridge — copy the connect command, start it, stop it |
 | Help | Keyboard shortcuts, About |
 
 The Sheets menu is read from the running job, not hard-coded — a plan traced
@@ -87,6 +89,50 @@ from a site measure has one elevation per wall, which runs well past D.
 
 Edit-menu shortcuts are displayed but not registered app-wide, so `Delete` and
 `Ctrl+Z` still behave normally while typing in the sidebar's text fields.
+
+## The Claude bridge
+
+Lets Claude Code on this machine read the drawing that is open and change it
+while you watch, instead of you describing the job to it and copying the answer
+back by hand. `mcp-server.js` puts the shell's existing page bridge — the same
+one the menu drives — behind an MCP endpoint.
+
+Connect it once:
+
+    Claude → Copy connect command…       then paste it into a terminal
+
+That runs `claude mcp add --transport http bathroom http://127.0.0.1:8791/mcp/<token>`.
+Start Claude Code afterwards and it can call:
+
+| Tool | |
+|---|---|
+| `describe_job` | room, walls, and every fitting with its id, set-out and height band |
+| `list_fitting_types` | what this app can draw, and which row each type belongs on |
+| `add_fitting` | put one on a wall, at a set-out |
+| `move_fitting` | slide one along its wall |
+| `update_fitting` | width, height off the floor, label |
+| `remove_fitting` | take one off |
+| `set_room` | room width, length, floor-to-ceiling |
+| `show_sheet` | put a sheet on screen so you can see what changed |
+
+Every change is one undo step, so `Ctrl+Z` takes back whatever it did, exactly as
+if you had done it by hand.
+
+**What it listens on.** The loopback interface only, so nothing off this machine
+can reach it. It refuses a cross-site `Origin`, so a web page cannot drive it
+through your browser. The address carries a token — kept in the app's own data
+directory so it survives a restart and you configure it once.
+
+**What that does not protect against.** Anything running as you on this machine
+can read the token file and drive your drawing. That is the trade for not having
+to authorise every call. If you would rather it were off, **Claude → Stop
+bridge**, or start the app with `BATHROOM_MCP_PORT` pointed somewhere harmless.
+It also takes a port at launch: if another copy of Bathroom already has 8791 the
+bridge just does not start, and the menu says so.
+
+No dependencies were added for this — the app still has none beyond the copy of
+jsPDF beside it, and one endpoint speaking JSON-RPC was not worth breaking that
+for.
 
 ## Rebuilding after you edit bathroom.html
 

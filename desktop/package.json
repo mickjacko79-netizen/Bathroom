@@ -31,6 +31,7 @@
     },
     "files": [
       "main.js",
+      "mcp-server.js",
       "icon.ico",
       "icon.png",
       "bundled/**/*",

@@ -6,9 +6,10 @@
 // installed. This process only provides the window, the native menu and the
 // save/print plumbing around it.
 
-const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const mcp = require('./mcp-server');
 
 const APP_ID = 'com.joinerystudio.bathroom';
 const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
@@ -86,6 +87,77 @@ function run(code) {
     .catch(err => console.warn('[Bathroom] bridge:', err.message));
 }
 const clickId = id => run(`var b=document.getElementById(${JSON.stringify(id)}); if(b) b.click();`);
+
+// ------------------------------------------------------------ Claude bridge ---
+// The same page bridge, behind an MCP endpoint, so Claude Code on this machine
+// can read the drawing and change it while you watch instead of you describing
+// it and copying the answer back. What it listens on and what that does and does
+// not protect against is all in mcp-server.js.
+let mcpHandle = null;
+let mcpUrl = null;
+
+function startClaudeBridge() {
+  if (mcpHandle) return;
+  try {
+    mcpHandle = mcp.startServer({
+      window: mainWindow,
+      userDataDir: app.getPath('userData'),
+      version: app.getVersion(),
+      onListening: info => {
+        mcpUrl = info.url;
+        console.log('[Bathroom] Claude bridge listening at ' + info.url);
+        buildMenu();                    // the menu item can now hand the address over
+      },
+      onError: err => {
+        // A taken port is the ordinary case — another copy of the app, usually.
+        console.warn('[Bathroom] Claude bridge did not start:', err.message);
+        mcpHandle = null;
+        mcpUrl = null;
+        buildMenu();
+      }
+    });
+  } catch (err) {
+    console.warn('[Bathroom] Claude bridge did not start:', err.message);
+    mcpHandle = null;
+  }
+}
+
+function stopClaudeBridge() {
+  if (!mcpHandle) return Promise.resolve();
+  const handle = mcpHandle;
+  mcpHandle = null;
+  mcpUrl = null;
+  buildMenu();
+  return handle.stop();
+}
+
+// The address carries a token, so it is not something to be typed from memory.
+// This hands the whole command over ready to paste.
+function copyClaudeConnectCommand() {
+  if (!mcpUrl) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Claude bridge',
+      message: 'The bridge is not running.',
+      detail: 'Either it is switched off, or it could not take its port — usually another copy of '
+            + 'Bathroom already has it. Start it from this menu, or close the other copy.',
+      buttons: ['OK'],
+    });
+    return;
+  }
+  const cmd = 'claude mcp add --transport http bathroom ' + mcpUrl;
+  clipboard.writeText(cmd);
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Claude bridge',
+    message: 'Connect command copied.',
+    detail: cmd + '\n\nRun it once in a terminal, then start Claude Code. It will be able to read '
+          + 'this drawing and change it while you watch, and everything it does is one undo step.\n\n'
+          + 'The address reaches this machine only, and carries a token — anything that has the '
+          + 'address can drive your drawing, so keep it as private as you would a password.',
+    buttons: ['OK'],
+  });
+}
 
 // ------------------------------------------------------------------ menu ---
 // Fallback only. The real list comes from the page — a job traced from a site
@@ -199,6 +271,20 @@ function buildMenu() {
         { role: 'togglefullscreen' },
         { label: 'Reload app', accelerator: 'CmdOrCtrl+R', click: () => loadApp() },
         { role: 'toggleDevTools' },
+      ],
+    },
+    {
+      label: '&Claude',
+      submenu: [
+        {
+          label: mcpUrl ? 'Bridge is running' : 'Bridge is not running',
+          enabled: false,
+        },
+        { type: 'separator' },
+        { label: 'Copy connect command…', enabled: !!mcpUrl, click: copyClaudeConnectCommand },
+        { type: 'separator' },
+        { label: 'Start bridge', enabled: !mcpUrl, click: () => startClaudeBridge() },
+        { label: 'Stop bridge',  enabled: !!mcpUrl, click: () => stopClaudeBridge() },
       ],
     },
     {
@@ -390,7 +476,9 @@ if (!single) {
   app.whenReady().then(() => {
     buildMenu();
     createWindow();
+    startClaudeBridge();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+  app.on('before-quit', () => { stopClaudeBridge(); });
 }
