@@ -13918,7 +13918,29 @@ function positionCabAt(cab, arr, startOff, hoverU, endOff){
   // A break is a gap, not a filler panel to be made. A scribe set by hand keeps
   // its kind — dragging is not the place to reclassify it.
   if(gap > 0 && cab.adj.left.kind !== 'filler') cab.adj.left.kind = 'space';
-  return gap - was;
+  const delta = gap - was;
+  // Moving one thing should move one thing. A row is laid out end to end, so
+  // growing this gap pushed everything after it along the wall — the next
+  // fitting, and the one after that, which is why dragging a roll holder took
+  // the shaving cabinet with it. Taking the same amount back off the next
+  // item's own gap leaves it exactly where it was, and everything beyond it too.
+  //
+  // Only as far as that gap can give. Past that the run has nowhere left and the
+  // rest does move — which is honest, because there is no room for it not to.
+  // Grouped items are left alone: they are meant to travel together.
+  if(delta){
+    const nxt = arr[i + 1];
+    const grouped = cab.groupId && nxt && nxt.groupId === cab.groupId;
+    if(nxt && !grouped){
+      if(!nxt.adj) nxt.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
+      if(!nxt.adj.left) nxt.adj.left = { filler:0, panel:0 };
+      const cur = nxt.adj.left.filler || 0;
+      const now = Math.max(0, cur - delta);
+      nxt.adj.left.filler = now;
+      if(now > 0 && nxt.adj.left.kind !== 'filler') nxt.adj.left.kind = 'space';
+    }
+  }
+  return delta;
 }
 // Anything grouped with it slides the same distance.
 function slideGroupBy(cab, delta){
