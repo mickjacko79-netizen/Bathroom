@@ -7028,8 +7028,11 @@ function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
   // china shows as a sliver around it — so it is drawn as the object it is
   // rather than as a line ruled on the pan.
   d.polygon(P(toiletPanUV(cu, v0 + 10, g.panD - 6, g.panW - 12)), SAN.china, line, lw);
-  // The opening through it, with the water below.
-  d.polygon(P(toiletPanUV(cu, v0 + 80, g.panD - 72, g.panW - 126)), SAN.water, COL.ink3, LW.hairline);
+  // The lid is closed, so what you see from above is a white lid — not the
+  // pan, not the water in it. A toilet drawn open on a plan is the one fixture
+  // in the room shown mid-use. The line inside is the moulded edge of the lid,
+  // which is the only thing on it there is to see.
+  d.polygon(P(toiletPanUV(cu, v0 + 34, g.panD - 26, g.panW - 52)), null, COL.ink3, LW.hairline);
   // The hinges, at the cistern end, which is the detail that says seat and
   // lid rather than a moulded rim.
   [-1, 1].forEach(k=>{
