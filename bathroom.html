@@ -733,6 +733,8 @@ header .project-label .dot.dirty{background:#F7C04A}
               <option value="toilet-roll">Toilet roll holder</option>
               <option value="hand-towel">Hand towel holder</option>
               <option value="towel-hook">Towel hook</option>
+              <option value="soap-dish">Soap dish</option>
+              <option value="shower-shelf">Shower shelf</option>
             </optgroup>
             <optgroup label="Joinery">
               <option value="corner-wall">Corner — wall (blind L)</option>
@@ -1387,6 +1389,8 @@ header .project-label .dot.dirty{background:#F7C04A}
 <tr><td>Toilet roll holder</td><td>Height above floor, and a spare roll above it where the holder carries one. The roll is drawn at the size a roll is, so it takes the room beside a pan that it actually takes.</td></tr>
 <tr><td>Hand towel holder</td><td>A ring or a short bar, at a height.</td></tr>
 <tr><td>Towel hook</td><td>One to four hooks on a plate, at a height.</td></tr>
+<tr><td>Soap dish</td><td>Small for a bar or large for a bottle, at a height. The two are different products rather than one scaled, so they are drawn at their own sizes — 130 across for the small and 190 for the large.</td></tr>
+<tr><td>Shower shelf</td><td>A shelf on two plates, at a height, with a front lip you can turn off.</td></tr>
               <tr><td>Niche</td><td><b>Bottom above floor</b> and <b>Shelves</b>.</td></tr>
             </table>
             <div class="note"><b>Worth knowing.</b> A niche is formed inside the wall, so its panel tells you
@@ -1691,6 +1695,10 @@ const CATALOG = {
     defaultConfig:{ cabBottomY:1100, style:'ring', labelText:'' } },
   'towel-hook':  { label:'Towel hook',               defaultW:60,  H:70,   D:70,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1600, hooks:1, labelText:'' } },
+  'soap-dish':   { label:'Soap dish',                defaultW:200, H:80,   D:130, row:'wall', hasShelves:false,
+    defaultConfig:{ cabBottomY:1200, size:'small', labelText:'' } },
+  'shower-shelf':{ label:'Shower shelf',             defaultW:300, H:70,   D:150, row:'wall', hasShelves:false,
+    defaultConfig:{ cabBottomY:1350, lip:true, labelText:'' } },
   // A niche belongs anywhere there is a wall to form it in — over a bath, beside
   // a vanity, in a shower. The key stays 'shower-niche' so drawings already
   // saved still find it.
@@ -1930,10 +1938,19 @@ function screenLayout(cab){
 // The sanitary fixtures are boxes, not carcasses — no fronts, no hardware, no
 // benchtop over them. One predicate keeps every "is this joinery?" test honest.
 const SANITARY_TYPES = ['toilet','basin-fs','bath','shower','mirror','towel-rail','shower-niche','blade',
-                        'toilet-roll','hand-towel','towel-hook'];
+                        'toilet-roll','hand-towel','towel-hook','soap-dish','shower-shelf'];
 // The wall accessories: hung on the wall, drawn as themselves rather than as a
 // box, and each set out at a height off the floor.
-const WALL_ACCESSORIES = ['towel-rail','toilet-roll','hand-towel','towel-hook'];
+const WALL_ACCESSORIES = ['towel-rail','toilet-roll','hand-towel','towel-hook',
+                          'soap-dish','shower-shelf'];
+// A soap dish comes in two sizes and they are different products, not the same
+// one scaled: the small takes a bar, the large takes a bottle. Drawn to their
+// own dimensions inside a box big enough for either, so the hit area does not
+// jump about when the size is changed.
+function soapDishSize(cab){
+  const big = ((cab && cab.config && cab.config.size) || 'small') === 'large';
+  return big ? { w:190, proj:110, name:'large' } : { w:130, proj:80, name:'small' };
+}
 function isWallAccessory(cab){ return !!cab && WALL_ACCESSORIES.indexOf(cab.type) >= 0; }
 function isSanitary(cab){ return !!cab && SANITARY_TYPES.indexOf(cab.type) >= 0; }
 // A laundry tub is drawn, dimensioned and scheduled exactly like a sink base —
@@ -9063,6 +9080,39 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
   const accLabel = (txt)=> d.text(x + W/2, y - 6*s, (c.labelText || txt),
     { align:'center', size:4, color:COL.muted, italic:true });
 
+  if(cab.type === 'soap-dish'){
+    // A shallow tray on an arm. Seen from the front it is the front edge of the
+    // tray and the lip that keeps the soap on it.
+    d.rect(x, y, W, H, null, null, 0);
+    const sz = soapDishSize(cab);
+    const cx = x + W/2, cy = y + H*0.42, dw = sz.w*s;
+    accPlate(cx, cy, 13*s);
+    d.polygon(roundPoly([[cx - 5*s, cy],[cx + 5*s, cy],
+                         [cx + 5*s, cy + 16*s],[cx - 5*s, cy + 16*s]], 5*s, 3),
+      SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(roundPoly([[cx - dw/2, cy + 16*s],[cx + dw/2, cy + 16*s],
+                         [cx + dw/2, cy + 34*s],[cx - dw/2, cy + 34*s]], 7*s, 3),
+      SAN.china, COL.ink2, LW.thin);
+    d.line(cx - dw/2 + 4*s, cy + 21*s, cx + dw/2 - 4*s, cy + 21*s, COL.ink3, LW.hairline);
+    accLabel(sz.name === 'large' ? 'SOAP DISH — LARGE' : 'SOAP DISH');
+    return true;
+  }
+
+  if(cab.type === 'shower-shelf'){
+    // A shelf is a plate at each end and a board between them. The lip is the
+    // line along the front, which is what stops a bottle walking off it.
+    d.rect(x, y, W, H, null, null, 0);
+    const cy = y + H*0.45;
+    [x + 16*s, x + W - 16*s].forEach(px=> accPlate(px, cy, 12*s));
+    d.polygon(roundPoly([[x + 6*s, cy + 6*s],[x + W - 6*s, cy + 6*s],
+                         [x + W - 6*s, cy + 26*s],[x + 6*s, cy + 26*s]], 5*s, 3),
+      SAN.china, COL.ink2, LW.thin);
+    if(c.lip !== false)
+      d.line(x + 8*s, cy + 12*s, x + W - 8*s, cy + 12*s, COL.ink3, LW.hairline);
+    accLabel('SHOWER SHELF');
+    return true;
+  }
+
   if(cab.type === 'toilet-roll'){
     // A plate, an arm, and the roll on the end of it. The roll is drawn at the
     // size a roll is — 110 across — so it reads at a glance and takes the room
@@ -9500,6 +9550,23 @@ function drawAccessoryOnPlan(d, wallId, u0, cab, plan){
       d.polygon(shape(roundRectUV(u0 + 8, D - 16, u0 + W - 8, D, 7)), SAN.metal, COL.ink2, LW.hairline);
       d.polygon(shape(roundRectUV(cu - 5, 12, cu + 5, D - 16, 4)), SAN.metal, COL.ink2, LW.hairline);
     }
+    return;
+  }
+  if(cab.type === 'soap-dish'){
+    const sz = soapDishSize(cab);
+    d.polygon(shape(roundRectUV(cu - 15, 0, cu + 15, 11, 4)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(cu - sz.w/2, 11, cu + sz.w/2, 11 + sz.proj, 12)),
+      SAN.china, COL.ink2, LW.thin);
+    // The well, so it reads as a dish rather than a plate.
+    d.polygon(shape(roundRectUV(cu - sz.w/2 + 14, 22, cu + sz.w/2 - 14, 11 + sz.proj - 12, 10)),
+      null, COL.ink3, LW.hairline);
+    return;
+  }
+  if(cab.type === 'shower-shelf'){
+    d.polygon(shape(roundRectUV(u0 + 4, 0, u0 + W - 4, 11, 3)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(u0, 11, u0 + W, D, 8)), SAN.china, COL.ink2, LW.thin);
+    if(c.lip !== false)
+      d.polygon(shape(roundRectUV(u0 + 6, D - 16, u0 + W - 6, D - 4, 4)), null, COL.ink3, LW.hairline);
     return;
   }
   if(cab.type === 'towel-hook'){
@@ -14998,6 +15065,12 @@ function renderEditPanel(){
       num('Bottom above floor', 'cabBottomY', 400, 2200, 10);
       pick('Edge', 'edge', [['polished','Polished edge'],['bevelled','Bevelled'],['framed','Framed']]);
       check('LED backlit frame', 'ledFrame');
+    } else if(cab.type === 'soap-dish'){
+      num('Height above floor', 'cabBottomY', 300, 2000, 10);
+      pick('Size', 'size', [['small','Small — soap bar'],['large','Large — bottle']]);
+    } else if(cab.type === 'shower-shelf'){
+      num('Height above floor', 'cabBottomY', 300, 2000, 10);
+      check('Front lip', 'lip');
     } else if(cab.type === 'toilet-roll'){
       num('Height above floor', 'cabBottomY', 300, 1400, 10);
       check('Spare roll above', 'spare');
