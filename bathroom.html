@@ -9117,24 +9117,22 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
   }
 
   if(cab.type === 'toilet-roll'){
-    // Square on, the arm comes straight at you and cannot be seen. What there
-    // is to see is the roll — 110 across, the size a roll is — with the bracket
-    // behind it on the wall. It was drawn as a plate, a long arm across and the
-    // roll on the end, which is the PLAN of one put on an elevation.
+    // A roll hangs on a spindle parallel to the wall, so square on you are
+    // looking at the END of it: a circle, with the core in the middle of it and
+    // the bracket behind, showing only where the roll does not cover it. The
+    // arm runs away from you and cannot be seen at all — drawn across the wall
+    // it made a lollipop on a stick.
     d.rect(x, y, W, H, null, null, 0);
     const roll = 55*s;
-    const cx = x + W - roll - 6*s, cy = y + H*0.5;
-    // The bracket, behind the roll and to the wall side of it.
-    d.polygon(roundPoly([[x + 4*s, cy - 26*s],[x + 30*s, cy - 26*s],
-                         [x + 30*s, cy + 26*s],[x + 4*s, cy + 26*s]], 7*s, 3),
-      SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(roundPoly([[x + 26*s, cy - 6*s],[cx, cy - 6*s],
-                         [cx, cy + 6*s],[x + 26*s, cy + 6*s]], 6*s, 3),
-      SAN.metal, COL.ink2, LW.hairline);
-    // The roll, over the bracket, with the core showing.
+    const cx = x + W/2, cy = y + H*0.5;
+    // The bracket, behind the roll and only just clear of it.
+    d.polygon(roundPoly([[cx - 13*s, cy - roll - 16*s],[cx + 13*s, cy - roll - 16*s],
+                         [cx + 13*s, cy],[cx - 13*s, cy]], 10*s, 3),
+      SAN.metal, COL.ink3, LW.hairline);
+    // The roll, and the core it turns on.
     d.circle(cx, cy, roll, SAN.china, COL.ink2, LW.thin);
-    d.circle(cx, cy, roll * 0.30, SAN.metal, COL.ink3, LW.hairline);
-    if(c.spare) d.circle(cx, cy - roll*2.1, roll*0.9, SAN.china, COL.ink3, LW.hairline);
+    d.circle(cx, cy, roll * 0.30, SAN.metal, COL.ink2, LW.hairline);
+    if(c.spare) d.circle(cx, cy - roll*2.2, roll*0.85, SAN.china, COL.ink3, LW.hairline);
     accLabel('TOILET ROLL');
     return true;
   }
@@ -9191,6 +9189,16 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     // More than one bar is a ladder, and a ladder has two side rails carrying
     // the bars between them. The brackets used to hold one bar half way up and
     // the rest floated in mid air with nothing at either end.
+    // The plates first, so every tube and side rail runs over them and the
+    // joints read as joints rather than as things butted together.
+    const held0 = (bars > 1) ? [ys[0], ys[bars-1]] : [ys[0]];
+    held0.forEach(by=>{
+      [x + inset, x + W - inset].forEach(px=>{
+        d.polygon(roundPoly([[px - 15*s, by - 15*s],[px + 15*s, by - 15*s],
+                             [px + 15*s, by + 15*s],[px - 15*s, by + 15*s]], 15*s, 3),
+          SAN.metal, COL.ink3, LW.hairline);
+      });
+    });
     if(bars > 1){
       [x + inset, x + W - inset].forEach(sx=>{
         d.polygon(roundPoly([[sx - half, ys[0]],[sx + half, ys[0]],
@@ -9204,13 +9212,7 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
                            [x + W - inset, by + half],[x + inset, by + half]], half, 3),
         SAN.metal, COL.ink2, LW.hairline);
     });
-    // Brackets where the rail is actually held: both ends of a single bar, or
-    // the top and bottom of each side rail on a ladder.
-    const held = (bars > 1) ? [ys[0], ys[bars-1]] : [ys[0]];
-    held.forEach(by=>{
-      d.rect(x, by - 13*s, inset, 26*s, SAN.metal, COL.ink2, LW.hairline);
-      d.rect(x + W - inset, by - 13*s, inset, 26*s, SAN.metal, COL.ink2, LW.hairline);
-    });
+
     accLabel(c.heated ? 'HEATED TOWEL RAIL' : (bars > 1 ? 'TOWEL RAIL · ' + bars : 'TOWEL RAIL'));
     return true;
   }
@@ -9563,10 +9565,18 @@ function drawAccessoryOnPlan(d, wallId, u0, cab, plan){
   const shape = pts => mapUV(wallId, 0, pts, plan);
   const cu = u0 + W/2;
   if(cab.type === 'toilet-roll'){
-    // The plate, the arm out, and the roll seen end on.
+    // From above, a roll on a spindle parallel to the wall is a cylinder seen
+    // on its side: 110 along the wall and 110 out from it, with square ends —
+    // not the circle it makes when you look at the end of it. The plate and the
+    // arm are behind it against the wall.
     d.polygon(shape(roundRectUV(cu - 17, 0, cu + 17, 12, 4)), SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(shape(roundRectUV(cu - 5, 12, cu + 5, D - 55, 4)), SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(shape(ellipseUV(cu, D - 55, 55, 55, 24)), SAN.china, COL.ink2, LW.thin);
+    d.polygon(shape(roundRectUV(cu - 5, 12, cu + 5, D - 100, 4)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(cu - 55, D - 110, cu + 55, D, 10)), SAN.china, COL.ink2, LW.thin);
+    // The spindle through it, which is the line that says which way it turns.
+    (function(){
+      const a = planMap(wallId, cu - 55, D - 55, plan), b = planMap(wallId, cu + 55, D - 55, plan);
+      d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
+    })();
     return;
   }
   if(cab.type === 'hand-towel'){
@@ -9615,15 +9625,12 @@ function drawTowelRailOnPlan(d, wallId, u0, cab, plan){
   const barV = D - tubeR;                       // the tube's centreline
   const armHalf = Math.max(3, tubeR * 0.42);
   const inset = Math.min(20, W * 0.06);
-  // One tube per rail. A double rail drew a single tube on the plan, so the
-  // plan and the elevation disagreed about what was being ordered.
-  const bars = Math.max(1, Math.min(4, c.bars || 1));
-  const near = plateD + tubeR;
-  const barVs = [];
-  for(let i = 0; i < bars; i++){
-    barVs.push(bars === 1 ? barV : near + (barV - near) * (i / (bars - 1)));
-  }
-  // Brackets on the wall, and the arm out to the furthest tube.
+  // One tube, whatever the rail carries. The bars of a ladder are stacked one
+  // above another at the same distance off the wall, so from above they are
+  // directly behind each other and there is one to see. Drawing one per bar
+  // spread through the depth was a rail leaning out of the wall.
+  const barVs = [barV];
+  // Brackets on the wall, and the arm out to the tube.
   [u0 + inset + plateW/2, u0 + W - inset - plateW/2].forEach(cu=>{
     d.polygon(shape(roundRectUV(cu - armHalf, plateD, cu + armHalf, barV, armHalf * 0.8)),
       SAN.metal, COL.ink2, LW.hairline);
