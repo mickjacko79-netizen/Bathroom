@@ -1349,7 +1349,7 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><td>Base</td><td>Tiled, or a manufactured tray. A tiled base is floor, so the floor tiling runs through it on the plan rather than being hidden — which is the one place the set-out is most often argued about.</td></tr>
               <tr><td>Waste · position</td><td>Linear or square, and where it sits: centre, left, right, inside against the wall or outside at the entry. A linear waste laid across the shower runs the width; one down a side turns with it. The falls are drawn from each corner to wherever the waste actually is, dashed, the way a waterproofer reads them.</td></tr>
               <tr><td>Hob height · width</td><td>A kerb across the front. It is outlined rather than filled, so the tiling still reads through it.</td></tr>
-              <tr><td>Mixer height · across</td><td>Where the mixer sits; 0 across means centred. It is drawn on the plan as well as the elevation, because it is a set-out a plumber works to.</td></tr>
+              <tr><td>Mixer height · across</td><td>Where the mixer sits. Left at 0 it follows the outlet, so moving the head takes the mixer with it; give it a number and it stays there instead. It is drawn on the plan as well as the elevation, because it is a set-out a plumber works to.</td></tr>
               <tr><td>Outlet</td><td>Rainhead on a wall arm · rainhead from the ceiling · rail shower, handheld · rail + rainhead, twin outlet · rail + ceiling rainhead.</td></tr>
 <tr><td>Outlet position</td><td>The same five: centre, left, right, inside or outside. Left, right and centre move it across the shower; inside and outside move it in depth, which a rail on the wall has no use for and ignores.</td></tr>
               <tr><td>Rainhead shape · size · height · out from wall</td><td>Round or square, and where it sits. A ceiling rose is dashed on the plan, the way anything overhead is.</td></tr>
@@ -1786,7 +1786,12 @@ function showerRose(cab){
 }
 function showerMixer(cab){
   const c = cab.config || {};
-  const u = (c.mixerU > 0) ? Math.min(cab.W, c.mixerU) : cab.W / 2;
+  // The mixer belongs under the head. You reach for it where the water comes
+  // from, and a plumber runs one wall chase for the pair. It used to sit in the
+  // middle of the shower whatever the outlet did, so moving the head to one
+  // side left the mixer stranded in the centre with the pipework crossing the
+  // wall to reach it. Given a number of its own it stays where it is put.
+  const u = (c.mixerU > 0) ? Math.min(cab.W, c.mixerU) : showerRose(cab).u;
   return { u, h: c.mixerH || 1050, plate: 68 };
 }
 // A hob has a height and a width, and they were the same number. hobH stood
@@ -14746,7 +14751,7 @@ function renderEditPanel(){
       num('Hob width', 'hobW', 50, 300, 5);
       num('Screen height', 'screenH', 1200, 2700, 10);
       num('Mixer height', 'mixerH', 700, 1600, 10);
-      num('Mixer across (0 = centred)', 'mixerU', 0, 2400, 10);
+      num('Mixer across (0 = under the head)', 'mixerU', 0, 2400, 10);
       pick('Outlet', 'roseType', Object.entries(SHOWER_OUTLETS).map(([k, v]) => [k, v.label]));
       pick('Outlet position', 'rosePos', Object.entries(SHOWER_POS));
       const _od = showerOutlet(c.roseType || 'overhead');
