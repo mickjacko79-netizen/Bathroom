@@ -289,6 +289,10 @@ header .project-label .dot.dirty{background:#F7C04A}
 /* Modal */
 .modal{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center}
 .modal.hidden{display:none}
+/* The name dialog is opened FROM the library, so it has to sit above it.
+   Both were on the same layer and the library is later in the document, so it
+   painted over the thing it had just asked for. */
+#askModal{z-index:200}
 .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.4)}
 .modal-panel{position:relative;background:#fff;border-radius:8px;width:560px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .modal-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-weight:700;color:var(--brand)}
