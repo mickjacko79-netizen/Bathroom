@@ -51,8 +51,15 @@ function pageEval(win, expression) {
   if (!win || win.isDestroyed()) {
     return Promise.reject(new Error('The Bathroom window is not open.'));
   }
-  const wrapped = `(function(){ try { return JSON.stringify({ ok:true, value:(function(){${expression}})() }); }
-                                catch(e){ return JSON.stringify({ ok:false, error:String(e && e.message || e) }); } })()`;
+  // Async throughout, even for the snippets that answer straight away. Anything
+  // touching the site measure has to wait on the drawing in the iframe, which
+  // answers by message rather than by returning — and a promise handed to
+  // JSON.stringify becomes "{}" rather than an error, so this is the kind of
+  // thing that half works and reports success.
+  const wrapped = `(async function(){
+      try { const value = await (async function(){${expression}})();
+            return JSON.stringify({ ok:true, value: value === undefined ? null : value }); }
+      catch(e){ return JSON.stringify({ ok:false, error:String(e && e.message || e) }); } })()`;
   return win.webContents.executeJavaScript(wrapped, true).then(raw => {
     let parsed;
     try { parsed = JSON.parse(raw); }
@@ -279,6 +286,79 @@ function buildTools(win) {
         if(a.height != null) state.room.H = a.height;
         touched();
         return { room: { width: state.room.W, length: state.room.L, height: state.room.H } };
+      `)
+    },
+
+    {
+      name: 'describe_site_measure',
+      description:
+        'Read the plan traced in the Draw tab — the site measure the drawing gets built from. ' +
+        'Says how many walls have been drawn, whether a scale has been set, whether they close ' +
+        'into a room, and what doors and windows are on them. Use it to answer questions about ' +
+        'the measure, and to check it is ready before calling bring_in_from_draw.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      run: () => call(`
+        // The Draw tab builds its frame the first time it is opened, so a job
+        // that has not been there yet has nothing to ask.
+        if(typeof ensureSiteMeasureFrame === 'function') ensureSiteMeasureFrame();
+        const got = await captureSiteMeasurePlan(2500);
+        const job = state.siteMeasure;
+        if(!got && !job) return { traced: false,
+          note: 'Nothing has been traced yet, or the Draw tab has not finished loading. Open the Draw tab and trace the room.' };
+        const walls = (job.walls || []).filter(w => isFinite(w.x1) && isFinite(w.y1) && isFinite(w.x2) && isFinite(w.y2));
+        const scale = (typeof job.scaleMmPerUnit === 'number' && job.scaleMmPerUnit > 0) ? job.scaleMmPerUnit : null;
+        const out = { traced: true, wallsDrawn: walls.length, scaleSet: !!scale };
+        if(!scale) out.blocking = 'No scale is set. Dimension one wall in the Draw tab first, or nothing can be brought in.';
+        // Say the lengths in millimetres where we can, since that is what the
+        // person is holding a tape measure against.
+        if(scale) out.wallLengths = walls.map(w =>
+          Math.round(Math.hypot(w.x2 - w.x1, w.y2 - w.y1) * scale));
+        const openings = [];
+        walls.forEach(w => (w.openings || []).forEach(o => openings.push({ kind: o.type || o.kind || 'opening', width: o.widthMm || o.w || null })));
+        out.openings = openings;
+        // Whether it closes is what decides if it can be brought in at all.
+        try {
+          const tol = scale ? 60 / scale : 0;
+          out.closesIntoARoom = scale ? !!smTraceLoop(walls, tol) : null;
+          if(scale && !out.closesIntoARoom)
+            out.blocking = 'The walls do not close into a room — check they join at the corners.';
+        } catch(_){ out.closesIntoARoom = null; }
+        return out;
+      `)
+    },
+
+    {
+      name: 'bring_in_from_draw',
+      description:
+        'Turn the plan traced in the Draw tab into the drawing: the room outline, a wall per traced ' +
+        'wall, and optionally the doors and windows on them. This is the "Bring in from Draw" button. ' +
+        'It replaces the room and its walls, so anything already placed on a wall may be affected — ' +
+        'call describe_job first if that matters. One undo step.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          openings: { type: 'boolean',
+            description: 'Bring the doors and windows across too. Defaults to true.' }
+        },
+        additionalProperties: false
+      },
+      run: a => call(`
+        const a = ${JSON.stringify(a)};
+        if(typeof ensureSiteMeasureFrame === 'function') ensureSiteMeasureFrame();
+        await captureSiteMeasurePlan(2500);
+        const job = state.siteMeasure;
+        if(!job) throw new Error('Nothing has been traced yet. Open the Draw tab and trace the room first.');
+        pushHistory();
+        // importSiteMeasure says exactly what is wrong — no scale, walls that do
+        // not meet, a degenerate outline — so let it, rather than replacing it
+        // with something vaguer.
+        const r = importSiteMeasure(job, { openings: a.openings !== false });
+        renderWallLetterList(); renderWallBars();
+        touched();
+        showView('plan'); renderActive();
+        return { broughtIn: { walls: r.walls, letters: r.letters,
+                              room: { width: r.W, length: r.L },
+                              openingsPlaced: r.placed || 0, openingsSkipped: r.skipped || 0 } };
       `)
     },
 

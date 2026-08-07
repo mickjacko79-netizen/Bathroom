@@ -113,6 +113,8 @@ Start Claude Code afterwards and it can call:
 | `update_fitting` | width, height off the floor, label |
 | `remove_fitting` | take one off |
 | `set_room` | room width, length, floor-to-ceiling |
+| `describe_site_measure` | the plan traced in the Draw tab — walls, scale, whether it closes, openings |
+| `bring_in_from_draw` | turn that traced plan into the drawing |
 | `show_sheet` | put a sheet on screen so you can see what changed |
 
 Every change is one undo step, so `Ctrl+Z` takes back whatever it did, exactly as
