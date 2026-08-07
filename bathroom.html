@@ -729,7 +729,10 @@ header .project-label .dot.dirty{background:#F7C04A}
               <option value="mirror">Mirror</option>
               <option value="wall">Shaving / wall cabinet</option>
               <option value="shower-niche">Niche (recessed into the wall)</option>
-              <option value="towel-rail">Towel rail</option>
+              <option value="towel-rail">Towel rail (single or double)</option>
+              <option value="toilet-roll">Toilet roll holder</option>
+              <option value="hand-towel">Hand towel holder</option>
+              <option value="towel-hook">Towel hook</option>
             </optgroup>
             <optgroup label="Joinery">
               <option value="corner-wall">Corner — wall (blind L)</option>
@@ -1380,7 +1383,10 @@ header .project-label .dot.dirty{background:#F7C04A}
             <p>These go in the wall row, so they draw over whatever is below them.</p>
             <table>
               <tr><td>Mirror</td><td>Width and height from Dimensions, <b>Bottom above floor</b>, and an <b>Edge</b> treatment.</td></tr>
-              <tr><td>Towel rail</td><td><b>Height above floor</b> and the number of <b>Bars</b>, so a single rail and a ladder are both drawn properly.</td></tr>
+              <tr><td>Towel rail</td><td><b>Height above floor</b> and the number of <b>Rails</b>, so a single, a double and a ladder are all drawn properly — on the plan as well, which used to show one tube however many were ordered.</td></tr>
+<tr><td>Toilet roll holder</td><td>Height above floor, and a spare roll above it where the holder carries one. The roll is drawn at the size a roll is, so it takes the room beside a pan that it actually takes.</td></tr>
+<tr><td>Hand towel holder</td><td>A ring or a short bar, at a height.</td></tr>
+<tr><td>Towel hook</td><td>One to four hooks on a plate, at a height.</td></tr>
               <tr><td>Niche</td><td><b>Bottom above floor</b> and <b>Shelves</b>.</td></tr>
             </table>
             <div class="note"><b>Worth knowing.</b> A niche is formed inside the wall, so its panel tells you
@@ -1675,6 +1681,16 @@ const CATALOG = {
     defaultConfig:{ cabBottomY:1000, edge:'polished', ledFrame:false, labelText:'' } },
   'towel-rail':  { label:'Towel rail',              defaultW:600, H:120,  D:110, row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1140, heated:false, bars:1, labelText:'' } },
+  // The small accessories. One family, drawn the same way: a plate on the wall,
+  // an arm off it, and whatever the arm carries. Heights are the ones they are
+  // normally set out at, which is the point of having them in the catalogue
+  // rather than being drawn in by hand each time.
+  'toilet-roll': { label:'Toilet roll holder',       defaultW:170, H:110,  D:120, row:'wall', hasShelves:false,
+    defaultConfig:{ cabBottomY:700, spare:false, labelText:'' } },
+  'hand-towel':  { label:'Hand towel holder',        defaultW:190, H:200,  D:90,  row:'wall', hasShelves:false,
+    defaultConfig:{ cabBottomY:1100, style:'ring', labelText:'' } },
+  'towel-hook':  { label:'Towel hook',               defaultW:60,  H:70,   D:70,  row:'wall', hasShelves:false,
+    defaultConfig:{ cabBottomY:1600, hooks:1, labelText:'' } },
   // A niche belongs anywhere there is a wall to form it in — over a bath, beside
   // a vanity, in a shower. The key stays 'shower-niche' so drawings already
   // saved still find it.
@@ -1913,7 +1929,12 @@ function screenLayout(cab){
 
 // The sanitary fixtures are boxes, not carcasses — no fronts, no hardware, no
 // benchtop over them. One predicate keeps every "is this joinery?" test honest.
-const SANITARY_TYPES = ['toilet','basin-fs','bath','shower','mirror','towel-rail','shower-niche','blade'];
+const SANITARY_TYPES = ['toilet','basin-fs','bath','shower','mirror','towel-rail','shower-niche','blade',
+                        'toilet-roll','hand-towel','towel-hook'];
+// The wall accessories: hung on the wall, drawn as themselves rather than as a
+// box, and each set out at a height off the floor.
+const WALL_ACCESSORIES = ['towel-rail','toilet-roll','hand-towel','towel-hook'];
+function isWallAccessory(cab){ return !!cab && WALL_ACCESSORIES.indexOf(cab.type) >= 0; }
 function isSanitary(cab){ return !!cab && SANITARY_TYPES.indexOf(cab.type) >= 0; }
 // A laundry tub is drawn, dimensioned and scheduled exactly like a sink base —
 // only its default bowl and door count differ.
@@ -8335,8 +8356,8 @@ function productOutline(cab, which){
 // ============================================================
 function hasBottomOverride(cab){
   return !!cab && (cab.type === 'fridge-wall' || cab.type === 'dryer-wall'
-                || cab.type === 'mirror' || cab.type === 'towel-rail'
-                || cab.type === 'shower-niche' || cab.type === 'wall');
+                || cab.type === 'mirror' || cab.type === 'shower-niche'
+                || cab.type === 'wall' || isWallAccessory(cab));
 }
 // Fixture porcelain. Kept off pure white so it reads as an object against the
 // paper without competing with the joinery.
@@ -9033,6 +9054,73 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     return true;
   }
 
+  // One plate for the whole family, so a hook and a roll holder are fixed to
+  // the wall by the same fitting and read as coming from one range.
+  const accPlate = (cx, cy, r)=>{
+    d.circle(cx, cy, r, SAN.metal, COL.ink2, LW.hairline);
+    d.circle(cx, cy, r * 0.45, null, COL.ink3, LW.hairline);
+  };
+  const accLabel = (txt)=> d.text(x + W/2, y - 6*s, (c.labelText || txt),
+    { align:'center', size:4, color:COL.muted, italic:true });
+
+  if(cab.type === 'toilet-roll'){
+    // A plate, an arm, and the roll on the end of it. The roll is drawn at the
+    // size a roll is — 110 across — so it reads at a glance and takes the room
+    // it actually takes beside a pan.
+    d.rect(x, y, W, H, null, null, 0);
+    const cy = y + H*0.5, roll = 55*s;
+    accPlate(x + 15*s, cy, 15*s);
+    d.polygon(roundPoly([[x + 15*s, cy - 5*s],[x + W - roll, cy - 5*s],
+                         [x + W - roll, cy + 5*s],[x + 15*s, cy + 5*s]], 5*s, 3),
+      SAN.metal, COL.ink2, LW.hairline);
+    d.circle(x + W - roll, cy, roll, SAN.china, COL.ink2, LW.thin);
+    d.circle(x + W - roll, cy, roll * 0.30, null, COL.ink3, LW.hairline);
+    if(c.spare) d.circle(x + W - roll, cy - roll*2.1, roll*0.9, SAN.china, COL.ink3, LW.hairline);
+    accLabel('TOILET ROLL');
+    return true;
+  }
+
+  if(cab.type === 'hand-towel'){
+    // A ring or a short bar. Both hang off the same plate.
+    d.rect(x, y, W, H, null, null, 0);
+    const cx = x + W/2, top = y + 14*s;
+    accPlate(cx, top, 14*s);
+    if((c.style || 'ring') === 'ring'){
+      const r = Math.min(W, H - 28*s) * 0.44;
+      d.circle(cx, top + 14*s + r, r, null, COL.ink2, LW.thin);
+      d.circle(cx, top + 14*s + r, r - 5*s, null, COL.ink3, LW.hairline);
+    } else {
+      d.polygon(roundPoly([[cx - 5*s, top],[cx + 5*s, top],
+                           [cx + 5*s, top + 46*s],[cx - 5*s, top + 46*s]], 5*s, 3),
+        SAN.metal, COL.ink2, LW.hairline);
+      d.polygon(roundPoly([[x + 8*s, top + 46*s],[x + W - 8*s, top + 46*s],
+                           [x + W - 8*s, top + 60*s],[x + 8*s, top + 60*s]], 7*s, 3),
+        SAN.metal, COL.ink2, LW.hairline);
+    }
+    accLabel('HAND TOWEL');
+    return true;
+  }
+
+  if(cab.type === 'towel-hook'){
+    // Small, and mostly plate. The hook turns up at the end, which is the only
+    // thing that tells it from a knob.
+    d.rect(x, y, W, H, null, null, 0);
+    const hooks = Math.max(1, Math.min(4, c.hooks || 1));
+    for(let i = 0; i < hooks; i++){
+      const cx = x + W * ((i + 0.5) / hooks);
+      const cy = y + H * 0.34;
+      accPlate(cx, cy, Math.min(13*s, (W / hooks) * 0.32));
+      d.polygon(roundPoly([[cx - 4*s, cy],[cx + 4*s, cy],
+                           [cx + 4*s, cy + 26*s],[cx - 4*s, cy + 26*s]], 4*s, 3),
+        SAN.metal, COL.ink2, LW.hairline);
+      d.polygon(roundPoly([[cx - 4*s, cy + 18*s],[cx + 15*s, cy + 18*s],
+                           [cx + 15*s, cy + 26*s],[cx - 4*s, cy + 26*s]], 4*s, 3),
+        SAN.metal, COL.ink2, LW.hairline);
+    }
+    accLabel(hooks > 1 ? 'TOWEL HOOKS' : 'TOWEL HOOK');
+    return true;
+  }
+
   if(cab.type === 'towel-rail'){
     const bars = Math.max(1, c.bars || 1);
     d.rect(x, y, W, H, null, null, 0);                     // no box — it is a rail
@@ -9388,6 +9476,42 @@ function planMap(wallId, u, v, plan){
 // brackets — not the plain filled box every wall item used to get, which read
 // as a cupboard. The bars of a ladder rail stack up the wall rather than out
 // from it, so however many there are, one tube is what you see from above.
+// The small accessories in plan. A plate on the wall and whatever it carries,
+// projecting into the room by the fixture depth — the same construction for all
+// four, so they sit together on a drawing.
+function drawAccessoryOnPlan(d, wallId, u0, cab, plan){
+  if(cab.type === 'towel-rail') return drawTowelRailOnPlan(d, wallId, u0, cab, plan);
+  const c = cab.config || {};
+  const W = cab.W, D = Math.max(30, cab.D);
+  const shape = pts => mapUV(wallId, 0, pts, plan);
+  const cu = u0 + W/2;
+  if(cab.type === 'toilet-roll'){
+    // The plate, the arm out, and the roll seen end on.
+    d.polygon(shape(roundRectUV(cu - 17, 0, cu + 17, 12, 4)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(cu - 5, 12, cu + 5, D - 55, 4)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(ellipseUV(cu, D - 55, 55, 55, 24)), SAN.china, COL.ink2, LW.thin);
+    return;
+  }
+  if(cab.type === 'hand-towel'){
+    d.polygon(shape(roundRectUV(cu - 16, 0, cu + 16, 12, 4)), SAN.metal, COL.ink2, LW.hairline);
+    if((c.style || 'ring') === 'ring'){
+      d.polygon(shape(ellipseUV(cu, D - 34, 34, 34, 24)), null, COL.ink2, LW.thin);
+    } else {
+      d.polygon(shape(roundRectUV(u0 + 8, D - 16, u0 + W - 8, D, 7)), SAN.metal, COL.ink2, LW.hairline);
+      d.polygon(shape(roundRectUV(cu - 5, 12, cu + 5, D - 16, 4)), SAN.metal, COL.ink2, LW.hairline);
+    }
+    return;
+  }
+  if(cab.type === 'towel-hook'){
+    const hooks = Math.max(1, Math.min(4, c.hooks || 1));
+    for(let i = 0; i < hooks; i++){
+      const hu = u0 + W * ((i + 0.5) / hooks);
+      d.polygon(shape(ellipseUV(hu, 11, 11, 11, 16)), SAN.metal, COL.ink2, LW.hairline);
+      d.polygon(shape(roundRectUV(hu - 4, 11, hu + 4, D, 4)), SAN.metal, COL.ink2, LW.hairline);
+    }
+    return;
+  }
+}
 function drawTowelRailOnPlan(d, wallId, u0, cab, plan){
   const c = cab.config || {};
   const W = cab.W, D = Math.max(40, cab.D);
@@ -9397,16 +9521,26 @@ function drawTowelRailOnPlan(d, wallId, u0, cab, plan){
   const barV = D - tubeR;                       // the tube's centreline
   const armHalf = Math.max(3, tubeR * 0.42);
   const inset = Math.min(20, W * 0.06);
-  // Brackets on the wall, and the arm out to the tube.
+  // One tube per rail. A double rail drew a single tube on the plan, so the
+  // plan and the elevation disagreed about what was being ordered.
+  const bars = Math.max(1, Math.min(4, c.bars || 1));
+  const near = plateD + tubeR;
+  const barVs = [];
+  for(let i = 0; i < bars; i++){
+    barVs.push(bars === 1 ? barV : near + (barV - near) * (i / (bars - 1)));
+  }
+  // Brackets on the wall, and the arm out to the furthest tube.
   [u0 + inset + plateW/2, u0 + W - inset - plateW/2].forEach(cu=>{
     d.polygon(shape(roundRectUV(cu - armHalf, plateD, cu + armHalf, barV, armHalf * 0.8)),
       SAN.metal, COL.ink2, LW.hairline);
     d.polygon(shape(roundRectUV(cu - plateW/2, 0, cu + plateW/2, plateD, 3)),
       SAN.metal, COL.ink2, LW.hairline);
   });
-  // The tube, round in section and so round at the ends.
-  d.polygon(shape(roundRectUV(u0 + inset*0.5, barV - tubeR, u0 + W - inset*0.5, barV + tubeR, tubeR)),
-    SAN.metal, COL.ink2, LW.thin);
+  // The tubes, round in section and so round at the ends.
+  barVs.forEach(bv=>{
+    d.polygon(shape(roundRectUV(u0 + inset*0.5, bv - tubeR, u0 + W - inset*0.5, bv + tubeR, tubeR)),
+      SAN.metal, COL.ink2, LW.thin);
+  });
   const lp = planMap(wallId, u0 + W/2, D + 34, plan);
   d.text(lp[0], lp[1], c.labelText || (c.heated ? 'HTD TOWEL RAIL' : 'TOWEL RAIL'),
     { align:'center', size:3.6, color:COL.muted, italic:true });
@@ -10325,7 +10459,9 @@ function drawPlan(d, area, view, opts){
         const _wLW = isSel ? LW.medium : LW.thin;
         // A towel rail draws itself below. It still needs its footprint worked
         // out for the hit area, but filled and outlined it reads as a cupboard.
-        const _rail = cab.type === 'towel-rail';
+        // An accessory is drawn as itself below, so the box it occupies is only
+        // there for the hit area. Filled and outlined it would read as a cupboard.
+        const _rail = isWallAccessory(cab);
         _corners = _wFillBand
           ? planBandOnWall(d, w.id, u, cab.W, _wFillBand.v0, _wFillBand.v1, plan, wallFill, _wEdge, _wLW)
           : planRectOnWall(d, w.id, u, cab.W, wd, plan,
@@ -10337,7 +10473,7 @@ function drawPlan(d, area, view, opts){
         const _bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
         recordHit(V, cab.id, _bb[0], _bb[1], _bb[2], _bb[3], w.id);
         if(!compact && state.ui.selectedCabId === cab.id) _planHandles.push({ id: cab.id, bbox: _bb });
-        if(cab.type === 'towel-rail') drawTowelRailOnPlan(d, w.id, u, cab, plan);
+        if(isWallAccessory(cab)) drawAccessoryOnPlan(d, w.id, u, cab, plan);
         // A niche is a hole in the wall, and a hole in the wall drawn in among
         // the poché is easy to read as nothing at all. Name it.
         if(cab.type === 'shower-niche' && !compact){
@@ -14862,9 +14998,18 @@ function renderEditPanel(){
       num('Bottom above floor', 'cabBottomY', 400, 2200, 10);
       pick('Edge', 'edge', [['polished','Polished edge'],['bevelled','Bevelled'],['framed','Framed']]);
       check('LED backlit frame', 'ledFrame');
+    } else if(cab.type === 'toilet-roll'){
+      num('Height above floor', 'cabBottomY', 300, 1400, 10);
+      check('Spare roll above', 'spare');
+    } else if(cab.type === 'hand-towel'){
+      num('Height above floor', 'cabBottomY', 300, 2000, 10);
+      pick('Type', 'style', [['ring','Ring'],['bar','Short bar']]);
+    } else if(cab.type === 'towel-hook'){
+      num('Height above floor', 'cabBottomY', 300, 2200, 10);
+      num('Hooks', 'hooks', 1, 4, 1, '');
     } else if(cab.type === 'towel-rail'){
       num('Height above floor', 'cabBottomY', 300, 2000, 10);
-      num('Bars', 'bars', 1, 8, 1, '');
+      num('Rails', 'bars', 1, 4, 1, '');
       check('Heated', 'heated');
     } else if(cab.type === 'blade'){
       // Width, depth and height are the standard size controls above; what is
