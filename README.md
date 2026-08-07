@@ -8,6 +8,7 @@ HTML file; there is no build step and no server.
     jspdf.umd.min.js       PDF library, kept local so export works with no internet
     sitemeasure/           the site-measure app, loaded into the Draw tab
     sample-sheets/         what the output looks like
+    releases/              notes and checksums, one file per released version
     sync-and-run.bat       backs the file up and opens it in the default browser
     backups/               timestamped copies made by sync-and-run.bat (not tracked)
     desktop/               the Electron shell that packages it as a Windows app
