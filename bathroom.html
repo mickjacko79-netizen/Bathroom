@@ -10018,7 +10018,13 @@ function drawPlan(d, area, view, opts){
       // leaves behind — is as much a part of where a unit is as its own width.
       if(cab.adj?.left?.filler > 0) u += cab.adj.left.filler;
       if(cab.adj?.left?.panel  > 0) u += cab.adj.left.panel;
+      // Standing on the low wall carries what is drawn on the top out with the
+      // cabinet. The carcass already came forward and the bowl and the tap did
+      // not, so a vanity in front of a low wall had its basin left behind on
+      // the tiles.
+      _planVOff = lowWallOffset(w, u, u + cab.W, 0);
       const advance = ()=>{
+        _planVOff = 0;
         u += cab.W;
         if(cab.adj?.right?.panel  > 0) u += cab.adj.right.panel;
         if(cab.adj?.right?.filler > 0) u += cab.adj.right.filler;
@@ -10134,8 +10140,15 @@ function drawPlan(d, area, view, opts){
       if(cab.adj?.left?.filler > 0) u += cab.adj.left.filler;
       if(cab.adj?.left?.panel  > 0) u += cab.adj.left.panel;
       if(isSanitary(cab)){
+        // A toilet, a basin, a bath or a shower in front of a low wall fixes to
+        // it and comes forward by its thickness, the same as the joinery beside
+        // it. Only the cabinets did, so a pan set against a low wall was drawn
+        // standing on the tiles behind it — out by the thickness of the wall it
+        // is actually bolted to, which is the number the plumber sets out from.
+        _planVOff = lowWallOffset(w, u, u + cab.W, 0);
         try { drawSanitaryOnPlan(d, w.id, u, cab, plan, V); }
         catch(e){ console.warn('[Bathroom] fixture plan failed', cab.type, e.message); }
+        finally { _planVOff = 0; }
       }
       u += cab.W;
       if(cab.adj?.right?.panel  > 0) u += cab.adj.right.panel;
