@@ -85,6 +85,20 @@ const PRELUDE = `
     return hit;
   };
   const setOutOf = (row, cab) => Math.round(rowPositions(row.arr, row.startOff)[row.arr.indexOf(cab)]);
+  // SiteMeasure answers in two shapes and they are easy to mistake for each
+  // other. What it volunteers is flat — walls and openings at the top level, and
+  // that is what importSiteMeasure reads. What it hands over when asked for a job
+  // to keep is the export, with all of that a level down under .job, and that is
+  // what lands in state.siteMeasure. Reading the flat shape off the stored one
+  // finds nothing at all, which looks exactly like an empty Draw tab rather than
+  // like a bug.
+  const smFlat = j => {
+    if(!j) return null;
+    const core = (j.job && typeof j.job === 'object') ? j.job : j;
+    return { format:'sitemeasure-job',
+             scaleMmPerUnit: core.scaleMmPerUnit || null,
+             walls: core.walls || [], openings: core.openings || [], rooms: core.rooms || [] };
+  };
   const touched = () => { try { renderCabinetList(); } catch(_){}
                           try { renderEditPanel(); } catch(_){}
                           try { renderActive(); } catch(_){}
@@ -302,9 +316,10 @@ function buildTools(win) {
         // that has not been there yet has nothing to ask.
         if(typeof ensureSiteMeasureFrame === 'function') ensureSiteMeasureFrame();
         const got = await captureSiteMeasurePlan(2500);
-        const job = state.siteMeasure;
+        const job = smFlat(state.siteMeasure);
         if(!got && !job) return { traced: false,
           note: 'Nothing has been traced yet, or the Draw tab has not finished loading. Open the Draw tab and trace the room.' };
+        if(!job) return { traced:false, note:'Nothing has been traced yet.' };
         const walls = (job.walls || []).filter(w => isFinite(w.x1) && isFinite(w.y1) && isFinite(w.x2) && isFinite(w.y2));
         const scale = (typeof job.scaleMmPerUnit === 'number' && job.scaleMmPerUnit > 0) ? job.scaleMmPerUnit : null;
         const out = { traced: true, wallsDrawn: walls.length, scaleSet: !!scale };
@@ -313,9 +328,7 @@ function buildTools(win) {
         // person is holding a tape measure against.
         if(scale) out.wallLengths = walls.map(w =>
           Math.round(Math.hypot(w.x2 - w.x1, w.y2 - w.y1) * scale));
-        const openings = [];
-        walls.forEach(w => (w.openings || []).forEach(o => openings.push({ kind: o.type || o.kind || 'opening', width: o.widthMm || o.w || null })));
-        out.openings = openings;
+        out.openings = (job.openings || []).map(o => ({ kind: o.type || 'opening', width: o.widthMm || null }));
         // Whether it closes is what decides if it can be brought in at all.
         try {
           const tol = scale ? 60 / scale : 0;
@@ -324,6 +337,101 @@ function buildTools(win) {
             out.blocking = 'The walls do not close into a room — check they join at the corners.';
         } catch(_){ out.closesIntoARoom = null; }
         return out;
+      `)
+    },
+
+    {
+      name: 'set_site_measure',
+      description:
+        'Draw a plan into the Draw tab — the walls of a room, given as millimetres. Use it to ' +
+        'reproduce a floor plan you have been shown: read the dimensions off it, work out the ' +
+        'corners, and send them here. Coordinates are millimetres on a flat plan, x to the right ' +
+        'and y down; the corners of a rectangular room 2400 wide and 2700 deep are (0,0), (2400,0), ' +
+        '(2400,2700), (0,2700). Walls must join end to end and close back to the first corner, or ' +
+        'nothing can be brought in from it afterwards. This replaces whatever is in the Draw tab. ' +
+        'Openings are not carried yet — add doors and windows in the Draw tab by hand.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          walls: {
+            type: 'array',
+            description: 'The walls, in order around the room, each joining the next.',
+            items: {
+              type: 'object',
+              properties: {
+                x1: { type: 'number', description: 'Start corner, millimetres across.' },
+                y1: { type: 'number', description: 'Start corner, millimetres down.' },
+                x2: { type: 'number', description: 'End corner, millimetres across.' },
+                y2: { type: 'number', description: 'End corner, millimetres down.' },
+                thickness: { type: 'number', description: 'Wall thickness in millimetres. Defaults to 90.' },
+                height:    { type: 'number', description: 'Wall height in millimetres. Defaults to the room height.' }
+              },
+              required: ['x1', 'y1', 'x2', 'y2'],
+              additionalProperties: false
+            }
+          },
+          name: { type: 'string', description: 'What to call the plan. Optional.' }
+        },
+        required: ['walls'],
+        additionalProperties: false
+      },
+      run: a => call(`
+        const a = ${JSON.stringify(a)};
+        const src = a.walls || [];
+        if(src.length < 3) throw new Error('A room needs at least three walls. Got ' + src.length + '.');
+        const bad = src.findIndex(w => ![w.x1,w.y1,w.x2,w.y2].every(n => typeof n === 'number' && isFinite(n)));
+        if(bad >= 0) throw new Error('Wall ' + (bad+1) + ' has a corner that is not a number.');
+        // Say so here rather than letting it fail later at the import, where the
+        // message is about a loop that cannot be traced and the actual mistake —
+        // two corners that do not meet — is several steps back.
+        for(let i = 0; i < src.length; i++){
+          const cur = src[i], nxt = src[(i+1) % src.length];
+          const gap = Math.hypot(nxt.x1 - cur.x2, nxt.y1 - cur.y2);
+          if(gap > 1) throw new Error('Wall ' + (i+1) + ' ends at (' + Math.round(cur.x2) + ',' + Math.round(cur.y2)
+            + ') but wall ' + (((i+1) % src.length) + 1) + ' starts at (' + Math.round(nxt.x1) + ',' + Math.round(nxt.y1)
+            + ') — ' + Math.round(gap) + ' mm apart. They have to meet, and the last has to close back to the first.');
+        }
+        pushHistory();
+        // One unit is one millimetre, so what arrives is what gets drawn and
+        // there is no scale to be set by hand before it can be used.
+        const H = state.room.H || 2400;
+        const payload = {
+          format: 'sitemeasure-job',
+          appVersion: 'bathroom-bridge',
+          exportedAt: new Date().toISOString(),
+          job: {
+            id: 'smj_' + Math.random().toString(36).slice(2,10),
+            name: a.name || 'Reproduced plan',
+            scaleMmPerUnit: 1,
+            walls: src.map((w,i) => ({
+              id: 'w' + (i+1),
+              x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2,
+              thicknessMmOverride: w.thickness > 0 ? w.thickness : 90,
+              heightMm: w.height > 0 ? w.height : H
+            })),
+            openings: [], rooms: [], markups: [], dividers: [],
+            northDeg: 0, underlay: null, stories: null, activeStoryId: null
+          },
+          composites: []
+        };
+        state.siteMeasure = payload;
+        // Into the Draw tab as well as into the job, so it is there to look at
+        // and correct rather than only usable through a tool.
+        if(typeof ensureSiteMeasureFrame === 'function') ensureSiteMeasureFrame();
+        const f = document.getElementById('smFrame');
+        let shown = false;
+        if(f && f.contentWindow){
+          try { f.contentWindow.postMessage({ type:'sm-import-job-json', data: payload }, '*'); shown = true; }
+          catch(_){}
+        }
+        try { scheduleAutosave(); } catch(_){}
+        const per = src.map(w => Math.round(Math.hypot(w.x2-w.x1, w.y2-w.y1)));
+        const xs = src.flatMap(w => [w.x1, w.x2]), ys = src.flatMap(w => [w.y1, w.y2]);
+        return { wallsDrawn: src.length, wallLengths: per,
+                 overall: { width: Math.round(Math.max.apply(null,xs) - Math.min.apply(null,xs)),
+                            depth: Math.round(Math.max.apply(null,ys) - Math.min.apply(null,ys)) },
+                 shownInDrawTab: shown,
+                 next: 'Call bring_in_from_draw to turn this into the drawing.' };
       `)
     },
 
@@ -346,8 +454,8 @@ function buildTools(win) {
         const a = ${JSON.stringify(a)};
         if(typeof ensureSiteMeasureFrame === 'function') ensureSiteMeasureFrame();
         await captureSiteMeasurePlan(2500);
-        const job = state.siteMeasure;
-        if(!job) throw new Error('Nothing has been traced yet. Open the Draw tab and trace the room first.');
+        const job = smFlat(state.siteMeasure);
+        if(!job || !(job.walls || []).length) throw new Error('Nothing has been traced yet. Open the Draw tab and trace the room first.');
         pushHistory();
         // importSiteMeasure says exactly what is wrong — no scale, walls that do
         // not meet, a degenerate outline — so let it, rather than replacing it

@@ -101,6 +101,12 @@ const SYSTEM_NOTE = [
   'in plain words, is the whole job — they can see the drawing, so do not describe',
   'it back to them. No headings, no bullet lists, no tables unless they ask.',
   '',
+  'When a floor plan is handed to you as a file, read it, take the dimensions off',
+  'it, and reproduce the room with set_site_measure — corners in millimetres, walls',
+  'joining end to end and closing back to the first. Say what you read off it and',
+  'what you had to assume. Then offer to bring it into the drawing rather than',
+  'doing that unasked, because it replaces the room and its walls.',
+  '',
   'Deliver what was asked at the scope intended. Make the routine judgment calls',
   'yourself and check in only when two readings would lead to genuinely different',
   'work. Every change you make is one undo step in the app, so a mistake costs',
@@ -238,9 +244,11 @@ function createChat({ userDataDir, bridgeUrl, send }) {
       // Only the bridge. Not whatever else is configured globally on this machine.
       '--strict-mcp-config',
       // Headless cannot put a prompt on screen, so anything not allowed here would
-      // hang rather than ask. The drawing tools are allowed and nothing else is —
-      // no shell, no file writes.
-      '--allowedTools', 'mcp__bathroom',
+      // hang rather than ask. The drawing tools, and reading a file — which is how
+      // a floor plan handed to the panel gets looked at. Nothing else: no shell,
+      // no writes, and Read only reaches the working directory below, which holds
+      // copies of what you attached and nothing of yours.
+      '--allowedTools', 'mcp__bathroom', '--allowedTools', 'Read',
       '--append-system-prompt', SYSTEM_NOTE,
     ];
     // Carry the thread, so "now move it 200 left" means something.
@@ -384,6 +392,30 @@ function createChat({ userDataDir, bridgeUrl, send }) {
     return { started: true };
   }
 
+  // ----------------------------------------------------- attaching a plan --
+  // A copy is taken into the working directory rather than the original being
+  // pointed at. Claude is allowed to read that directory and nowhere else, so a
+  // plan you hand over is reachable and the rest of your disk is not — and the
+  // file you chose is never opened by anything but the copy.
+  function attachPlan(sourcePath) {
+    if (!sourcePath) return { error: 'No file chosen.' };
+    let stat;
+    try { stat = fs.statSync(sourcePath); }
+    catch (_) { return { error: 'That file could not be read: ' + sourcePath }; }
+    if (stat.size > 32 * 1024 * 1024) {
+      return { error: 'That plan is ' + Math.round(stat.size / 1048576) + ' MB, which is too big to hand over. '
+                    + 'Export it smaller, or screenshot the part that matters.' };
+    }
+    const dir = path.join(workDir(userDataDir), 'plans');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+    // Its own name, kept readable, with anything awkward taken out of it.
+    const safe = path.basename(sourcePath).replace(/[^A-Za-z0-9._-]+/g, '_').slice(-80);
+    const dest = path.join(dir, safe);
+    try { fs.copyFileSync(sourcePath, dest); }
+    catch (err) { return { error: 'Could not take a copy of that plan: ' + err.message }; }
+    return { attached: true, name: safe, path: dest, bytes: stat.size };
+  }
+
   function dictateStop() {
     if (!dictateProc) return { stopped: false };
     try { dictateProc.kill(); } catch (_) {}
@@ -393,7 +425,7 @@ function createChat({ userDataDir, bridgeUrl, send }) {
   }
 
   return { status, ask, stop, reset, loginStart, loginCode, loginCancel,
-           dictateStart, dictateStop,
+           dictateStart, dictateStop, attachPlan,
            isRunning: () => !!child };
 }
 

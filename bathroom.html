@@ -22425,6 +22425,7 @@ try {
   <div class="chat-ask">
     <textarea id="chatInput" placeholder="Put a roll holder next to the toilet on wall D…"></textarea>
     <div class="row">
+      <button class="mic" id="chatPlan" title="Hand Claude a floor plan to read">📐 Plan</button>
       <button class="mic" id="chatMic" title="Speak instead of typing">🎤 Speak</button>
       <span class="hintline" id="chatHint">Enter to send · Shift+Enter for a new line</span>
       <button class="go" id="chatSend">Send</button>
@@ -22541,6 +22542,27 @@ try {
     setListening(true);
     const r = await bridge.dictateStart();
     if(r && r.error){ add('chat-err', r.error); setListening(false); }
+  });
+
+  // ---- handing over a floor plan ----------------------------------------
+  // The shell owns the picker, so the page never handles a path it was not
+  // given back. What it gets is a copy sitting in Claude's own working folder,
+  // which is the only place Claude is allowed to read.
+  const planBtn = document.getElementById('chatPlan');
+  planBtn.addEventListener('click', async () => {
+    if(busy) return;
+    const r = await bridge.attachPlan();
+    if(!r || r.cancelled) return;
+    if(r.error){ add('chat-err', r.error); return; }
+    add('chat-note', 'Attached ' + r.name + '. Ask for it to be reproduced, and check the '
+                   + 'dimensions it reads off before bringing it in.');
+    // Written into the box rather than sent, so the ask can be adjusted first —
+    // "just the wet area", "ignore the vanity", whatever this plan needs.
+    const line = 'Here is a floor plan to reproduce: ' + r.path
+               + '\nRead the dimensions off it and draw the room in the Draw tab.';
+    input.value = input.value ? (input.value.replace(/\s*$/, '\n') + line) : line;
+    input.focus();
+    input.scrollTop = input.scrollHeight;
   });
 
 

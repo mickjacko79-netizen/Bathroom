@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('bathroomChat', {
   dictateStart: (lang) => ipcRenderer.invoke('chat:dictateStart', lang || null),
   dictateStop:  () => ipcRenderer.invoke('chat:dictateStop'),
 
+  // Hand a floor plan over for Claude to read.
+  attachPlan: () => ipcRenderer.invoke('chat:attachPlan'),
+
   // Start a fresh conversation rather than continuing the last one.
   reset: () => ipcRenderer.invoke('chat:reset'),
 

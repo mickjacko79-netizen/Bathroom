@@ -161,6 +161,18 @@ ipcMain.handle('chat:loginCode',   (_e, code) => chatFor().loginCode(code));
 ipcMain.handle('chat:loginCancel', () => chatFor().loginCancel());
 ipcMain.handle('chat:dictateStart', (_e, lang) => chatFor().dictateStart(lang));
 ipcMain.handle('chat:dictateStop',  () => chatFor().dictateStop());
+// The picker belongs to the shell, not the page — the page never sees a path it
+// did not get handed back.
+ipcMain.handle('chat:attachPlan', async () => {
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a floor plan',
+    message: 'Pick a plan for Claude to read.',
+    properties: ['openFile'],
+    filters: [{ name: 'Plans', extensions: ['png','jpg','jpeg','webp','gif','pdf'] }],
+  });
+  if (res.canceled || !res.filePaths.length) return { cancelled: true };
+  return chatFor().attachPlan(res.filePaths[0]);
+});
 
 // The address carries a token, so it is not something to be typed from memory.
 // This hands the whole command over ready to paste.
