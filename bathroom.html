@@ -12652,19 +12652,44 @@ function drawElevation(d, area, wallId, opts){
         return Math.min(want, Math.max(0, Hm - c.H - pelmetUnderH(c))) + pelmetUnderH(c) + (c.H || 720);
       })));
       const _wallTopY = Math.max(oy + 4, oy + (Hm - _topOfRow)*s - 12);
-      let cuW = wallStartU;
-      wall.wallRow.forEach(cab=>{
-        const lf = (cab.adj && cab.adj.left && cab.adj.left.filler)  || 0;
+      // A chain reads end to end, and only things standing end to end can be
+      // chained. Now that a fitting hung clear of another in height may sit over
+      // it along the wall, one line cannot carry the row: the run doubled back
+      // on itself and drew its figures on top of each other.
+      //
+      // So the row is split into lines that ARE continuous. Each takes the
+      // fittings that do not lap anything already on it, and each is chained
+      // from the start of the wall in its own right — so every line adds up, and
+      // a fitting that laps is set out on a line of its own rather than being
+      // squeezed into one it does not belong on.
+      const _wPos = rowPositions(wall.wallRow, wallStartU);
+      const _blocks = wall.wallRow.map((cab, k)=>{
         const lp = (cab.adj && cab.adj.left && cab.adj.left.panel)   || 0;
         const rp = (cab.adj && cab.adj.right && cab.adj.right.panel) || 0;
         const rf = (cab.adj && cab.adj.right && cab.adj.right.filler) || 0;
-        if(lf > 0){ dimU(cuW, cuW+lf, _wallTopY, `${lf}`, { size:_dts-1, color:COL.accent }); cuW += lf; }
-        if(lp > 0){ dimU(cuW, cuW+lp, _wallTopY, `${lp}`, { size:_dts-1, color:COL.accent }); cuW += lp; }
-        cuW -= adjLap(cab);
-        dimU(cuW, cuW+cab.W, _wallTopY, `${cab.W}`, { size:_dts-1, color:COL.ink3 });
-        cuW += cab.W;
-        if(rp > 0){ dimU(cuW, cuW+rp, _wallTopY, `${rp}`, { size:_dts-1, color:COL.accent }); cuW += rp; }
-        if(rf > 0){ dimU(cuW, cuW+rf, _wallTopY, `${rf}`, { size:_dts-1, color:COL.accent }); cuW += rf; }
+        return { cab, lp, rp, rf, u:_wPos[k], l:_wPos[k] - lp, r:_wPos[k] + cab.W + rp + rf };
+      }).sort((a, b)=> a.l - b.l);
+      const _lines = [];
+      _blocks.forEach(b=>{
+        let line = _lines.find(ln => ln.every(o => o.r <= b.l + 0.5 || o.l >= b.r - 0.5));
+        if(!line){ line = []; _lines.push(line); }
+        line.push(b);
+      });
+      _lines.forEach((line, li)=>{
+        // Extra lines stack upward, and stop rather than climb off the sheet.
+        const y = Math.max(oy + 3, _wallTopY - li * 6.5);
+        let cuW = wallStartU;
+        line.forEach(b=>{
+          // The clear wall in front of it. With nothing lapping this is exactly
+          // its own left filler, so a row that never laps draws as it always did.
+          const gap = Math.round(b.l - cuW);
+          if(gap > 0){ dimU(cuW, cuW+gap, y, `${gap}`, { size:_dts-1, color:COL.accent }); cuW += gap; }
+          if(b.lp > 0){ dimU(cuW, cuW+b.lp, y, `${b.lp}`, { size:_dts-1, color:COL.accent }); cuW += b.lp; }
+          dimU(cuW, cuW+b.cab.W, y, `${b.cab.W}`, { size:_dts-1, color:COL.ink3 });
+          cuW += b.cab.W;
+          if(b.rp > 0){ dimU(cuW, cuW+b.rp, y, `${b.rp}`, { size:_dts-1, color:COL.accent }); cuW += b.rp; }
+          if(b.rf > 0){ dimU(cuW, cuW+b.rf, y, `${b.rf}`, { size:_dts-1, color:COL.accent }); cuW += b.rf; }
+        });
       });
     }
   }
