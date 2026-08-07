@@ -20601,27 +20601,51 @@ function openJob(projectId, jobId){
   try { syncSidebarFromState(); } catch(_){}
   renderCabinetList(); renderEditPanel(); renderActive(); renderLibraryUI();
 }
+// A new job starts empty. It used to start as a copy of whatever happened to
+// be on screen, so the second bathroom in a project arrived carrying the
+// first one's fixtures, finishes and openings and had to be cleared by hand
+// before it could be drawn. Taken before the demo is laid in, so it is the
+// app as it ships rather than a guess at what empty means.
+let _blankDesign = null;
+function captureBlankDesign(){
+  if(!_blankDesign){ try { _blankDesign = JSON.stringify(snapshotDesign()); } catch(_){} }
+}
+function blankDesign(name, jobName){
+  let d = null;
+  if(_blankDesign){ try { d = JSON.parse(_blankDesign); } catch(_){} }
+  if(!d) d = snapshotDesign();
+  // The shipped defaults carry the demo's client and address. A new job is not
+  // that job, so it does not inherit its title block.
+  d.project = Object.assign({}, d.project, {
+    name: name || jobName || 'New job', client: '', drawn: (d.project && d.project.drawn) || '' });
+  return d;
+}
 function newProject(name){
   const proj = { id: newId('p'), name: name || 'New project', jobs: [] };
   state.library.projects.push(proj);
-  // Create a starter job
-  const job = { id: newId('j'), name: 'Untitled', created: nowIso(), modified: nowIso(), state: snapshotDesign() };
-  // Reset design to clean defaults for the new job (fresh seed)
+  // A starter job, empty, and opened — so the page in front of you is the job
+  // you just made. It used to store a copy of the old design and leave that
+  // design on screen, which the autosave then wrote back into the new job.
+  const job = { id: newId('j'), name: name || 'Untitled', created: nowIso(), modified: nowIso(),
+                state: blankDesign(name, name) };
   proj.jobs.push(job);
-  state.library.currentProjectId = proj.id;
-  state.library.currentJobId = job.id;
   persistLibrary();
+  openJob(proj.id, job.id);
   renderLibraryUI();
 }
-function newJobInProject(projectId, name){
+// Adding a job to a project starts it empty. Passing { clone:true } keeps the
+// design that is on screen, which is what "Save current as new job" means and
+// the only place that still wants it.
+function newJobInProject(projectId, name, opts){
   const proj = findProject(projectId);
   if(!proj) return;
-  // Save current job state into the new job (gives the user a clone to iterate on)
-  const job = { id: newId('j'), name: name || 'Untitled', created: nowIso(), modified: nowIso(), state: snapshotDesign() };
+  const clone = !!(opts && opts.clone);
+  const job = { id: newId('j'), name: name || 'Untitled', created: nowIso(), modified: nowIso(),
+                state: clone ? snapshotDesign() : blankDesign(proj.name, name) };
   proj.jobs.push(job);
-  state.library.currentProjectId = projectId;
-  state.library.currentJobId = job.id;
   persistLibrary();
+  // Open it either way, so the job named in the library is the job on screen.
+  openJob(projectId, job.id);
   renderLibraryUI();
 }
 function deleteJob(projectId, jobId){
@@ -20877,7 +20901,7 @@ document.getElementById('libSaveAs').addEventListener('click', ()=>{
   const proj = getCurrentProject();
   if(!proj){ alert('Create a project first.'); return; }
   askText('Save as new job', 'Job name', state.project.name || 'Untitled').then(name=>{
-    if(name) newJobInProject(proj.id, name);
+    if(name) newJobInProject(proj.id, name, { clone:true });
   });
 });
 document.getElementById('libImportFile').addEventListener('change', e=>{
@@ -21306,6 +21330,8 @@ document.addEventListener('click', function(e){
 }, true);
 
 function initState(){
+  // The app as it ships, before the demo goes in. This is what a new job is.
+  try { captureBlankDesign(); } catch(_){}
   try { seedDemo(); } catch(e){ console.warn('[Bathroom] seedDemo failed', e); }
   let loaded = false;
   try { loaded = loadLibraryFromStorage(); } catch(e){ console.warn('[Bathroom] library load failed', e); }
