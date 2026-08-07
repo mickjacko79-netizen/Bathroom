@@ -27,6 +27,12 @@ contextBridge.exposeInMainWorld('bathroomChat', {
   // Stop the turn that is running.
   stop: () => ipcRenderer.invoke('chat:stop'),
 
+  // Signing in. The browser does the signing in; these only start the flow and
+  // carry back the one-time code it shows at the end.
+  loginStart:  () => ipcRenderer.invoke('chat:loginStart'),
+  loginCode:   (code) => ipcRenderer.invoke('chat:loginCode', String(code == null ? '' : code)),
+  loginCancel: () => ipcRenderer.invoke('chat:loginCancel'),
+
   // Start a fresh conversation rather than continuing the last one.
   reset: () => ipcRenderer.invoke('chat:reset'),
 

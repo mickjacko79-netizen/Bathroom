@@ -117,6 +117,17 @@ function createChat({ userDataDir, bridgeUrl, send }) {
 
   const emit = (type, payload) => { try { send(Object.assign({ type }, payload)); } catch (_) {} };
 
+  // Whether Claude Code has an account behind it. It answers on stdout and exits
+  // non-zero when signed out, so the exit code is no use — read what it said.
+  function authStatus(cli) {
+    return new Promise(resolve => {
+      execFile(cli, ['auth', 'status', '--json'], { windowsHide: true }, (_err, stdout) => {
+        try { resolve(JSON.parse(String(stdout || '{}'))); }
+        catch (_) { resolve({ loggedIn: false }); }
+      });
+    });
+  }
+
   async function status() {
     const cli = await findCli();
     if (!cli) {
@@ -129,7 +140,75 @@ function createChat({ userDataDir, bridgeUrl, send }) {
                message: 'The Claude bridge is not running, so Claude would not be able to see the '
                       + 'drawing. Start it from the Claude menu.' };
     }
-    return { ready: true, cli };
+    const auth = await authStatus(cli);
+    if (!auth.loggedIn) {
+      return { ready: false, reason: 'not-logged-in',
+               message: 'Sign in to Claude to use this panel.' };
+    }
+    return { ready: true, cli, authMethod: auth.authMethod };
+  }
+
+  // ------------------------------------------------------------- signing in --
+  // `claude auth login` opens the browser itself, prints the address as a
+  // fallback, and then waits on stdin for the code the browser shows at the end.
+  // All this does is carry that code the few inches from the panel to the
+  // process — the signing in happens in the browser, as yours, and the code is
+  // never written to a log or sent anywhere but that process on this machine.
+  let loginProc = null;
+
+  async function loginStart() {
+    if (loginProc) return { started: true, already: true };
+    const cli = await findCli();
+    if (!cli) return { error: 'Claude Code is not installed on this machine.' };
+
+    let proc;
+    try {
+      proc = spawn(cli, ['auth', 'login'], { cwd: workDir(userDataDir), windowsHide: true });
+    } catch (err) {
+      return { error: 'Could not start the sign-in: ' + err.message };
+    }
+    loginProc = proc;
+
+    let out = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', chunk => {
+      out += chunk;
+      const url = (out.match(/https:\/\/\S*oauth\/authorize\S*/) || [])[0];
+      // The authorize address is not a secret — it is the page you sign in on —
+      // so it is worth handing over in case the browser did not open by itself.
+      if (url && !proc.__sentUrl) { proc.__sentUrl = true; emit('auth-url', { url }); }
+    });
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', () => {});
+
+    proc.on('error', err => {
+      loginProc = null;
+      emit('auth-done', { ok: false, message: 'Sign-in failed to start: ' + err.message });
+    });
+    proc.on('close', async () => {
+      loginProc = null;
+      const cliNow = await findCli();
+      const auth = cliNow ? await authStatus(cliNow) : { loggedIn: false };
+      emit('auth-done', { ok: !!auth.loggedIn,
+        message: auth.loggedIn ? 'Signed in.' : 'Not signed in — the sign-in did not complete.' });
+    });
+
+    return { started: true };
+  }
+
+  // The code the browser showed. Written straight through; nothing keeps it.
+  function loginCode(code) {
+    if (!loginProc) return { error: 'The sign-in is not running. Start it again.' };
+    try { loginProc.stdin.write(String(code).trim() + '\n'); }
+    catch (err) { return { error: 'Could not hand the code over: ' + err.message }; }
+    return { sent: true };
+  }
+
+  function loginCancel() {
+    if (!loginProc) return { cancelled: false };
+    try { loginProc.kill(); } catch (_) {}
+    loginProc = null;
+    return { cancelled: true };
   }
 
   function stop() {
@@ -256,7 +335,8 @@ function createChat({ userDataDir, bridgeUrl, send }) {
     });
   }
 
-  return { status, ask, stop, reset, isRunning: () => !!child };
+  return { status, ask, stop, reset, loginStart, loginCode, loginCancel,
+           isRunning: () => !!child };
 }
 
 module.exports = { createChat };

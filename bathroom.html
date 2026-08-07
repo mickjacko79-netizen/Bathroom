@@ -356,6 +356,13 @@ header .project-label .dot.dirty{background:#F7C04A}
 .chat-ask .go{border:1px solid var(--brand);background:var(--brand);color:#fff;border-radius:4px;
   cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;padding:5px 12px}
 .chat-ask .go[disabled]{opacity:.45;cursor:default}
+.chat-signin{margin:0 0 14px}
+.chat-signin .go{border:1px solid var(--brand);background:var(--brand);color:#fff;border-radius:4px;
+  cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;padding:5px 12px}
+.chat-signin input{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;
+  padding:7px 8px;font:inherit;font-size:12.5px;background:#fff;letter-spacing:.02em}
+.chat-signin .row{display:flex;align-items:center;gap:8px}
+.chat-signin a{color:var(--muted);text-decoration:underline;cursor:pointer}
 </style>
 </head>
 <body>
@@ -22473,6 +22480,14 @@ try {
     }
     if(evt.type === 'error'){ add('chat-err', evt.message); reply = null; return; }
     if(evt.type === 'done'){ setBusy(false); reply = null; renderActive(); return; }
+    // The address to sign in at, in case the browser did not open by itself.
+    if(evt.type === 'auth-url'){ if(signinBox) signinBox.__url = evt.url; return; }
+    if(evt.type === 'auth-done'){
+      if(signinBox){ signinBox.remove(); signinBox = null; }
+      if(evt.ok){ add('chat-note', 'Signed in. Ask away.'); }
+      else { add('chat-err', evt.message); showState(); }
+      return;
+    }
   });
 
   async function ask(){
@@ -22497,6 +22512,71 @@ try {
   });
   document.getElementById('chatClose').addEventListener('click', () => panel.classList.remove('on'));
 
+  // ---- signing in -------------------------------------------------------
+  // The browser does the signing in. This only starts it and carries back the
+  // one-time code the browser shows at the end — which is typed here, goes
+  // straight to the Claude Code running on this machine, and is kept nowhere.
+  function offerSignIn(){
+    const was = atBottom();
+    const box = document.createElement('div');
+    box.className = 'chat-signin';
+    box.innerHTML =
+      '<p class="chat-note" style="margin-bottom:8px">Sign in to Claude to use this panel. '
+    + 'It opens your browser; nothing is stored here but the sign-in Claude Code keeps for itself.</p>'
+    + '<button class="go" data-go>Sign in to Claude</button>'
+    + '<div data-step2 style="display:none;margin-top:10px">'
+    +   '<p class="chat-note" style="margin-bottom:6px">Finish in the browser, then paste the code it '
+    +   'shows you here.</p>'
+    +   '<input data-code type="text" autocomplete="off" spellcheck="false" placeholder="Paste the code">'
+    +   '<div class="row" style="margin-top:6px">'
+    +     '<a data-link href="#" class="hintline" style="flex:1">Browser did not open? Open it here.</a>'
+    +     '<button class="go" data-send>Done</button>'
+    +   '</div>'
+    + '</div>';
+    log.appendChild(box);
+    scroll(was);
+
+    const step2 = box.querySelector('[data-step2]');
+    const code  = box.querySelector('[data-code]');
+    const link  = box.querySelector('[data-link]');
+
+    box.querySelector('[data-go]').addEventListener('click', async () => {
+      const r = await bridge.loginStart();
+      if(r && r.error){ add('chat-err', r.error); return; }
+      step2.style.display = '';
+      code.focus();
+    });
+    const submit = async () => {
+      const v = code.value.trim();
+      if(!v) return;
+      code.value = '';                       // gone from the page immediately
+      const r = await bridge.loginCode(v);
+      if(r && r.error) add('chat-err', r.error);
+      else add('chat-note', 'Checking…');
+    };
+    box.querySelector('[data-send]').addEventListener('click', submit);
+    code.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); submit(); } });
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      if(box.__url) window.open(box.__url, '_blank');
+    });
+    return box;
+  }
+  let signinBox = null;
+
+  async function showState(){
+    const state = await bridge.status();
+    if(state.ready){
+      add('chat-note',
+          'Ask about the drawing that is open, or ask for a change to it. Everything it '
+        + 'does is one undo step, so Ctrl+Z takes it back.');
+      return true;
+    }
+    if(state.reason === 'not-logged-in') signinBox = offerSignIn();
+    else add('chat-err', state.message);
+    return false;
+  }
+
   let greeted = false;
   btn.addEventListener('click', async () => {
     panel.classList.toggle('on');
@@ -22505,11 +22585,7 @@ try {
     if(greeted) return;
     greeted = true;
     // Say what is wrong before they type into something that cannot answer.
-    const state = await bridge.status();
-    if(!state.ready){ add('chat-err', state.message); setBusy(false); return; }
-    add('chat-note',
-        'Ask about the drawing that is open, or ask for a change to it. Everything it '
-      + 'does is one undo step, so Ctrl+Z takes it back.');
+    await showState();
   });
 })();
 </script>
