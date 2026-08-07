@@ -1247,18 +1247,28 @@ header .project-label .dot.dirty{background:#F7C04A}
 
           <section id="mn-position">
             <h2>9 · Position along a wall</h2>
-            <p>A run has no coordinates. Things sit end to end in list order, so to move one along the wall
-              you put space beside it. Two ways, and they do the same thing:</p>
+            <p>Every fixture stands at its own set-out, measured from the start of the run to its near
+              edge. Moving one moves that one; everything else on the wall stays where it is. Two ways,
+              and they do the same thing:</p>
             <ul>
-              <li><b>Drag the fixture</b> along the plan, which opens a gap on its left.</li>
-              <li>Type into <b>Left filler</b>, <b>Left panel</b>, <b>Right filler</b> or <b>Right panel</b>
-                in its own panel. A filler is a strip of board, a panel is an end panel, and a gap left by
-                dragging is space and is drawn as nothing.</li>
+              <li><b>Drag the fixture</b> along the plan or its elevation. Dropped near the edge of
+                another fixture, the run start or the end of the wall, it goes hard against it; dropped
+                anywhere else it stays exactly where you let go.</li>
+              <li>Type the figure into <b>Set-out from start of run</b> in its own panel, under
+                <span class="ui">Position along the wall</span>. A typed figure is taken as given and is
+                not snapped.</li>
             </ul>
-            <div class="note"><b>Worth knowing.</b> A fixture further along the wall moves when you move the
-              one in front of it. That is the run doing what a run does, not the wrong item being dragged.
-              To move one thing without disturbing what follows, take the same amount off the next
-              fixture's left filler as you add to this one's.</div>
+            <p>The list order follows the wall: move a fixture past another and the two change places in
+              the list, because that is now the order they stand in.</p>
+            <div class="note"><b>Two things cannot stand in the same place.</b> Put a fixture down on top
+              of another and that other steps aside — by the overlap and no further, and only for as long
+              as it is genuinely in the way. Drag straight past it and it goes back to its own set-out.</div>
+            <p><b>Left filler</b>, <b>Left panel</b>, <b>Right filler</b> and <b>Right panel</b> in the same
+              panel are what goes beside a fixture rather than where it stands. A panel is an end panel and
+              a filler is a strip of board — and because board holds two things together, a fixture with a
+              filler on its left travels with whatever is in front of it, keeping that board the width it
+              was made. A gap opened by moving something is space, is drawn as nothing, and holds nothing
+              to anything.</p>
             <p><span class="ui">Run trim (active wall)</span> holds what belongs to the run rather than to
               one unit: left and right scribe fillers, end-panel thickness, the wall's own tile, the low
               wall, and the bench — whether it runs on this wall at all, and how far past each end.</p>
@@ -13897,65 +13907,245 @@ function dragRowOf(pending){
            startOff: runStartOffset(w, pending.row === 'wallRow' ? 'wall' : 'base'),
            endOff: wallLength(w.id) };
 }
-// Put an item down where it was dropped, keeping the gap in front of it, and
-// closing that gap only when it comes within the snap distance. Returns how far
-// it moved, so anything grouped with it can follow.
-function positionCabAt(cab, arr, startOff, hoverU, endOff){
+// ---- Where things stand ---------------------------------------------------
+// A row is stored end to end, and it stays that way: the benchtop, the fillers,
+// the scribes and the dimension chain are all built on the run, and unpicking it
+// would take those with it. What changed is that a move is now worked out in
+// positions rather than in gaps. Every item's place is read off the run, the one
+// being moved is given a new place, and the row is laid back out from those
+// figures — so everything else is put back at the number it was already standing
+// at, however far down the wall it is and however many items are in between.
+
+// Where each item's carcass starts along the wall, in list order.
+function rowPositions(arr, startOff){
+  const out = [];
+  let u = startOff || 0;
+  (arr || []).forEach(c=>{
+    const L = (c.adj && c.adj.left) || {}, R = (c.adj && c.adj.right) || {};
+    u += (L.filler || 0) + (L.panel || 0);
+    out.push(u);
+    u += c.W + (R.filler || 0) + (R.panel || 0);
+  });
+  return out;
+}
+// What is fixed to an item and goes wherever it goes.
+function adjRightExtra(c){ const R = (c.adj && c.adj.right) || {}; return (R.filler || 0) + (R.panel || 0); }
+// A filler is board, and board holds two things together. An item with one on
+// its left travels with what is in front of it and keeps that board the width it
+// was made — resizing it behind the joiner's back changes what gets cut. A gap
+// is air: the item stands at its own figure and stays there.
+function tiedToRunLeft(c){
+  const L = (c.adj && c.adj.left) || {};
+  return (L.filler || 0) > 0 && L.kind !== 'space';
+}
+// The solid on an item's left — its end panel, and its filler when that filler
+// is board. Air does not count: something can be pushed up into a gap, but not
+// into a panel.
+function adjLeftSolid(c){
+  const L = (c.adj && c.adj.left) || {};
+  return (L.panel || 0) + (tiedToRunLeft(c) ? (L.filler || 0) : 0);
+}
+// How much wall an item takes up once what is fixed to it is counted: its left
+// panel, its carcass, and whatever is on its right.
+function cabOuterW(c){
+  return ((c.adj && c.adj.left && c.adj.left.panel) || 0) + c.W + adjRightExtra(c);
+}
+// Lay the row back out so each item stands where `want` puts it, and write the
+// result back as the gap in front of it.
+//
+// `free` are the items being moved. They are pinned on their figure and the rest
+// is laid out around them — put down where it was dropped is the whole point, so
+// the thing in hand is not the thing that gives way.
+//
+// Everything else is asked for the number it was already standing at, so it does
+// not move. Two things cannot stand in the same place, though: where the pinned
+// item has been put on top of something, that something steps over to the far
+// side of it, and only what is then genuinely in the way follows.
+//
+// Items come out ordered by where they ended up, so moving one past another
+// changes their places in the list as well as on the wall.
+function applyRowPositions(arr, startOff, want, free){
+  if(!Array.isArray(arr) || !arr.length) return;
+  const s0 = startOff || 0;
+  arr.forEach(c=>{
+    if(!c.adj) c.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
+    if(!c.adj.left)  c.adj.left  = { filler:0, panel:0 };
+    if(!c.adj.right) c.adj.right = { filler:0, panel:0 };
+  });
+  const moving = c => !!(free && free.has(c));
+  // Work in outer edges — where an item's block starts on the wall — because
+  // that is what has to clear the block in front of it.
+  const blockL = i => Math.round(want[i]) - ((arr[i].adj.left.panel) || 0);
+  const order = arr.map((c, i)=> i).sort((a, b)=> (blockL(a) - blockL(b)) || (a - b));
+  const pinned = order.filter(i => moving(arr[i]))
+                      .map(i => ({ l: blockL(i), r: blockL(i) + cabOuterW(arr[i]) }));
+  const at = [];
+  let cursor = s0;
+  order.forEach(i=>{
+    const c = arr[i];
+    let l;
+    if(moving(c)) l = blockL(i);
+    else if(tiedToRunLeft(c)) l = cursor + (c.adj.left.filler || 0);  // board keeps its width
+    else l = Math.max(blockL(i), cursor);
+    if(!moving(c)){
+      // Step over anything pinned that it now lands on, and check again — one
+      // step can land it on the next.
+      for(let k = 0; k < pinned.length; k++){
+        const f = pinned[k];
+        if(l < f.r && l + cabOuterW(c) > f.l){ l = f.r; k = -1; }
+      }
+    }
+    at[i] = l;
+    cursor = Math.max(cursor, l + cabOuterW(c));
+  });
+  const laid = arr.map((c, i)=> i)
+                  .sort((a, b)=> (at[a] - at[b]) || (order.indexOf(a) - order.indexOf(b)));
+  let run = s0;
+  laid.forEach(i=>{
+    const c = arr[i];
+    const gap = Math.max(0, Math.round(at[i] - run));
+    // Only write when the figure actually changes, so an item that has not moved
+    // keeps its filler's kind and its depth exactly as they were set.
+    if(gap !== (c.adj.left.filler || 0)){
+      c.adj.left.filler = gap;
+      // A break is a gap, not a filler panel to be made. A scribe set by hand
+      // keeps its kind — a move is not the place to reclassify it.
+      if(gap > 0 && c.adj.left.kind !== 'filler') c.adj.left.kind = 'space';
+    }
+    run = at[i] + cabOuterW(c);
+  });
+  const out = laid.map(i => arr[i]);
+  arr.length = 0;
+  out.forEach(c => arr.push(c));
+}
+// Whatever is joined to the moving items by board goes with them, and so does
+// whatever is joined to that. Fills `want` and `free` out until it stops growing.
+function carryTiedFollowers(arr, base, want, free, shift){
+  let again = true;
+  while(again){
+    again = false;
+    arr.forEach((c, k)=>{
+      const prev = arr[k - 1];
+      if(!prev || !free.has(prev) || free.has(c) || !tiedToRunLeft(c)) return;
+      want[k] = base[k] + shift;
+      free.add(c);
+      again = true;
+    });
+  }
+}
+// Where a dragged item comes to rest: where it was dropped, unless that is
+// within the snap distance of something to butt up against — the start of the
+// run, the end of the wall, or the edge of another item. Nothing pushes any
+// more, so this is what is left to close a joint by hand.
+function snapPositionU(cab, arr, pos, startOff, endOff, u){
+  const tol = snapTolerance();
+  const lp = (cab.adj && cab.adj.left && cab.adj.left.panel) || 0;
+  const re = adjRightExtra(cab);
+  const cand = [ (startOff || 0) + lp ];
+  if(endOff != null) cand.push(endOff - re - cab.W);
+  arr.forEach((c, i)=>{
+    if(c === cab) return;
+    if(cab.groupId && c.groupId === cab.groupId) return;
+    cand.push(pos[i] + c.W + adjRightExtra(c) + lp);   // hard against its back
+    cand.push(pos[i] - adjLeftSolid(c) - re - cab.W);  // hard against its front
+  });
+  let best = u, near = tol;
+  cand.forEach(v=>{ const d = Math.abs(v - u); if(d <= near){ near = d; best = v; } });
+  return Math.round(best);
+}
+// Move one fitting to a place on the wall. One fitting moves; everything else
+// stays where it stands, bar what is grouped with it, which travels the same
+// distance, and anything it is put on top of, which has to give way.
+//
+// `snap` is for a drag; a figure typed in is taken as given. `home` is where the
+// row stood when the move began, by item id — during a drag everything is laid
+// out from there rather than from where it has got to, so an item passed over is
+// shoved only while it is genuinely in the way and comes back the moment it is
+// clear. Without it the row is laid out from where it stands now.
+//
+// Returns how far the item has come from home, which is nothing when it is
+// already there.
+function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home){
   if(!cab || !Array.isArray(arr)) return 0;
   const i = arr.indexOf(cab);
   if(i < 0) return 0;
   if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
-  if(!cab.adj.left) cab.adj.left = { filler:0, panel:0 };
-  const panel = cab.adj.left.panel || 0;
-  const before = runUpTo(arr, i, startOff);
-  let gap = Math.round(hoverU - before - panel);
-  if(gap < snapTolerance()) gap = 0;
-  gap = Math.max(0, gap);
-  // It cannot be dragged off the end of the wall it is standing on.
-  if(endOff != null) gap = Math.min(gap, Math.max(0, endOff - before - panel - cab.W));
-  const was = cab.adj.left.filler || 0;
-  cab.adj.left.filler = gap;
-  // A break is a gap, not a filler panel to be made. A scribe set by hand keeps
-  // its kind — dragging is not the place to reclassify it.
-  if(gap > 0 && cab.adj.left.kind !== 'filler') cab.adj.left.kind = 'space';
-  const delta = gap - was;
-  // Moving one thing should move one thing. A row is laid out end to end, so
-  // growing this gap pushed everything after it along the wall — the next
-  // fitting, and the one after that, which is why dragging a roll holder took
-  // the shaving cabinet with it. Taking the same amount back off the next
-  // item's own gap leaves it exactly where it was, and everything beyond it too.
-  //
-  // Only as far as that gap can give. Past that the run has nowhere left and the
-  // rest does move — which is honest, because there is no room for it not to.
-  // Grouped items are left alone: they are meant to travel together.
-  if(delta){
-    const nxt = arr[i + 1];
-    const grouped = cab.groupId && nxt && nxt.groupId === cab.groupId;
-    if(nxt && !grouped){
-      if(!nxt.adj) nxt.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
-      if(!nxt.adj.left) nxt.adj.left = { filler:0, panel:0 };
-      const cur = nxt.adj.left.filler || 0;
-      const now = Math.max(0, cur - delta);
-      nxt.adj.left.filler = now;
-      if(now > 0 && nxt.adj.left.kind !== 'filler') nxt.adj.left.kind = 'space';
+  if(!cab.adj.left)  cab.adj.left  = { filler:0, panel:0 };
+  if(!cab.adj.right) cab.adj.right = { filler:0, panel:0 };
+  const pos  = rowPositions(arr, startOff);
+  const base = arr.map((c, k)=> (home && home[c.id] != null) ? home[c.id] : pos[k]);
+  const lp = cab.adj.left.panel || 0;
+  const re = adjRightExtra(cab);
+  const floor = (startOff || 0) + lp;
+  let u = Math.round(targetU);
+  if(snap !== false) u = snapPositionU(cab, arr, base, startOff, endOff, u);
+  // It cannot be moved off either end of the wall it is standing on.
+  u = Math.max(floor, u);
+  if(endOff != null) u = Math.min(u, Math.max(floor, endOff - re - cab.W));
+  const shift = u - base[i];              // how far it has come from home
+  const delta = u - pos[i];               // and how far in this step alone
+  if(!shift && !delta) return 0;
+  const want = base.slice();
+  const free = new Set([cab]);
+  want[i] = u;
+  // Anything grouped with it in the same row goes the same distance and keeps
+  // its spacing — a group is what things that belong together are for.
+  arr.forEach((c, k)=>{
+    if(c !== cab && cab.groupId && c.groupId === cab.groupId){
+      want[k] = base[k] + shift;
+      free.add(c);
     }
-  }
-  return delta;
-}
-// Anything grouped with it slides the same distance.
-function slideGroupBy(cab, delta){
-  if(!cab || !cab.groupId || !delta) return;
-  const seen = new Set([cab]);
-  const slide = rowArr => (rowArr || []).forEach(c=>{
-    if(seen.has(c) || c.groupId !== cab.groupId) return;
-    seen.add(c);
-    if(!c.adj) c.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
-    if(!c.adj.left) c.adj.left = { filler:0, panel:0 };
-    c.adj.left.filler = Math.max(0, (c.adj.left.filler || 0) + delta);
-    if(c.adj.left.kind !== 'filler') c.adj.left.kind = 'space';
   });
-  allWallSets().forEach(({ walls })=> (walls || []).forEach(w=>{ slide(w.baseRow); slide(w.wallRow); }));
-  if(state.island && state.island.baseRow) slide(state.island.baseRow);
+  carryTiedFollowers(arr, base, want, free, shift);
+  applyRowPositions(arr, startOff, want, free);
+  // Other rows have no home to be laid out from, so they take the step.
+  slideGroupBy(cab, delta, arr);
+  return shift;
+}
+// Where a row stands right now, by item id — handed back to moveCabToU for the
+// length of a drag so every frame is worked out from the same starting point.
+function rowHome(arr, startOff){
+  const pos = rowPositions(arr, startOff);
+  const home = {};
+  (arr || []).forEach((c, k)=>{ home[c.id] = pos[k]; });
+  return home;
+}
+// Every row in the job, with the offset its run starts at.
+function allRows(){
+  const rows = [];
+  allWallSets().forEach(({ walls })=> (walls || []).forEach(w=>{
+    if(w.baseRow) rows.push({ arr: w.baseRow, startOff: runStartOffset(w, 'base'), endOff: wallLength(w.id) });
+    if(w.wallRow) rows.push({ arr: w.wallRow, startOff: runStartOffset(w, 'wall'), endOff: wallLength(w.id) });
+  }));
+  if(state.island && state.island.baseRow)
+    rows.push({ arr: state.island.baseRow, startOff: 0, endOff: state.island.length || null });
+  return rows;
+}
+// A group can straddle rows and walls. Members outside the row being worked on
+// go the same distance, and go through the same positions, so they do not shove
+// their own neighbours along either. `skip` is the row already dealt with.
+function slideGroupBy(cab, delta, skip){
+  if(!cab || !cab.groupId || !delta) return;
+  allRows().forEach(({ arr, startOff })=>{
+    if(arr === skip) return;
+    if(!arr.some(c => c.groupId === cab.groupId)) return;
+    const pos = rowPositions(arr, startOff);
+    const want = pos.slice();
+    const free = new Set();
+    arr.forEach((c, k)=>{
+      if(c.groupId !== cab.groupId) return;
+      want[k] = pos[k] + delta;
+      free.add(c);
+    });
+    carryTiedFollowers(arr, pos, want, free, delta);
+    applyRowPositions(arr, startOff, want, free);
+  });
+}
+// The row an item is standing in, and where that run starts and ends.
+function rowOfCab(cab){
+  if(!cab) return null;
+  const found = allRows().find(r => r.arr.indexOf(cab) >= 0);
+  return found || null;
 }
 // Grab handles for the selected item, so it can be taken hold of at a known
 // point rather than wherever the cursor happened to land on it.
@@ -14002,8 +14192,8 @@ function drawCabDragHandleOnPlan(d, view, cabId, bbox){
     d.line(cx + i*3, cy - hh/2 + 1.4, cx + i*3, cy + hh/2 - 1.4, COL.selected, LW.thin);
   recordCabHandle(view, cabId, cx - hw/2 - 3, cy - hh/2 - 3, hw + 6, hh + 6);
 }
-// Live reorder during drag — splices the cab to the slot under cursor on every mousemove
-// so the cab visibly moves with the cursor.
+// Live move during drag — puts the item at the cursor on every mousemove, so it
+// goes with the cursor and the list order follows where things now stand.
 function _liveReorderCab(){
   const ds = state.ui.drag;
   if(!ds || !ds.active || !ds.pending) return;
@@ -14012,42 +14202,28 @@ function _liveReorderCab(){
   const arr = _row.arr, startOff = _row.startOff;
   if(!arr || !arr.length) return;
   // Find by REFERENCE first (most robust), then by ID as fallback.
-  let oldIdx = ds.pending.cabRef ? arr.indexOf(ds.pending.cabRef) : -1;
-  if(oldIdx < 0) oldIdx = arr.findIndex(c => c.id === ds.pending.cabId);
-  if(oldIdx < 0) return;
-  const cab = arr[oldIdx];
+  let idx = ds.pending.cabRef ? arr.indexOf(ds.pending.cabRef) : -1;
+  if(idx < 0) idx = arr.findIndex(c => c.id === ds.pending.cabId);
+  if(idx < 0) return;
+  const cab = arr[idx];
+  // Where the row stood when the drag began. Every frame is worked out from
+  // that, so nothing is shoved twice and anything passed over comes back.
+  if(!ds.pending.home) ds.pending.home = rowHome(arr, startOff);
   // Where its left edge is being asked to go, allowing for where it was taken
   // hold of.
   const targetU = ds.hoverU - (ds.pending.grabDU || 0);
-  arr.splice(oldIdx, 1);
-  let u = startOff;
-  let newIdx = arr.length;
-  // It changes places with another when its own middle passes that one's
-  // middle — comparing the cursor against them made the order flip early or
-  // late depending on where the item had been grabbed.
-  const mid = targetU + cab.W/2;
-  for(let i = 0; i < arr.length; i++){
-    const lf = (arr[i].adj?.left?.filler || 0) + (arr[i].adj?.left?.panel || 0);
-    const rt = (arr[i].adj?.right?.filler || 0) + (arr[i].adj?.right?.panel || 0);
-    const slotMid = u + lf + arr[i].W/2;
-    if(mid < slotMid){ newIdx = i; break; }
-    u += lf + arr[i].W + rt;
-  }
-  arr.splice(newIdx, 0, cab);
-  // And leave it where the cursor actually is, so a gap opens up as it is
-  // dragged rather than snapping shut the moment the order settles. This is
-  // what lets a lone bath move at all — there is nothing to swap it with.
-  slideGroupBy(cab, positionCabAt(cab, arr, startOff, targetU, _row.endOff));
+  moveCabToU(cab, arr, startOff, _row.endOff, targetU, true, ds.pending.home);
   ds.targetU = targetU;
 }
 
-// Commit cab drag — live reorder already placed the cab. Just clear drag state.
+// Commit cab drag — the live pass has already placed it. Take one more at the
+// final cursor position, then clear the drag state and put the job away.
 function _commitCabDrag(){
   const ds = state.ui.drag;
   if(!ds || !ds.active || !ds.pending) return false;
-  // One last reorder pass at the final cursor position (safety net).
   _liveReorderCab();
   ds.pending = null; ds.active = false; ds.targetU = null;
+  scheduleAutosave();
   return true;
 }
 // Window-level mouseup catches releases outside any canvas.
@@ -14302,6 +14478,10 @@ function wireViewport(canvas){
     if(ds.pending){
       const dx = e.clientX - ds.pending.startX, dy = e.clientY - ds.pending.startY;
       if(!ds.active && Math.sqrt(dx*dx + dy*dy) > 5){
+        // Take the row down before the first frame moves anything, so the whole
+        // drag is one step back. Moving a fitting used to be the one change to a
+        // drawing that undo could not take back.
+        pushHistory();
         ds.active = true; canvas.style.cursor = 'grabbing';
       }
       if(ds.active){
@@ -14350,69 +14530,11 @@ function wireViewport(canvas){
     if(dragging){ dragging = false; canvas.classList.remove('panning'); return; }
     const ds = state.ui.drag;
     if(ds.active){
-      try {
-        let arr, startOff = 0;
-        if(ds.pending.wallId === 'island'){
-          arr = state.island.baseRow;
-        } else {
-          const _fw = findWallForCab(ds.pending.cabId);
-          const w = _fw ? _fw.wall : getWall(ds.pending.wallId);
-          arr = w[ds.pending.row];
-          startOff = runStartOffset(w, ds.pending.row === 'wallRow' ? 'wall' : 'base');
-        }
-        const oldIdx = arr.indexOf(ds.pending.cabRef);
-        const cab = oldIdx >= 0 ? arr[oldIdx] : null;
-        if(cab){
-          // Order first — an item dragged past another changes places with it —
-          // then position, so it comes to rest where it was dropped rather than
-          // being sucked flush against its neighbour.
-          const _tU = ds.hoverU - (ds.pending.grabDU || 0);
-          if(arr.length >= 1){
-            arr.splice(oldIdx, 1);
-            let u = startOff;
-            let newIdx = arr.length;
-            const _mid = _tU + cab.W/2;
-            for(let i = 0; i < arr.length; i++){
-              const lf = (arr[i].adj?.left?.filler || 0) + (arr[i].adj?.left?.panel || 0);
-              const rt = (arr[i].adj?.right?.filler || 0) + (arr[i].adj?.right?.panel || 0);
-              const slotMid = u + lf + arr[i].W/2;
-              if(_mid < slotMid){ newIdx = i; break; }
-              u += lf + arr[i].W + rt;
-            }
-            arr.splice(newIdx, 0, cab);
-            const _r2 = dragRowOf(ds.pending);
-            slideGroupBy(cab, positionCabAt(cab, arr, startOff, _tU, _r2 ? _r2.endOff : null));
-          } else if(false){
-            // Solo cab — position via INVISIBLE gap (no filler panel drawn).
-            if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
-            if(!cab.adj.left) cab.adj.left = { filler:0, panel:0 };
-            const oldFiller = cab.adj.left.filler || 0;
-            const existingPanel = cab.adj.left.panel || 0;
-            const newFiller = Math.max(0, Math.round(ds.hoverU - startOff - existingPanel));
-            cab.adj.left.filler = newFiller;
-            cab.adj.left.kind = 'space';
-            const delta = newFiller - oldFiller;
-            // If this cab is part of a group, slide every other cab in the group by the same delta.
-            if(cab.groupId && delta !== 0){
-              const visited = new Set([cab]);
-              const _slideCabsByDelta = (rowArr) => {
-                (rowArr || []).forEach(c => {
-                  if(visited.has(c) || c.groupId !== cab.groupId) return;
-                  visited.add(c);
-                  if(!c.adj) c.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
-                  if(!c.adj.left) c.adj.left = { filler:0, panel:0 };
-                  c.adj.left.filler = Math.max(0, (c.adj.left.filler || 0) + delta);
-                  c.adj.left.kind = 'space';
-                });
-              };
-              (state.walls || []).forEach(w => { _slideCabsByDelta(w.baseRow); _slideCabsByDelta(w.wallRow); });
-              if(state.island && state.island.baseRow) _slideCabsByDelta(state.island.baseRow);
-            }
-          }
-        }
-      } catch(err){
-        console.error('[Bathroom drag] mouseup error', err);
-      }
+      // One last pass at the final cursor position, through the same code the
+      // drag has been running all along — a release is not a different gesture,
+      // and working it out twice, two ways, is how the two drifted apart.
+      try { _commitCabDrag(); }
+      catch(err){ console.error('[Bathroom drag] mouseup error', err); }
       ds.pending = null; ds.active = false; ds.targetU = null;
       canvas.style.cursor = '';
       renderCabinetList(); renderActive();
@@ -15881,6 +16003,37 @@ function renderEditPanel(){
     editor.appendChild(noteWrap);
   }
 
+  // ----- POSITION ALONG THE WALL
+  // The set-out figure — from the start of the run to the near edge of this
+  // item. Typing one moves this item and nothing else, the same as dragging it,
+  // so a position can be given exactly rather than found with the mouse.
+  (function(){
+    const row = rowOfCab(cab);
+    if(!row) return;
+    const idx = row.arr.indexOf(cab);
+    const here = Math.round(rowPositions(row.arr, row.startOff)[idx]);
+    const max = (row.endOff != null)
+      ? Math.max(0, Math.round(row.endOff - cab.W - adjRightExtra(cab)))
+      : 99999;
+    editor.appendChild(el('h3', {}, 'Position along the wall'));
+    const wrap = el('div', { class:'ctrl' });
+    const inp = el('input', { type:'number', class:'valInp', min:'0', max:String(max), step:'5',
+                              value:String(here) });
+    wrap.appendChild(el('label', {}, 'Set-out from start of run',
+      el('span', { class:'val' }, inp, ' mm')));
+    wrap.appendChild(el('div', { style:'font-size:11px;color:var(--muted);margin-top:3px' },
+      'To the near edge. Everything else on the wall stays where it is.'));
+    inp.addEventListener('change', ()=>{
+      const v = parseInt(inp.value, 10);
+      if(!isFinite(v)){ inp.value = String(here); return; }
+      pushHistory();
+      // Typed, so taken as given — snapping is for finding an edge with a mouse.
+      moveCabToU(cab, row.arr, row.startOff, row.endOff, Math.max(0, v), false);
+      renderEditPanel(); renderCabinetList(); renderActive();
+    });
+    editor.appendChild(wrap);
+  })();
+
   // ----- ADJACENCIES (per-cabinet fillers + decorative panels)
   // A niche has none: it is a hole in a wall, not a run of joinery, so there is
   // nothing beside it to fill or to panel and no control for setting one.
@@ -15888,6 +16041,11 @@ function renderEditPanel(){
     editor.appendChild(el('h3', {}, 'Adjacent fillers & panels'));
     if(!cab.adj) cab.adj = { left:{ filler:0, panel:0 }, right:{ filler:0, panel:0 } };
     function adjInput(label, key1, key2, max){
+      // A gap opened by moving a fixture lives on this side too, and runs to
+      // whatever the set-out is — far past what a filler would ever be made at.
+      // The control stretches to hold it, so opening the panel on a fixture
+      // standing 900 along does not quietly clamp it back to 200 and move it.
+      max = Math.max(max, cab.adj[key1][key2] || 0);
       const wrap = el('div', { class:'ctrl' });
       const valInp = el('input', { type:'number', class:'valInp', min:'0', max:String(max), step:'5', value:String(cab.adj[key1][key2]) });
       wrap.appendChild(el('label', {}, label, el('span', { class:'val' }, valInp, ' mm')));
