@@ -1415,7 +1415,7 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><th>Panel</th><th>What it sets</th></tr>
               <tr><td>Finish (fronts)</td><td>Colour and door style for every front on the job — slab, shaker, V-groove, fluted, glass in a frame, mirror in a frame. One cabinet can differ in its own panel.</td></tr>
               <tr><td>Carcass</td><td>Board thickness, kick height, filler depth.</td></tr>
-              <tr><td>Vanity top</td><td>Material, height, front overhang, top thickness, edge profile, brand and product name, surface finish, and the hatch it is drawn in. Porcelain and sintered stone, natural stone, terrazzo, solid surface, timber, laminate, concrete and a tiled top, each at the thickness it is made in — and a thickness of your own where the same material comes more than one way.</td></tr>
+              <tr><td>Vanity top</td><td>Material, height, front overhang, top thickness, edge profile, brand and product name, surface finish, and the hatch it is drawn in. Engineered stone, porcelain and sintered stone, natural stone, terrazzo, solid surface, timber, laminate, concrete and a tiled top, each at the thickness it is made in — and a thickness of your own where the same material comes more than one way. Choosing an engineered stone raises a note in the panel: it has been banned in Australia for new benchtops since 1 July 2024 and is legal for documenting or repairing an existing installation.</td></tr>
               <tr><td>Wall tiling</td><td>The job's tile: type, brand, product, size, bond and laying pattern, tiling height, the datum a part course is set out from and which end it goes. Mosaics through subway and squares to 1200 × 2400 slab.</td></tr>
               <tr><td>Tile on this wall</td><td>In <span class="ui">Run trim</span>: one wall's tile, colour and grout. Leave it on the job's tile and the wall follows the project; set it and only that wall changes.</td></tr>
               <tr><td>Floor</td><td>Material and laying pattern — boards, herringbone, chevron, parquet, planks, tiles from 100 × 100 to slab — the size, the angle it is laid at, and where the set-out starts, nudged across and along until the cuts fall where you want them.</td></tr>
@@ -1799,17 +1799,23 @@ const FINISH_LABELS = {
   '#8C7152':'Navurban Berkeley Oak',
   '#6E6F70':'Polytec Concrete Mineral',
 };
-// Vanity top materials. Nothing engineered has been added to this list on
-// purpose: engineered stone has been banned in Australia for new benchtops
-// since 1 July 2024, and the panel already warns about it. The two Caesarstone
-// entries stay because documenting or repairing an existing installation is
-// exactly what they are still legal for. Everything added here is what the
-// warning itself names as unaffected — porcelain, sintered and natural stone —
-// plus the materials a bathroom actually uses beside them.
+// Vanity top materials. Engineered stone is in the list, and every engineered
+// entry is flagged as such: it has been banned in Australia for new benchtops,
+// panels and slabs since 1 July 2024, and is legal for documenting or repairing
+// an existing installation — and for work outside Australia. Flagging it is what
+// lets the panel say so when one is chosen, rather than leaving it off the list
+// and leaving you unable to draw the job in front of you.
 const BENCH_DEFS = {
-  // Engineered stone — existing installations only.
-  'stone-white':       { label:'Caesarstone Pure White, 20mm',  thick:20, color:'#FAFAF7', hatch:'stone' },
-  'stone-dark':        { label:'Caesarstone Raven, 20mm',        thick:20, color:'#2E2E31', hatch:'stone-dark' },
+  // Engineered stone. See the warning the panel raises when one of these is on.
+  'stone-white':        { label:'Caesarstone Pure White, 20mm',       thick:20, color:'#FAFAF7', hatch:'stone',      engineered:true },
+  'stone-dark':         { label:'Caesarstone Raven, 20mm',            thick:20, color:'#2E2E31', hatch:'stone-dark', engineered:true },
+  'engineered-white':   { label:'Engineered stone — white, 20mm',     thick:20, color:'#F7F6F2', hatch:'stone',      engineered:true },
+  'engineered-grey':    { label:'Engineered stone — grey, 20mm',      thick:20, color:'#C9C7C2', hatch:'stone',      engineered:true },
+  'engineered-veined':  { label:'Engineered stone — veined, 20mm',    thick:20, color:'#F2F1ED', hatch:'marble',     engineered:true },
+  'engineered-concrete':{ label:'Engineered stone — concrete look, 20mm', thick:20, color:'#A8A6A1', hatch:'concrete', engineered:true },
+  'engineered-dark':    { label:'Engineered stone — dark, 20mm',      thick:20, color:'#33343A', hatch:'stone-dark', engineered:true },
+  'engineered-13':      { label:'Engineered stone — 13mm',            thick:13, color:'#F4F3EF', hatch:'stone-fine', engineered:true },
+  'engineered-30':      { label:'Engineered stone — 30mm',            thick:30, color:'#F4F3EF', hatch:'stone',      engineered:true },
   // Porcelain and sintered stone.
   'porcelain-12':      { label:'Porcelain / sintered stone, 12mm', thick:12, color:'#F4F3F0', hatch:'stone-fine' },
   'porcelain-20':      { label:'Porcelain / sintered stone, 20mm', thick:20, color:'#EDEBE7', hatch:'stone-fine' },
@@ -2088,8 +2094,15 @@ function benchBrandLabel(key){
   BENCH_BRANDS.forEach(([, list]) => list.forEach(([k, l]) => { if(k === key) out = l; }));
   return out;
 }
+// True when the top being drawn is engineered stone, by whichever route it was
+// chosen. It used to ask only about the brand, so picking an engineered
+// material without one of the named brands drew a banned benchtop and said
+// nothing. The material is the more reliable of the two, because it is the
+// thing that is actually being drawn.
 function benchIsLegacyStone(){
-  return BENCH_BRANDS_LEGACY.indexOf((state.bench && state.bench.brand) || '') >= 0;
+  const b = state.bench || {};
+  if(BENCH_BRANDS_LEGACY.indexOf(b.brand || '') >= 0) return true;
+  return !!(BENCH_DEFS[b.material] && BENCH_DEFS[b.material].engineered);
 }
 // "Dekton Sirius · 20 mm · matt · mitred 40 mm"
 function benchSpecLabel(){
