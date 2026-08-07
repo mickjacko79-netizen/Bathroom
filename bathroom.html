@@ -1552,6 +1552,30 @@ header .project-label .dot.dirty{background:#F7C04A}
     <button class="btn primary" id="dlPdf">Download drawing set (PDF)</button>
   </footer>
 
+<!-- Electron does not implement window.prompt: calling it throws "prompt() is
+     not supported", so every step in this app that asked for a name died on
+     the spot in the desktop build while working perfectly in a browser. New
+     project, save as new job and naming a group all went through it. This is
+     that dialog, in the app's own furniture, and it works in both. -->
+<div id="askModal" class="modal hidden">
+  <div class="modal-backdrop" id="askBackdrop"></div>
+  <div class="modal-panel" style="width:420px">
+    <div class="modal-head">
+      <span id="askTitle">Name</span>
+      <button class="modal-close" id="askCancelX">×</button>
+    </div>
+    <div class="modal-body" style="padding:16px 18px">
+      <label id="askLabel" style="display:block;font-size:11px;color:var(--muted);margin-bottom:6px"></label>
+      <input id="askInput" type="text" autocomplete="off"
+             style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:14px">
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+        <button class="btn ghost" id="askCancel">Cancel</button>
+        <button class="btn primary" id="askOk">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="libraryModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-panel">
@@ -14153,9 +14177,14 @@ function renderEditPanel(){
   _grpSel.addEventListener('change', ()=>{
     let v = _grpSel.value;
     if(v === '__new__'){
-      const name = prompt('New group name (e.g. fridge-stack):');
-      if(!name || !name.trim()){ _grpSel.value = cab.groupId || ''; return; }
-      v = name.trim();
+      _grpSel.value = cab.groupId || '';
+      askText('New group', 'Group name (e.g. fridge-stack)', '').then(name=>{
+        const g = (name || '').trim();
+        if(!g) return;
+        cab.groupId = g;
+        renderActive(); renderCabinetList(); renderEditPanel();
+      });
+      return;
     }
     cab.groupId = v.length > 0 ? v : null;
     renderActive(); renderCabinetList(); renderEditPanel();
@@ -20803,15 +20832,53 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
   if(!job || !proj){ alert('Nothing to export yet — save the current design first.'); return; }
   exportJob(proj.id, job.id);
 });
+// Ask for a line of text. Resolves with the string, or null if it was left
+// empty or cancelled — the same contract prompt() had, so every call site
+// reads the way it did.
+function askText(title, label, value){
+  return new Promise(resolve=>{
+    const modal = document.getElementById('askModal');
+    const input = document.getElementById('askInput');
+    document.getElementById('askTitle').textContent = title || 'Name';
+    document.getElementById('askLabel').textContent = label || '';
+    input.value = (value == null) ? '' : String(value);
+    modal.classList.remove('hidden');
+    input.focus(); input.select();
+    let done = false;
+    const finish = (out)=>{
+      if(done) return; done = true;
+      modal.classList.add('hidden');
+      input.removeEventListener('keydown', onKey);
+      document.getElementById('askOk').removeEventListener('click', onOk);
+      document.getElementById('askCancel').removeEventListener('click', onNo);
+      document.getElementById('askCancelX').removeEventListener('click', onNo);
+      document.getElementById('askBackdrop').removeEventListener('click', onNo);
+      resolve(out);
+    };
+    const onOk = ()=>{ const v = input.value.trim(); finish(v ? v : null); };
+    const onNo = ()=> finish(null);
+    const onKey = (e)=>{
+      if(e.key === 'Enter'){ e.preventDefault(); onOk(); }
+      else if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); onNo(); }
+    };
+    input.addEventListener('keydown', onKey);
+    document.getElementById('askOk').addEventListener('click', onOk);
+    document.getElementById('askCancel').addEventListener('click', onNo);
+    document.getElementById('askCancelX').addEventListener('click', onNo);
+    document.getElementById('askBackdrop').addEventListener('click', onNo);
+  });
+}
 document.getElementById('libNewProject').addEventListener('click', ()=>{
-  const name = prompt('Project name?', 'New project');
-  if(name) newProject(name);
+  askText('New project', 'Project name', 'New project').then(name=>{
+    if(name) newProject(name);
+  });
 });
 document.getElementById('libSaveAs').addEventListener('click', ()=>{
   const proj = getCurrentProject();
   if(!proj){ alert('Create a project first.'); return; }
-  const name = prompt('Save current design as new job. Job name?', state.project.name || 'Untitled');
-  if(name){ newJobInProject(proj.id, name); }
+  askText('Save as new job', 'Job name', state.project.name || 'Untitled').then(name=>{
+    if(name) newJobInProject(proj.id, name);
+  });
 });
 document.getElementById('libImportFile').addEventListener('change', e=>{
   const f = e.target.files && e.target.files[0];
