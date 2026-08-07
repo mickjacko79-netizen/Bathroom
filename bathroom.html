@@ -746,6 +746,21 @@ header .project-label .dot.dirty{background:#F7C04A}
       </div>
 
       <div class="group">
+        <h2>Revisions</h2>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:0">
+          The letter and date of the latest revision print in the title block on
+          every sheet, and the whole history goes on the summary. Add one each
+          time the set goes out.
+        </div>
+        <div class="cab-list" id="revList"></div>
+        <div class="row" style="margin-top:6px;gap:6px;display:flex">
+          <input id="revNote" type="text" placeholder="What changed — e.g. Issued for construction"
+            style="flex:1;min-width:0;font:inherit;font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:4px">
+          <button class="btn small" id="revAdd">Issue</button>
+        </div>
+      </div>
+
+      <div class="group">
         <h2>Sheets to issue</h2>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:0">
           Turn a sheet off and it keeps its tab — it is just left out of the index,
@@ -5346,6 +5361,62 @@ function sheetLayout(sheetW, sheetH, margin){
            contentX: margin, contentY: margin,
            contentW: tbX - margin, contentH: sheetH - 2*margin };
 }
+// ============================================================
+// REVISIONS
+// A revision is a record of the set going out. What the drawing says it
+// currently IS: its letter and date go in the title block on every sheet, and
+// the whole history is printed on the summary.
+//
+// Revisions are job-wide rather than per sheet. A bathroom goes out as a set —
+// every sheet reissued together — and a per-sheet revision column is
+// bookkeeping for a set nobody reissues whole.
+// ============================================================
+function revisions(){
+  if(!Array.isArray(state.revisions)) state.revisions = [];
+  return state.revisions;
+}
+function currentRevision(){
+  const r = revisions();
+  return r.length ? r[r.length - 1] : null;
+}
+// A, B, C … then AA, AB. Twenty-six issues of one bathroom would be a bad day.
+function revLetterFor(i){
+  let out = '', k = i;
+  do { out = String.fromCharCode(65 + (k % 26)) + out; k = Math.floor(k / 26) - 1; } while(k >= 0);
+  return out;
+}
+function nextRevLetter(){ return revLetterFor(revisions().length); }
+function todayISO(){ return new Date().toISOString().slice(0, 10); }
+function addRevision(note, date){
+  revisions().push({ rev: nextRevLetter(), date: date || todayISO(),
+    note: String(note || '').trim(), by: state.project.drawn || '' });
+  renderActive(); scheduleAutosave();
+  return currentRevision();
+}
+function removeRevision(i){
+  const r = revisions();
+  if(i < 0 || i >= r.length) return;
+  r.splice(i, 1);
+  // Letters run in order, so what is left is relettered from the top.
+  r.forEach((x, j)=>{ x.rev = revLetterFor(j); });
+  renderActive(); scheduleAutosave();
+}
+function setRevision(i, patch){
+  const r = revisions();
+  if(!r[i]) return;
+  Object.assign(r[i], patch);
+  renderActive(); scheduleAutosave();
+}
+// What the title block prints. A job that has never been issued says so rather
+// than claiming to be revision A.
+function revLabel(){
+  const c = currentRevision();
+  return c ? c.rev : '—';
+}
+function revDate(){
+  const c = currentRevision();
+  return (c && c.date) || todayISO();
+}
 function titleBlock(d, sheetW, sheetH, opts){
   const margin = opts.margin || 8;
   // The project logo replaces the JOINERY wordmark in the title block banner on
@@ -5379,7 +5450,11 @@ function titleBlock(d, sheetW, sheetH, opts){
   d.text(tbX + 2, tbY + 35 + _drop, state.project.drawn, { color:COL.ink, size:6 });
   d.text(tbX + tbW*0.6 + 2, tbY + 32 + _drop, 'SCALE', { color:COL.muted, size:4.5 });
   d.text(tbX + tbW*0.6 + 2, tbY + 35 + _drop, opts.scale || '—', { color:COL.ink, size:6 });
-  d.text(tbX + 2, tbY + 21 + _drop, new Date().toISOString().slice(0,10), { color:COL.muted, size:5 });
+  d.text(tbX + tbW*0.82 + 2, tbY + 32 + _drop, 'REV', { color:COL.muted, size:4.5 });
+  d.text(tbX + tbW*0.82 + 2, tbY + 35 + _drop, revLabel(),
+    { color: currentRevision() ? COL.accent : COL.muted, size:6.5, bold:!!currentRevision() });
+  // The date the set was issued at, not the day it happens to be printed.
+  d.text(tbX + 2, tbY + 21 + _drop, revDate(), { color:COL.muted, size:5 });
   if(opts.sheetOf) d.text(tbX + tbW - 2, tbY + 21 + _drop, opts.sheetOf, { color:COL.muted, size:5, align:'right' });
   return { contentX: margin, contentY: margin, contentW: tbX - margin, contentH: sheetH - 2*margin, tbX, tbY, tbW, tbH };
 }
@@ -12705,6 +12780,19 @@ function drawSummary(d, area){
     if(_samples.length > 8) note(2, `+ ${_samples.length - 8} more on the cover.`);
   }
 
+  heading(2, 'REVISIONS');
+  const _revs = revisions();
+  if(!_revs.length){
+    note(2, 'Not issued yet. Add a revision when the set goes out.');
+  } else {
+    _revs.slice().reverse().forEach(r=>{
+      row(2, r.rev + '  ' + (r.date || ''), r.note || 'Issued',
+        { strong: r === _revs[_revs.length - 1] });
+    });
+    rule(2);
+    note(2, `Current: revision ${revLabel()} of ${_revs.length}`);
+  }
+
   heading(2, 'SHEETS ISSUED');
   if(!issued.length) note(2, 'Nothing selected — the set would print empty.');
   issued.forEach(s => row(2, s.no || '—', s.indexTitle || s.title));
@@ -18529,6 +18617,62 @@ function _panelName(h){
   return s.trim() || h.textContent.replace(/[←→]/g, '').trim();
 }
 
+// ---- Revisions panel ------------------------------------------------------
+function renderRevPanel(){
+  const host = document.getElementById('revList');
+  if(!host) return;
+  host.textContent = '';
+  const revs = revisions();
+  if(!revs.length){
+    const empty = document.createElement('div');
+    empty.className = 'ctrl';
+    empty.style.cssText = 'font-size:11px;color:var(--muted);margin:2px 0';
+    empty.textContent = 'Not issued yet — the title block reads —.';
+    host.appendChild(empty);
+    return;
+  }
+  // Newest first: the one that matters is the one at the top.
+  revs.slice().reverse().forEach((r)=>{
+    const i = revs.indexOf(r);
+    const row = document.createElement('div');
+    row.className = 'cab-row';
+    row.dataset.rev = r.rev;
+    row.style.cssText = 'display:flex;align-items:center;gap:6px';
+    const tag = document.createElement('div');
+    tag.textContent = r.rev;
+    tag.style.cssText = 'font-weight:700;color:var(--brand);min-width:18px';
+    const date = document.createElement('input');
+    date.type = 'date'; date.value = r.date || '';
+    date.style.cssText = 'font:inherit;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px';
+    date.addEventListener('change', ()=>{ setRevision(i, { date: date.value }); renderRevPanel(); });
+    const note = document.createElement('input');
+    note.type = 'text'; note.value = r.note || '';
+    note.placeholder = 'What changed';
+    note.style.cssText = 'flex:1;min-width:0;font:inherit;font-size:11px;padding:2px 4px;'
+      + 'border:1px solid var(--border);border-radius:4px';
+    note.addEventListener('change', ()=> setRevision(i, { note: note.value }));
+    const del = document.createElement('button');
+    del.className = 'del'; del.textContent = '×'; del.title = 'Remove this revision';
+    del.style.cssText = 'background:none;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px';
+    del.addEventListener('click', ()=>{ removeRevision(i); renderRevPanel(); });
+    row.appendChild(tag); row.appendChild(date); row.appendChild(note); row.appendChild(del);
+    host.appendChild(row);
+  });
+}
+(function(){
+  const b = document.getElementById('revAdd');
+  if(b) b.addEventListener('click', ()=>{
+    const inp = document.getElementById('revNote');
+    addRevision(inp ? inp.value : '');
+    if(inp) inp.value = '';
+    renderRevPanel();
+  });
+  const nt = document.getElementById('revNote');
+  if(nt) nt.addEventListener('keydown', e=>{
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('revAdd').click(); }
+  });
+})();
+
 // ---- Panel heading styling -----------------------------------------------
 // Each sidebar panel's name can be sized and coloured on its own. Keyed by the
 // heading's own text, so a panel keeps its look wherever it moves to.
@@ -20037,6 +20181,8 @@ function snapshotDesign(){
     panelStyle: state.panelStyle || {},
     samples: state.samples || [],
     sheetsOff: state.sheetsOff || {},
+    // A revision history belongs to the job it describes.
+    revisions: state.revisions || [],
   });
 }
 function loadDesign(snap){
@@ -21075,6 +21221,7 @@ function syncSidebarFromState(){
     setVal('benchRightExt', rE); setVal('benchRightExtVal', rE);
   }
   try { renderWallBars(); } catch(_){}
+  try { renderRevPanel(); } catch(_){}
   try { applyPanelSides(); } catch(_){}
   try { applyPanelStyle(); renderPanelStyleList(); } catch(_){}
   try { renderElevCropRow(); } catch(_){}
