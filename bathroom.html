@@ -1363,12 +1363,14 @@ header .project-label .dot.dirty{background:#F7C04A}
           <section id="mn-toilet">
             <h2>14 · Toilet</h2>
             <table>
-              <tr><td>Suite type</td><td>Back to wall, close coupled, or wall hung.</td></tr>
+              <tr><td>Suite type</td><td>Back to wall · back to wall with a concealed cistern · close coupled · wall hung. The two concealed ones put the cistern in the wall and give you a flush plate; the difference between them is that a back-to-wall pan still stands on the floor and a wall-hung one does not.</td></tr>
               <tr><td>Trap</td><td>P or S trap — which decides where the waste goes, and is the thing worth getting right before the slab is poured.</td></tr>
               <tr><td>Set-out</td><td>Wall to pan centre. The number the plumber works to.</td></tr>
               <tr><td>Pan width · projection</td><td>The pan itself.</td></tr>
               <tr><td>Seat height</td><td>To the top of the seat.</td></tr>
-              <tr><td>Cistern / top height</td><td>Top of the cistern, or of the pan for a wall hung suite.</td></tr>
+              <tr><td>Cistern / top height</td><td>Top of an exposed cistern. Not offered on a concealed one, which has no top of its own.</td></tr>
+<tr><td>Flush plate height</td><td>Concealed cisterns only. The cistern is drawn around the plate rather than at a height of its own, because the plate is what it is set out from on site.</td></tr>
+<tr><td>Pan height off floor</td><td>Wall hung only. The gap under the pan, which is the thing people actually decide, because it is what gets cleaned under.</td></tr>
             </table>
           </section>
 
@@ -1649,7 +1651,7 @@ const CATALOG = {
   // finished wall face behind it. It is carried on the fixture rather than
   // derived, because it is the number the drawing exists to communicate.
   'toilet':      { label:'Toilet suite',            defaultW:450, H:830,  D:700, row:'base', hasShelves:false,
-    defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, labelText:'' } },
+    defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, plateH:1015, panH:0, labelText:'' } },
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
     defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, bowlShape:'oval', tapMode:'deck', wallTap:'plate-165', trapL:145, labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
@@ -6931,9 +6933,10 @@ const LED_STRIP_T = 10;
 // derived here, once, so the plan and the elevation cannot describe different
 // toilets.
 const TOILET_STYLES = {
-  'back-to-wall':  'Back to wall',
-  'close-coupled': 'Close coupled',
-  'wall-hung':     'Wall hung, concealed cistern',
+  'back-to-wall':      'Back to wall',
+  'back-to-wall-conc': 'Back to wall, concealed cistern',
+  'close-coupled':     'Close coupled',
+  'wall-hung':         'Wall hung, concealed cistern',
 };
 function toiletGeom(cab){
   const c = (cab && cab.config) || {};
@@ -6947,13 +6950,23 @@ function toiletGeom(cab){
   const seatH = Math.max(320, c.seatH || 400);
   const cistD = Math.max(120, c.cisternD || 200);
   const cistH = Math.max(seatH + 140, c.cisternH || 830);
-  const wallHung = (style === 'wall-hung');
-  const closeC   = (style === 'close-coupled');
+  // Only a wall-hung pan floats. A back-to-wall pan with the cistern in the
+  // wall still stands on the floor — that is the whole difference between the
+  // two, and it is the commonest suite there is.
+  const wallHung  = (style === 'wall-hung');
+  const concealed = wallHung || (style === 'back-to-wall-conc');
+  const closeC    = (style === 'close-coupled');
   // The seat and lid, which are a moulding sitting on the rim rather than part
   // of the china.
   const seatT = 45;
-  // A wall-hung pan floats; anything else stands on the floor.
-  const panBase = wallHung ? Math.max(140, seatH - 255) : 0;
+  // A wall-hung pan floats, at a height you set — the gap under it is the
+  // thing people actually decide, because it is what gets cleaned under.
+  const panBase = wallHung
+    ? Math.max(100, Math.min(seatH - 120, (c.panH > 0) ? c.panH : Math.max(140, seatH - 255)))
+    : 0;
+  // The flush plate on a concealed cistern. It was pinned at 1015 whatever the
+  // room did, so it could not be set out and could not be dimensioned.
+  const plateH = Math.max(300, c.plateH || 1015);
   // Seen from the front, a close-coupled cistern is a separate vessel bolted on
   // and reads WIDER than the pan. A back-to-wall shroud is the same piece of
   // china carried up, so it reads narrower. Getting these the same way round is
@@ -6961,8 +6974,8 @@ function toiletGeom(cab){
   const cistW = closeC ? panW + 70 : panW * 0.88;
   // And it sits on the seat with a step, or grows out of the pan with none.
   const cistBase = closeC ? seatH + seatT + 14 : seatH + seatT;
-  return { style, wallHung, closeC, panW, panD, seatH, seatT, panBase,
-           cistW, cistH, cistBase, cistD,
+  return { style, wallHung, concealed, closeC, panW, panD, seatH, seatT, panBase,
+           cistW, cistH, cistBase, cistD, plateH,
            trap: (c.trap === 's-trap') ? 's-trap' : 'p-trap',
            setOut: Math.max(0, c.setOut || 140) };
 }
@@ -6986,7 +6999,7 @@ function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
   const cu = cab.W/2;
   const P = (pts)=> mapUV(wallId, uOff, pts, plan);
   // The cistern: a vessel against the wall, or one buried in it.
-  if(g.wallHung){
+  if(g.concealed){
     d.dashed(true);
     d.polygon(P(roundRectUV(cu - g.cistW/2, -115, cu + g.cistW/2, -8, 12)), null, COL.ink3, LW.hairline);
     d.dashed(false);
@@ -7003,7 +7016,7 @@ function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
     })();
   }
   // The pan, lapping under the cistern so the two read as one fixture.
-  const v0 = g.wallHung ? 26 : Math.max(20, g.cistD - 24);
+  const v0 = g.concealed ? 26 : Math.max(20, g.cistD - 24);
   d.polygon(P(toiletPanUV(cu, v0, g.panD, g.panW)), SAN.china, line, lw);
   // The seat. From above it is most of what you can see of a toilet — the
   // china shows as a sliver around it — so it is drawn as the object it is
@@ -7064,18 +7077,22 @@ function drawToiletOnElevation(d, cab, X, Y, s, stroke, lw){
     SAN.china, stroke, lw);
   // The shadow the overhang casts on the china below it.
   hline(cu - hw - 12, cu + hw + 12, g.seatH + 2, COL.ink3, LW.hairline);
-  if(g.wallHung){
+  if(g.concealed){
     // The cistern is inside the wall, so it is hidden work — and the plate is
-    // the only part of it anyone will ever see.
+    // the only part of it anyone will ever see. The cistern is drawn around the
+    // plate rather than at a height of its own, because the plate is what it is
+    // set out from on site.
     d.dashed(true);
-    poly([[cu - (g.panW + 120)/2, g.seatH + 130],[cu + (g.panW + 120)/2, g.seatH + 130],
-          [cu + (g.panW + 120)/2, 1180],[cu - (g.panW + 120)/2, 1180]], null, COL.ink3, LW.hairline);
+    poly([[cu - (g.panW + 120)/2, g.seatH + g.seatT + 40],[cu + (g.panW + 120)/2, g.seatH + g.seatT + 40],
+          [cu + (g.panW + 120)/2, g.plateH + 165],[cu - (g.panW + 120)/2, g.plateH + 165]],
+      null, COL.ink3, LW.hairline);
     d.dashed(false);
-    poly(roundPoly([[cu - 110, 940],[cu + 110, 940],[cu + 110, 1090],[cu - 110, 1090]], 18),
+    poly(roundPoly([[cu - 110, g.plateH - 75],[cu + 110, g.plateH - 75],
+                    [cu + 110, g.plateH + 75],[cu - 110, g.plateH + 75]], 18),
       '#F2F2F0', COL.ink2, LW.thin);
     // Two buttons, which is what a flush plate is.
-    d.circle(X(cu - 46), Y(1015), 22*s, SAN.metal, COL.ink2, LW.hairline);
-    d.circle(X(cu + 46), Y(1015), 15*s, SAN.metal, COL.ink2, LW.hairline);
+    d.circle(X(cu - 46), Y(g.plateH), 22*s, SAN.metal, COL.ink2, LW.hairline);
+    d.circle(X(cu + 46), Y(g.plateH), 15*s, SAN.metal, COL.ink2, LW.hairline);
   } else {
     poly(roundPoly([[cu - g.cistW/2, g.cistBase],[cu + g.cistW/2, g.cistBase],
                     [cu + g.cistW/2, g.cistH],[cu - g.cistW/2, g.cistH]],
@@ -14708,13 +14725,20 @@ function renderEditPanel(){
     }
     if(cab.type === 'toilet'){
       pick('Suite type', 'style', Object.entries(TOILET_STYLES));
-      num('Cistern projection', 'cisternD', 120, 320, 5);
+      // A cistern in the wall has no projection into the room and no top of its
+      // own; a plate height is what you set out instead.
+      if(toiletGeom(cab).concealed){
+        num('Flush plate height', 'plateH', 400, 1600, 10);
+      } else {
+        num('Cistern projection', 'cisternD', 120, 320, 5);
+      }
+      if(toiletGeom(cab).wallHung) num('Pan height off floor', 'panH', 100, 600, 5);
       pick('Trap', 'trap', [['p-trap','P-trap'],['s-trap','S-trap']]);
       num('Set-out (wall to pan centre)', 'setOut', 60, 400, 5);
       num('Pan width', 'panW', 250, 600, 5);
       num('Pan projection', 'panD', 400, 900, 5);
       num('Seat height', 'seatH', 320, 520, 5);
-      num('Cistern / top height', 'cisternH', 400, 1400, 5);
+      if(!toiletGeom(cab).concealed) num('Cistern / top height', 'cisternH', 400, 1400, 5);
     } else if(cab.type === 'basin-fs'){
       pick('Type', 'style', [['wall-hung','Wall hung + bottle trap'],['pedestal','Pedestal'],['semi-recessed','Semi-recessed']]);
       // Only a wall-hung basin has a trap on show; a pedestal hides it.
