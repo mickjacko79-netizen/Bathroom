@@ -6970,10 +6970,18 @@ function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
   // The pan, lapping under the cistern so the two read as one fixture.
   const v0 = g.wallHung ? 26 : Math.max(20, g.cistD - 24);
   d.polygon(P(toiletPanUV(cu, v0, g.panD, g.panW)), SAN.china, line, lw);
-  // The seat, just inside the rim.
-  d.polygon(P(toiletPanUV(cu, v0 + 16, g.panD - 12, g.panW - 26)), null, COL.ink3, LW.hairline);
-  // The water surface.
-  d.polygon(P(toiletPanUV(cu, v0 + 66, g.panD - 62, g.panW - 104)), SAN.water, COL.ink3, LW.hairline);
+  // The seat. From above it is most of what you can see of a toilet — the
+  // china shows as a sliver around it — so it is drawn as the object it is
+  // rather than as a line ruled on the pan.
+  d.polygon(P(toiletPanUV(cu, v0 + 10, g.panD - 6, g.panW - 12)), SAN.china, line, lw);
+  // The opening through it, with the water below.
+  d.polygon(P(toiletPanUV(cu, v0 + 80, g.panD - 72, g.panW - 126)), SAN.water, COL.ink3, LW.hairline);
+  // The hinges, at the cistern end, which is the detail that says seat and
+  // lid rather than a moulded rim.
+  [-1, 1].forEach(k=>{
+    d.polygon(P(roundRectUV(cu + k*30 - 22, v0 + 2, cu + k*30 + 22, v0 + 34, 6)),
+      SAN.metal, COL.ink2, LW.hairline);
+  });
   // The waste, which is the whole reason the trap setting exists: an S-trap
   // goes down through the floor and a P-trap goes back through the wall. Both
   // are under the fixture, so both are drawn as hidden work.
@@ -7009,10 +7017,17 @@ function drawToiletOnElevation(d, cab, X, Y, s, stroke, lw){
   poly(roundPoly([[cu - foot, g.panBase],[cu + foot, g.panBase],
                   [cu + hw, g.seatH],[cu - hw, g.seatH]],
                  g.wallHung ? 42 : 30), SAN.china, stroke, lw);
-  // The seat and lid, overhanging the rim, with the shadow that overhang casts.
+  // The seat, and the lid closed on top of it. From the front they are two
+  // mouldings stacked, not one slab — the line between them is the only thing
+  // that says the lid lifts.
+  const _seatT = g.seatT * 0.58, _lidT = g.seatT - _seatT;
   poly(roundPoly([[cu - hw - 12, g.seatH],[cu + hw + 12, g.seatH],
-                  [cu + hw + 12, g.seatH + g.seatT],[cu - hw - 12, g.seatH + g.seatT]], 15),
+                  [cu + hw + 12, g.seatH + _seatT],[cu - hw - 12, g.seatH + _seatT]], 12),
     SAN.china, stroke, lw);
+  poly(roundPoly([[cu - hw - 14, g.seatH + _seatT],[cu + hw + 14, g.seatH + _seatT],
+                  [cu + hw + 14, g.seatH + _seatT + _lidT],[cu - hw - 14, g.seatH + _seatT + _lidT]], 10),
+    SAN.china, stroke, lw);
+  // The shadow the overhang casts on the china below it.
   hline(cu - hw - 12, cu + hw + 12, g.seatH + 2, COL.ink3, LW.hairline);
   if(g.wallHung){
     // The cistern is inside the wall, so it is hidden work — and the plate is
