@@ -8541,8 +8541,12 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
     const bw = c.bowlW || 450, bd = c.bowlD || 340;
     const style = c.style || 'wall-hung';
     const _bs = c.bowlShape || 'oval';
-    d.polygon(P(bowlUV(cu, 40 + bd/2, bw/2, bd/2, _bs)), SAN.china, line, lw);
-    d.polygon(P(bowlUV(cu, 40 + bd/2, bw/2 - 55, bd/2 - 45, _bs)), SAN.water, COL.ink3, LW.hairline);
+    // Hard against the wall. It was set out 40 off it, which is a gap nobody
+    // builds: a wall-hung basin is fixed to the wall and a semi-recessed one is
+    // let into it. The 40 put the drawing out by that much everywhere the basin
+    // is dimensioned from the wall behind it.
+    d.polygon(P(bowlUV(cu, bd/2, bw/2, bd/2, _bs)), SAN.china, line, lw);
+    d.polygon(P(bowlUV(cu, bd/2, bw/2 - 55, bd/2 - 45, _bs)), SAN.water, COL.ink3, LW.hairline);
     if(style === 'pedestal'){
       d.dashed(true);
       d.polygon(P(ellipseUV(cu, 40 + bd/2, 90, 90)), null, COL.ink3, LW.hairline);
