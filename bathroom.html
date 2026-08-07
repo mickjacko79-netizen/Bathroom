@@ -700,6 +700,7 @@ header .project-label .dot.dirty{background:#F7C04A}
               <option value="shower">Shower</option>
               <option value="bath">Bath</option>
               <option value="basin-fs">Basin — wall hung / pedestal</option>
+              <option value="blade">Blade wall (stands out from the wall)</option>
             </optgroup>
             <optgroup label="Vanity joinery">
               <option value="sink-base">Vanity — basin + tap</option>
@@ -727,7 +728,6 @@ header .project-label .dot.dirty{background:#F7C04A}
             <optgroup label="Bathroom accessories">
               <option value="mirror">Mirror</option>
               <option value="wall">Shaving / wall cabinet</option>
-              <option value="blade">Blade wall (stands out from the wall)</option>
               <option value="shower-niche">Niche (recessed into the wall)</option>
               <option value="towel-rail">Towel rail</option>
             </optgroup>
@@ -20432,6 +20432,26 @@ function snapshotDesign(){
     revisions: state.revisions || [],
   });
 }
+// Anything sitting in a row it cannot be drawn from, moved to the row the
+// catalogue says it belongs in. Only base-row types found in a wall row are
+// moved: those are the ones that stand on the floor and are drawn as fixtures.
+function fixRowsForLoadedWalls(){
+  let moved = 0;
+  const fix = (walls)=> (walls || []).forEach(w=>{
+    if(!Array.isArray(w.wallRow) || !Array.isArray(w.baseRow)) return;
+    const stay = [];
+    let here = 0;
+    w.wallRow.forEach(cab=>{
+      const def = cab && CATALOG[cab.type];
+      if(def && def.row === 'base'){ w.baseRow.push(cab); here++; }
+      else stay.push(cab);
+    });
+    if(here){ w.wallRow = stay; moved += here; }
+  });
+  fix(state.walls);
+  (state.rooms || []).forEach(r => fix(r.walls));
+  return moved;
+}
 function loadDesign(snap){
   if(!snap) return;
   // Replace top-level chunks rather than mutating so cabinets etc. get full new arrays.
@@ -20810,6 +20830,13 @@ function loadDesign(snap){
   });
   if(state.drawStyle){
   }
+  // A blade wall stands on the floor, and only the base row is drawn as
+  // fixtures — so a blade added from the wall row was stored somewhere nothing
+  // draws from and simply never appeared, on any sheet. The list it was offered
+  // on has been corrected; this puts back the ones already added to it, so a job
+  // drawn before the fix opens with its blade walls visible instead of needing
+  // them found and added again.
+  try { fixRowsForLoadedWalls(); } catch(e){ console.warn('[Bathroom] row fix failed', e.message); }
   // Advance ID counters past any loaded IDs to prevent collisions on add.
   reseedIdCounters();
   // The loaded job carries its own set of rooms, so the sheet set changes with it.
