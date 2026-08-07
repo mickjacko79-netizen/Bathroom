@@ -1386,7 +1386,7 @@ header .project-label .dot.dirty{background:#F7C04A}
             <table>
               <tr><td>Mirror</td><td>Width and height from Dimensions, <b>Bottom above floor</b>, and an <b>Edge</b> treatment.</td></tr>
               <tr><td>Towel rail</td><td><b>Height above floor</b> and the number of <b>Rails</b>, so a single, a double and a ladder are all drawn properly — on the plan as well, which used to show one tube however many were ordered.</td></tr>
-<tr><td>Toilet roll holder</td><td>Height above floor, and a spare roll above it where the holder carries one. The roll is drawn at the size a roll is, so it takes the room beside a pan that it actually takes.</td></tr>
+<tr><td>Toilet roll holder</td><td>The open sort: a round plate, a short elbow and a bar running along the wall with a cap on the end. Height above floor and the length of the bar. The roll itself is not drawn — it is the fitting being specified.</td></tr>
 <tr><td>Hand towel holder</td><td>A ring or a short bar, at a height.</td></tr>
 <tr><td>Towel hook</td><td>One to four hooks on a plate, at a height.</td></tr>
 <tr><td>Soap dish</td><td>Small for a bar or large for a bottle, at a height. The two are different products rather than one scaled, so they are drawn at their own sizes — 130 across for the small and 190 for the large.</td></tr>
@@ -1689,8 +1689,8 @@ const CATALOG = {
   // an arm off it, and whatever the arm carries. Heights are the ones they are
   // normally set out at, which is the point of having them in the catalogue
   // rather than being drawn in by hand each time.
-  'toilet-roll': { label:'Toilet roll holder',       defaultW:170, H:180,  D:120, row:'wall', hasShelves:false,
-    defaultConfig:{ cabBottomY:700, spare:false, labelText:'' } },
+  'toilet-roll': { label:'Toilet roll holder',       defaultW:230, H:80,   D:85,  row:'wall', hasShelves:false,
+    defaultConfig:{ cabBottomY:700, bar:200, labelText:'' } },
   'hand-towel':  { label:'Hand towel holder',        defaultW:190, H:200,  D:90,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1100, style:'ring', labelText:'' } },
   'towel-hook':  { label:'Towel hook',               defaultW:60,  H:70,   D:70,  row:'wall', hasShelves:false,
@@ -9117,26 +9117,23 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
   }
 
   if(cab.type === 'toilet-roll'){
-    // A roll hangs on a spindle parallel to the wall, so square on you are
-    // looking at the END of it: a circle, with the core in the middle of it and
-    // the bracket behind, showing only where the roll does not cover it. The
-    // arm runs away from you and cannot be seen at all — drawn across the wall
-    // it made a lollipop on a stick.
+    // The open holder: a round plate on the wall, a short elbow forward, and a
+    // bar running ALONG the wall with a cap on the end. Square on, the elbow
+    // comes at you and is hidden behind the plate, so what you see is the plate
+    // and the bar running off it. The roll is not drawn — it is the fitting that
+    // is being specified, and an empty one is what turns up in the box.
     d.rect(x, y, W, H, null, null, 0);
-    const roll = 55*s;
-    // The roll hangs at the bottom of the fitting and the bracket runs up
-    // behind it to the wall plate, so the whole thing sits inside its own box
-    // and the label has somewhere to go.
-    const cx = x + W/2, cy = y + H - roll - 4*s;
-    d.polygon(roundPoly([[cx - 14*s, y + 8*s],[cx + 14*s, y + 8*s],
-                         [cx + 14*s, cy],[cx - 14*s, cy]], 12*s, 3),
+    const cy = y + H*0.55, tube = 10*s;
+    const px = x + 33*s;                       // the plate, on the wall
+    const bx = x + W - 10*s;                   // the far end of the bar
+    d.polygon(roundPoly([[px, cy - tube],[bx, cy - tube],
+                         [bx, cy + tube],[px, cy + tube]], tube, 3),
+      SAN.metal, COL.ink2, LW.thin);
+    // The cap on the end, a little proud of the bar.
+    d.polygon(roundPoly([[bx - 6*s, cy - 14*s],[bx + 4*s, cy - 14*s],
+                         [bx + 4*s, cy + 14*s],[bx - 6*s, cy + 14*s]], 5*s, 3),
       SAN.metal, COL.ink2, LW.hairline);
-    // The plate it is fixed through, on the wall above the roll.
-    d.circle(cx, y + 14*s, 15*s, SAN.metal, COL.ink2, LW.hairline);
-    // The roll, and the core it turns on.
-    d.circle(cx, cy, roll, SAN.china, COL.ink2, LW.thin);
-    d.circle(cx, cy, roll * 0.30, SAN.metal, COL.ink2, LW.hairline);
-    if(c.spare) d.circle(cx, cy - roll*2.2, roll*0.85, SAN.china, COL.ink3, LW.hairline);
+    accPlate(px, cy, 33*s);
     accLabel('TOILET ROLL');
     return true;
   }
@@ -9569,18 +9566,14 @@ function drawAccessoryOnPlan(d, wallId, u0, cab, plan){
   const shape = pts => mapUV(wallId, 0, pts, plan);
   const cu = u0 + W/2;
   if(cab.type === 'toilet-roll'){
-    // From above, a roll on a spindle parallel to the wall is a cylinder seen
-    // on its side: 110 along the wall and 110 out from it, with square ends —
-    // not the circle it makes when you look at the end of it. The plate and the
-    // arm are behind it against the wall.
-    d.polygon(shape(roundRectUV(cu - 17, 0, cu + 17, 12, 4)), SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(shape(roundRectUV(cu - 5, 12, cu + 5, D - 100, 4)), SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(shape(roundRectUV(cu - 55, D - 110, cu + 55, D, 10)), SAN.china, COL.ink2, LW.thin);
-    // The spindle through it, which is the line that says which way it turns.
-    (function(){
-      const a = planMap(wallId, cu - 55, D - 55, plan), b = planMap(wallId, cu + 55, D - 55, plan);
-      d.line(a[0], a[1], b[0], b[1], COL.ink3, LW.hairline);
-    })();
+    // From above: the plate flat on the wall, the elbow coming out of it, and
+    // the bar running along the wall from there. The bar is the length of it,
+    // and it is what a roll would sit on.
+    const pu = u0 + 33;
+    d.polygon(shape(roundRectUV(pu - 33, 0, pu + 33, 14, 5)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(pu - 10, 14, pu + 10, D - 20, 8)), SAN.metal, COL.ink2, LW.hairline);
+    d.polygon(shape(roundRectUV(pu - 10, D - 20, u0 + W - 10, D, 10)), SAN.metal, COL.ink2, LW.thin);
+    d.polygon(shape(roundRectUV(u0 + W - 16, D - 24, u0 + W - 4, D + 4, 4)), SAN.metal, COL.ink2, LW.hairline);
     return;
   }
   if(cab.type === 'hand-towel'){
@@ -15125,7 +15118,7 @@ function renderEditPanel(){
       check('Front lip', 'lip');
     } else if(cab.type === 'toilet-roll'){
       num('Height above floor', 'cabBottomY', 300, 1400, 10);
-      check('Spare roll above', 'spare');
+      num('Bar length', 'bar', 120, 320, 5);
     } else if(cab.type === 'hand-towel'){
       num('Height above floor', 'cabBottomY', 300, 2000, 10);
       pick('Type', 'style', [['ring','Ring'],['bar','Short bar']]);
