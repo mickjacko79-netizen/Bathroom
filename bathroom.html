@@ -1308,6 +1308,7 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><td>Rim height</td><td>Height of the rim above the floor.</td></tr>
               <tr><td>Bowl width · depth</td><td>The bowl itself.</td></tr>
               <tr><td>Tapware</td><td>Deck mounted, or the same wall mixer the bath and the vanity use.</td></tr>
+<tr><td>Wall tap above rim</td><td>Wall mixers only. Measured off the rim rather than the floor, because that is what you choose it against — so it follows the basin when the rim height changes.</td></tr>
             </table>
           </section>
 
@@ -1653,7 +1654,7 @@ const CATALOG = {
   'toilet':      { label:'Toilet suite',            defaultW:450, H:830,  D:700, row:'base', hasShelves:false,
     defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, plateH:1015, panH:0, labelText:'' } },
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
-    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, bowlShape:'oval', tapMode:'deck', wallTap:'plate-165', trapL:145, labelText:'' } },
+    defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, bowlShape:'oval', tapMode:'deck', wallTap:'plate-165', tapAbove:230, trapL:145, labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
     defaultConfig:{ style:'inset', rimH:580, hobW:75, innerInset:110, tapMode:'wall', tapH:1050, wallTap:'plate-165',
                     // wasteEnd: 'L' | 'C' | 'R' | 'OC' (offset centre), matching
@@ -6848,6 +6849,11 @@ function wallTapSpec(style){ return WALL_TAP_SPEC[style] || WALL_TAP_SPEC['plate
 // tap, so unlike a bath it only gets the mixer when it is set to a wall tap —
 // turning every pedestal basin in every saved job into a wall-mounted one
 // would be a change to the job, not to how it is drawn.
+function basinTapH(cab){
+  const c = (cab && cab.config) || {};
+  const rim = c.rimH || 850;
+  return rim + Math.max(50, c.tapAbove || 230);
+}
 function wallMixerOf(cab){
   if(!cab) return null;
   const c = cab.config || {};
@@ -8868,7 +8874,7 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
       R(cu-19, _bTop - _tL*0.35, cu+19, _bTop - _tL*0.35 - 30, null, COL.ink3, LW.hairline);
       d.dashed(false);
     }
-    if(wallMixerOf(cab)) drawWallMixerOnElevation(d, X(cu), Y(rimH + 230), s, wallMixerOf(cab));
+    if(wallMixerOf(cab)) drawWallMixerOnElevation(d, X(cu), Y(basinTapH(cab)), s, wallMixerOf(cab));
     else drawTapOnElevation(d, X(cu), Y(rimH), s, 'gooseneck');
     return;
   }
@@ -14745,6 +14751,8 @@ function renderEditPanel(){
       if((c.style || 'wall-hung') !== 'pedestal') num('Bottle trap length', 'trapL', 40, 400, 5);
       pick('Bowl shape', 'bowlShape', Object.entries(BOWL_SHAPES));
       pick('Tapware', 'tapMode', [['deck','Deck mounted'],['wall','Wall mounted']]);
+      // Only a wall mixer has a height to set; a deck tap stands on the rim.
+      if((c.tapMode || 'deck') === 'wall') num('Wall tap above rim', 'tapAbove', 50, 600, 10);
       num('Rim height', 'rimH', 700, 1000, 5);
       num('Bowl width', 'bowlW', 250, 900, 5);
       num('Bowl depth', 'bowlD', 200, 600, 5);
