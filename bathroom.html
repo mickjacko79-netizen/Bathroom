@@ -1265,6 +1265,11 @@ header .project-label .dot.dirty{background:#F7C04A}
               side is nearer. Take it well past and it goes where you took it, stepping over what it
               passed rather than shoving it along the wall. The fixture in your hand is the only one that
               moves, and that holds however tightly the wall is packed.</div>
+            <p><b>Height counts.</b> Two wall fixtures are only in each other's way if they share a band of
+              height as well as a stretch of wall. A roll holder at 700 and a shaving cabinet at 1420 never
+              touch, so the roll holder hangs under the cabinet and neither is placed with any regard to
+              the other. Two cabinets at the same height still keep out of each other's way, and so does
+              everything standing on the floor — joinery cannot be made to interpenetrate.</p>
             <p>Nothing travels with anything unless you have grouped it. Group two fixtures and they move
               together, keeping the spacing between them; that is what a group is for, and it is the only
               thing that does it.</p>
@@ -6793,7 +6798,8 @@ function wallRowLayout(wall, ox, oy, Hm, s, startU, wallBottomY){
   let wu = startU;
   ((wall && wall.wallRow) || []).forEach(cab=>{
     wu += ((cab.adj && cab.adj.left && cab.adj.left.filler) || 0)
-        + ((cab.adj && cab.adj.left && cab.adj.left.panel)  || 0);
+        + ((cab.adj && cab.adj.left && cab.adj.left.panel)  || 0)
+        - adjLap(cab);
     const floorY = (hasBottomOverride(cab) && cab.config && cab.config.cabBottomY)
       ? cab.config.cabBottomY : wallBottomY;
     const bottomY = floorY + pelmetUnderH(cab);
@@ -7554,7 +7560,7 @@ function elecBehindJoinery(wall, it){
   const wallBottom = benchTopY + ((state.bench && state.bench.splashback) || 0);
   let wu = runStartOffset(wall, 'wall');
   (wall.wallRow || []).forEach(cab=>{
-    wu += (cab.adj?.left?.filler || 0) + (cab.adj?.left?.panel || 0);
+    wu += (cab.adj?.left?.filler || 0) + (cab.adj?.left?.panel || 0) - adjLap(cab);
     const b = (hasBottomOverride(cab)
       ? (cab.config && cab.config.cabBottomY) || wallBottom : wallBottom) + pelmetUnderH(cab);
     spans.push({ u0:wu, u1:wu + cab.W, h0:b, h1:b + cab.H });
@@ -9941,6 +9947,7 @@ function drawExtraRoomOnPlan(d, kox, koy, s, view, p){
       w.wallRow.forEach(cab=>{
         if(cab.adj?.left?.filler > 0) wu += cab.adj.left.filler;
         if(cab.adj?.left?.panel  > 0) wu += cab.adj.left.panel;
+        wu -= adjLap(cab);
         const c4 = planRectOnWall(d, w.id, wu, cab.W, cab.D, plan,
           state.finish.color, state.ui.selectedCabId === cab.id ? COL.selected : COL.ink, LW.hairline);
         const xs = c4.map(c=>c[0]), ys = c4.map(c=>c[1]);
@@ -10371,6 +10378,7 @@ function drawPlan(d, area, view, opts){
       w.wallRow.forEach(cab=>{
         if(cab.adj?.left?.filler > 0) wallU += cab.adj.left.filler;
         if(cab.adj?.left?.panel  > 0) wallU += cab.adj.left.panel;
+        wallU -= adjLap(cab);
         if(cab.type === 'corner-wall') drawCornerLegHost(w, cab, wallU, 'wall');
         wallU += cab.W;
         if(cab.adj?.right?.panel  > 0) wallU += cab.adj.right.panel;
@@ -10549,6 +10557,7 @@ function drawPlan(d, area, view, opts){
       if(state.drawStyle.showWallCabsOnPlan === false && !isWallAccessory(cab)){
         if(cab.adj?.left?.filler > 0) u += cab.adj.left.filler;
         if(cab.adj?.left?.panel  > 0) u += cab.adj.left.panel;
+        u -= adjLap(cab);
         u += cab.W;
         if(cab.adj?.right?.panel  > 0) u += cab.adj.right.panel;
         if(cab.adj?.right?.filler > 0) u += cab.adj.right.filler;
@@ -10581,6 +10590,7 @@ function drawPlan(d, area, view, opts){
           planBandOnWall(d, w.id, u, cab.adj.left.filler, b.v0 - _rec, b.v1 - _rec, plan, '#F0EAD8', COL.ink3, LW.hairline); })();
       }
       if(cab.adj?.left?.filler > 0) u += cab.adj.left.filler;
+      u -= adjLap(cab);
       if(cab.adj?.left?.panel > 0){
         planBandOnWall(d, w.id, u, cab.adj.left.panel, -_rec, _adjD - _rec, plan, '#E5DCC4', COL.accent, LW.hairline);
         u += cab.adj.left.panel;
@@ -12045,6 +12055,7 @@ function drawElevation(d, area, wallId, opts){
       drawAdjElevWall(d, ox + wu*s, _adjWallY(oy, Hm, s, wallBottomY, cab), s, cab.adj.left.panel, cab.H, 'panel', finishCol);
       wu += cab.adj.left.panel;
     }
+    wu -= adjLap(cab);
     const x = ox + wu*s;
     // Fridge-wall sits on top of the fridge (custom bottom Y), not at the standard wall-cab height.
     // An item hung at its own height was taken at its word, so one set high
@@ -12649,6 +12660,7 @@ function drawElevation(d, area, wallId, opts){
         const rf = (cab.adj && cab.adj.right && cab.adj.right.filler) || 0;
         if(lf > 0){ dimU(cuW, cuW+lf, _wallTopY, `${lf}`, { size:_dts-1, color:COL.accent }); cuW += lf; }
         if(lp > 0){ dimU(cuW, cuW+lp, _wallTopY, `${lp}`, { size:_dts-1, color:COL.accent }); cuW += lp; }
+        cuW -= adjLap(cab);
         dimU(cuW, cuW+cab.W, _wallTopY, `${cab.W}`, { size:_dts-1, color:COL.ink3 });
         cuW += cab.W;
         if(rp > 0){ dimU(cuW, cuW+rp, _wallTopY, `${rp}`, { size:_dts-1, color:COL.accent }); cuW += rp; }
@@ -13876,6 +13888,7 @@ function runUpTo(arr, idx, startOff){
   for(let k = 0; k < idx; k++){
     const a = arr[k].adj || {};
     u += ((a.left  && ((a.left.filler  || 0) + (a.left.panel  || 0))) || 0)
+       - adjLap(arr[k])
        + arr[k].W
        + ((a.right && ((a.right.filler || 0) + (a.right.panel || 0))) || 0);
   }
@@ -13887,7 +13900,7 @@ function cabLeftU(cab, arr, startOff){
   const i = (arr || []).indexOf(cab);
   if(i < 0) return startOff || 0;
   const L = (cab.adj && cab.adj.left) || {};
-  return runUpTo(arr, i, startOff) + (L.filler || 0) + (L.panel || 0);
+  return runUpTo(arr, i, startOff) + (L.filler || 0) + (L.panel || 0) - adjLap(cab);
 }
 // Where a point on a view falls along the wall, in millimetres.
 function viewUAt(view, wallId, px, py){
@@ -13902,14 +13915,14 @@ function dragRowOf(pending){
   if(!pending) return null;
   if(pending.wallId === 'island'){
     return { arr: (state.island && state.island.baseRow) || [], startOff: 0,
-             endOff: (state.island && state.island.length) || null };
+             endOff: (state.island && state.island.length) || null, isWallRow: false };
   }
   const fw = findWallForCab(pending.cabId);
   const w = fw ? fw.wall : getWall(pending.wallId);
   if(!w) return null;
   return { arr: w[pending.row] || [],
            startOff: runStartOffset(w, pending.row === 'wallRow' ? 'wall' : 'base'),
-           endOff: wallLength(w.id) };
+           endOff: wallLength(w.id), isWallRow: pending.row === 'wallRow' };
 }
 // ---- Where things stand ---------------------------------------------------
 // A row is stored end to end, and it stays that way: the benchtop, the fillers,
@@ -13920,13 +13933,32 @@ function dragRowOf(pending){
 // figures — so everything else is put back at the number it was already standing
 // at, however far down the wall it is and however many items are in between.
 
+// How far a fitting laps back over what stands in front of it in the queue.
+//
+// A row is laid end to end, so without this two fittings can never share a
+// stretch of wall — not because it is disallowed but because there is no way to
+// write it down. A roll holder at 700 and a mirror at 1000 never touch, and one
+// has to be able to hang under the other. The lap is how the queue says so, and
+// it is only ever set where the two clear each other in height, so joinery on
+// the floor still cannot be made to interpenetrate.
+function adjLap(c){ return (c && c.adj && c.adj.left && c.adj.left.lap) || 0; }
+// The bottom of the band of height a fitting takes up. Joinery stands on the
+// floor, so a base row all shares the bottom of the wall and blocks exactly as
+// it always has; only wall-row fittings hang at heights that miss each other.
+function cabBandLo(cab, isWallRow){ return isWallRow ? wallCabBottomY(cab) : 0; }
+// Whether two fittings pass each other in height, and so may share the wall.
+function cabsClearInHeight(a, b, isWallRow){
+  if(!isWallRow || !a || !b) return false;
+  const aLo = cabBandLo(a, true), bLo = cabBandLo(b, true);
+  return (aLo + (a.H || 0)) <= bLo || (bLo + (b.H || 0)) <= aLo;
+}
 // Where each item's carcass starts along the wall, in list order.
 function rowPositions(arr, startOff){
   const out = [];
   let u = startOff || 0;
   (arr || []).forEach(c=>{
     const L = (c.adj && c.adj.left) || {}, R = (c.adj && c.adj.right) || {};
-    u += (L.filler || 0) + (L.panel || 0);
+    u += (L.filler || 0) + (L.panel || 0) - adjLap(c);
     out.push(u);
     u += c.W + (R.filler || 0) + (R.panel || 0);
   });
@@ -13950,21 +13982,24 @@ function adjLeftSolid(c){
 function cabOuterW(c){
   return ((c.adj && c.adj.left && c.adj.left.panel) || 0) + c.W + adjRightExtra(c);
 }
-// Lay the row back out so each item stands where `want` puts it, and write the
-// result back as the gap in front of it.
+// Lay the row back out so each item stands where "want" puts it, and write the
+// result back as the gap in front of it — or, where it laps over what precedes
+// it in the queue, as a lap.
 //
-// `free` are the items being moved. They are pinned on their figure and the rest
+// "free" are the items being moved. They are pinned on their figure and the rest
 // is laid out around them — put down where it was dropped is the whole point, so
 // the thing in hand is not the thing that gives way.
 //
 // Everything else is asked for the number it was already standing at, so it does
-// not move. Two things cannot stand in the same place, though: where the pinned
-// item has been put on top of something, that something steps over to the far
-// side of it, and only what is then genuinely in the way follows.
+// not move. What can push it is only what it cannot pass: two fittings sharing a
+// band of height cannot share a stretch of wall, and one put down on the other
+// makes it step to the far side. Two that clear each other in height ignore each
+// other entirely, which is how a roll holder comes to hang under a shaving
+// cabinet instead of being turned away by it.
 //
 // Items come out ordered by where they ended up, so moving one past another
 // changes their places in the list as well as on the wall.
-function applyRowPositions(arr, startOff, want, free){
+function applyRowPositions(arr, startOff, want, free, isWallRow){
   if(!Array.isArray(arr) || !arr.length) return;
   const s0 = startOff || 0;
   arr.forEach(c=>{
@@ -13978,31 +14013,38 @@ function applyRowPositions(arr, startOff, want, free){
   const blockL = i => Math.round(want[i]) - ((arr[i].adj.left.panel) || 0);
   const order = arr.map((c, i)=> i).sort((a, b)=> (blockL(a) - blockL(b)) || (a - b));
   const pinned = order.filter(i => moving(arr[i]))
-                      .map(i => ({ l: blockL(i), r: blockL(i) + cabOuterW(arr[i]) }));
+                      .map(i => ({ l: blockL(i), r: blockL(i) + cabOuterW(arr[i]), cab: arr[i] }));
   const at = [];
-  let cursor = s0;
+  const down = [];             // what has been laid so far, as blocks
   order.forEach(i=>{
     const c = arr[i];
-    let l;
-    if(moving(c)) l = blockL(i);
-    else l = Math.max(blockL(i), cursor);
+    let l = blockL(i);
     if(!moving(c)){
-      // Step over anything pinned that it now lands on, and check again — one
-      // step can land it on the next.
-      for(let k = 0; k < pinned.length; k++){
-        const f = pinned[k];
-        if(l < f.r && l + cabOuterW(c) > f.l){ l = f.r; k = -1; }
+      // Shoved forward only by what it genuinely cannot pass, and only while it
+      // is actually on top of it. One step can land it on the next, so it goes
+      // round again until there is nothing in its way.
+      const inTheWay = pinned.concat(down);
+      let again = true, guard = 0;
+      while(again && guard++ < arr.length * 3){
+        again = false;
+        inTheWay.forEach(f=>{
+          if(f.cab === c || cabsClearInHeight(c, f.cab, isWallRow)) return;
+          if(l < f.r && l + cabOuterW(c) > f.l){ l = f.r; again = true; }
+        });
       }
+      l = Math.max(l, s0);
     }
     at[i] = l;
-    cursor = Math.max(cursor, l + cabOuterW(c));
+    down.push({ l, r: l + cabOuterW(c), cab: c });
   });
   const laid = arr.map((c, i)=> i)
                   .sort((a, b)=> (at[a] - at[b]) || (order.indexOf(a) - order.indexOf(b)));
   let run = s0;
   laid.forEach(i=>{
     const c = arr[i];
-    const gap = Math.max(0, Math.round(at[i] - run));
+    const step = Math.round(at[i] - run);
+    const gap = Math.max(0, step);       // clear wall in front of it
+    const lap = Math.max(0, -step);      // or how far it laps back over it
     // Only write when the figure actually changes, so an item that has not moved
     // keeps its filler's kind and its depth exactly as they were set.
     if(gap !== (c.adj.left.filler || 0)){
@@ -14011,6 +14053,7 @@ function applyRowPositions(arr, startOff, want, free){
       // keeps its kind — a move is not the place to reclassify it.
       if(gap > 0 && c.adj.left.kind !== 'filler') c.adj.left.kind = 'space';
     }
+    if(lap !== adjLap(c)) c.adj.left.lap = lap;
     // Where the gap in front of it has gone, so has any depth set for filling it.
     if(!(c.adj.left.filler > 0)) c.adj.left.kind = null;
     run = at[i] + cabOuterW(c);
@@ -14056,7 +14099,7 @@ function snapPositionU(cab, arr, pos, startOff, endOff, u){
 //
 // Returns how far the item has come from home, which is nothing when it has not
 // moved, and nothing when there is nowhere on the wall it will go.
-function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home){
+function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home, isWallRow){
   if(!cab || !Array.isArray(arr)) return 0;
   const i = arr.indexOf(cab);
   if(i < 0) return 0;
@@ -14084,11 +14127,14 @@ function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home){
     bodyR = Math.max(bodyR, blockR(k));
   });
   const need = bodyR - bodyL;
-  // Everything it has to keep out of the way of. Anything standing inside the
-  // body's own span is not an obstacle to it — it is already there.
+  // Everything it has to keep out of the way of — which is only what it cannot
+  // pass in height. A roll holder at 700 goes under a shaving cabinet at 1420
+  // without either of them knowing about it. Anything standing inside the body's
+  // own span is not an obstacle to it either: it is already there.
   const blocked = [];
   arr.forEach((c, k)=>{
     if(free.has(c)) return;
+    if(isWallRow && arr.every((f, n)=> !free.has(f) || cabsClearInHeight(f, c, true))) return;
     const l = blockL(k), r = blockR(k);
     if(r <= bodyL || l >= bodyR) blocked.push({ l, r });
   });
@@ -14113,7 +14159,7 @@ function moveCabToU(cab, arr, startOff, endOff, targetU, snap, home){
   const delta = (base[i] + shift) - pos[i];
   if(!shift && !delta) return 0;
   const want = base.map((v, k)=> free.has(arr[k]) ? v + shift : v);
-  applyRowPositions(arr, startOff, want, free);
+  applyRowPositions(arr, startOff, want, free, isWallRow);
   // Other rows have no home to be laid out from, so they take the step.
   slideGroupBy(cab, delta, arr);
   return shift;
@@ -14130,11 +14176,11 @@ function rowHome(arr, startOff){
 function allRows(){
   const rows = [];
   allWallSets().forEach(({ walls })=> (walls || []).forEach(w=>{
-    if(w.baseRow) rows.push({ arr: w.baseRow, startOff: runStartOffset(w, 'base'), endOff: wallLength(w.id) });
-    if(w.wallRow) rows.push({ arr: w.wallRow, startOff: runStartOffset(w, 'wall'), endOff: wallLength(w.id) });
+    if(w.baseRow) rows.push({ arr: w.baseRow, startOff: runStartOffset(w, 'base'), endOff: wallLength(w.id), isWallRow:false });
+    if(w.wallRow) rows.push({ arr: w.wallRow, startOff: runStartOffset(w, 'wall'), endOff: wallLength(w.id), isWallRow:true });
   }));
   if(state.island && state.island.baseRow)
-    rows.push({ arr: state.island.baseRow, startOff: 0, endOff: state.island.length || null });
+    rows.push({ arr: state.island.baseRow, startOff: 0, endOff: state.island.length || null, isWallRow:false });
   return rows;
 }
 // A group can straddle rows and walls. Members outside the row being worked on
@@ -14142,7 +14188,7 @@ function allRows(){
 // their own neighbours along either. `skip` is the row already dealt with.
 function slideGroupBy(cab, delta, skip){
   if(!cab || !cab.groupId || !delta) return;
-  allRows().forEach(({ arr, startOff })=>{
+  allRows().forEach(({ arr, startOff, isWallRow })=>{
     if(arr === skip) return;
     if(!arr.some(c => c.groupId === cab.groupId)) return;
     const pos = rowPositions(arr, startOff);
@@ -14153,7 +14199,7 @@ function slideGroupBy(cab, delta, skip){
       want[k] = pos[k] + delta;
       free.add(c);
     });
-    applyRowPositions(arr, startOff, want, free);
+    applyRowPositions(arr, startOff, want, free, isWallRow);
   });
 }
 // The row an item is standing in, and where that run starts and ends.
@@ -14227,7 +14273,7 @@ function _liveReorderCab(){
   // Where its left edge is being asked to go, allowing for where it was taken
   // hold of.
   const targetU = ds.hoverU - (ds.pending.grabDU || 0);
-  moveCabToU(cab, arr, startOff, _row.endOff, targetU, true, ds.pending.home);
+  moveCabToU(cab, arr, startOff, _row.endOff, targetU, true, ds.pending.home, _row.isWallRow);
   ds.targetU = targetU;
 }
 
@@ -16043,7 +16089,7 @@ function renderEditPanel(){
       if(!isFinite(v)){ inp.value = String(here); return; }
       pushHistory();
       // Typed, so taken as given — snapping is for finding an edge with a mouse.
-      moveCabToU(cab, row.arr, row.startOff, row.endOff, Math.max(0, v), false);
+      moveCabToU(cab, row.arr, row.startOff, row.endOff, Math.max(0, v), false, null, row.isWallRow);
       renderEditPanel(); renderCabinetList(); renderActive();
     });
     editor.appendChild(wrap);
