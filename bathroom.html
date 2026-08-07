@@ -1689,7 +1689,7 @@ const CATALOG = {
   // an arm off it, and whatever the arm carries. Heights are the ones they are
   // normally set out at, which is the point of having them in the catalogue
   // rather than being drawn in by hand each time.
-  'toilet-roll': { label:'Toilet roll holder',       defaultW:170, H:110,  D:120, row:'wall', hasShelves:false,
+  'toilet-roll': { label:'Toilet roll holder',       defaultW:170, H:180,  D:120, row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:700, spare:false, labelText:'' } },
   'hand-towel':  { label:'Hand towel holder',        defaultW:190, H:200,  D:90,  row:'wall', hasShelves:false,
     defaultConfig:{ cabBottomY:1100, style:'ring', labelText:'' } },
@@ -9080,7 +9080,7 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
   // Just clear of the item, and small enough not to sprawl across the wall
   // beside a fitting 60 wide. It used to sit above the whole box, which on a
   // tall rail put the words a long way from the thing they name.
-  const accLabel = (txt)=> d.text(x + W/2, y - 4*s, (c.labelText || txt),
+  const accLabel = (txt)=> d.text(x + W/2, y - 16*s, (c.labelText || txt),
     { align:'center', size:3.6, color:COL.muted, italic:true });
 
   if(cab.type === 'soap-dish'){
@@ -9124,11 +9124,15 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     // it made a lollipop on a stick.
     d.rect(x, y, W, H, null, null, 0);
     const roll = 55*s;
-    const cx = x + W/2, cy = y + H*0.5;
-    // The bracket, behind the roll and only just clear of it.
-    d.polygon(roundPoly([[cx - 13*s, cy - roll - 16*s],[cx + 13*s, cy - roll - 16*s],
-                         [cx + 13*s, cy],[cx - 13*s, cy]], 10*s, 3),
-      SAN.metal, COL.ink3, LW.hairline);
+    // The roll hangs at the bottom of the fitting and the bracket runs up
+    // behind it to the wall plate, so the whole thing sits inside its own box
+    // and the label has somewhere to go.
+    const cx = x + W/2, cy = y + H - roll - 4*s;
+    d.polygon(roundPoly([[cx - 14*s, y + 8*s],[cx + 14*s, y + 8*s],
+                         [cx + 14*s, cy],[cx - 14*s, cy]], 12*s, 3),
+      SAN.metal, COL.ink2, LW.hairline);
+    // The plate it is fixed through, on the wall above the roll.
+    d.circle(cx, y + 14*s, 15*s, SAN.metal, COL.ink2, LW.hairline);
     // The roll, and the core it turns on.
     d.circle(cx, cy, roll, SAN.china, COL.ink2, LW.thin);
     d.circle(cx, cy, roll * 0.30, SAN.metal, COL.ink2, LW.hairline);
