@@ -9134,13 +9134,14 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     const lh = (c.hand === 'left');
     const px = lh ? (x + W - 33*s) : (x + 33*s);   // the plate, on the wall
     const bx = lh ? (x + 10*s)     : (x + W - 10*s); // the far end of the bar
+    // The bar first and the plate over it, so the tube runs into the plate
+    // rather than stopping at its edge.
     d.polygon(roundPoly([[px, cy - tube],[bx, cy - tube],
                          [bx, cy + tube],[px, cy + tube]], tube, 3),
       SAN.metal, COL.ink2, LW.thin);
-    // The cap on the end, a little proud of the bar.
     (function(){ const e = lh ? -1 : 1;
-      d.polygon(roundPoly([[bx - 6*s*e, cy - 14*s],[bx + 4*s*e, cy - 14*s],
-                           [bx + 4*s*e, cy + 14*s],[bx - 6*s*e, cy + 14*s]], 5*s, 3),
+      d.polygon(roundPoly([[bx - 5*s*e, cy - 14*s],[bx + 5*s*e, cy - 14*s],
+                           [bx + 5*s*e, cy + 14*s],[bx - 5*s*e, cy + 14*s]], 5*s, 3),
         SAN.metal, COL.ink2, LW.hairline);
     })();
     accPlate(px, cy, 33*s);
@@ -9582,11 +9583,23 @@ function drawAccessoryOnPlan(d, wallId, u0, cab, plan){
     const lh = (c.hand === 'left');
     const pu = lh ? (u0 + W - 33) : (u0 + 33);
     const be = lh ? (u0 + 10) : (u0 + W - 10);
-    d.polygon(shape(roundRectUV(pu - 33, 0, pu + 33, 14, 5)), SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(shape(roundRectUV(pu - 10, 14, pu + 10, D - 20, 8)), SAN.metal, COL.ink2, LW.hairline);
-    d.polygon(shape(roundRectUV(Math.min(pu, be) - 10, D - 20, Math.max(pu, be) + 10, D, 10)),
-      SAN.metal, COL.ink2, LW.thin);
-    d.polygon(shape(roundRectUV(be - 6, D - 24, be + 6, D + 4, 4)), SAN.metal, COL.ink2, LW.hairline);
+    const t = 10, e = lh ? -1 : 1;
+    // The elbow and the bar are one bent tube, drawn as one outline with the
+    // corner radiused. Two rectangles butted together read as a joint where
+    // there is not one — the fitting is bent, not welded.
+    d.polygon(shape(roundPoly([
+      [pu - t*e, 10],
+      [pu - t*e, D],
+      [be + t*e, D],
+      [be + t*e, D - 2*t],
+      [pu + t*e, D - 2*t],
+      [pu + t*e, 10],
+    ], t*0.9, 4)), SAN.metal, COL.ink2, LW.thin);
+    // The cap on the free end, a touch proud of the bar.
+    d.polygon(shape(roundRectUV(be + e*4 - 5, D - 2*t - 4, be + e*4 + 5, D + 4, 4)),
+      SAN.metal, COL.ink2, LW.hairline);
+    // The wall plate last, so the tube runs into it rather than up to it.
+    d.polygon(shape(roundRectUV(pu - 33, 0, pu + 33, 14, 6)), SAN.metal, COL.ink2, LW.hairline);
     return;
   }
   if(cab.type === 'hand-towel'){
