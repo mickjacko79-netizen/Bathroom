@@ -4,12 +4,13 @@ SiteMeasure carries its own integration. It is not part of the app it happens to
 be embedded in, so it goes wherever `inline.html` goes — copy the file into
 another app and the integration is already there.
 
-There are two halves, and only the first is required.
+There are three pieces, and only the first is required.
 
 | | Where it lives | What it is |
 |---|---|---|
 | The component side | `sitemeasure/inline.html` | `window.smClaude` and a postMessage door |
-| The host side | `desktop/sitemeasure-mcp.js` | an MCP server that drives it from Electron |
+| The host bridge | `desktop/sitemeasure-mcp.js` | an MCP server that drives it from Electron |
+| The chat panel | `sitemeasure/inline.html` | **🤖 Ask Claude** in the top bar, answered by the host |
 
 ## The rule it knows
 
@@ -126,6 +127,43 @@ restart. Being plain about the limit: anything already running as you can read
 that token file.
 
 `SITEMEASURE_MCP_PORT` moves it off 8792 if something else wants that port.
+
+## The chat panel, and answering for it
+
+There is an **🤖 Ask Claude** button in the top bar. It is hidden until a host
+says it can answer, so opening this file on its own shows nothing and runs none
+of it.
+
+The site measure cannot reach Claude itself — it is a page in an iframe with no
+shell behind it, and it stays that way on purpose. So it asks:
+
+```
+out   { type:'sm-chat-call', reqId, method, args }
+back  { type:'sm-chat-result', reqId, ok, value }   or { ok:false, error }
+push  { type:'sm-chat-event', payload }             as a turn is written
+```
+
+`sm-chat-hello` is answered with `sm-chat-ready`, and that is what reveals the
+button. The site measure knocks every half second for twenty seconds, so the
+host's own bridge does not have to be up before the iframe loads.
+
+The methods a host is asked for: `status`, `ask`, `stop`, `reset`, `loginStart`,
+`loginCode`, `loginCancel`, `dictateStart`, `dictateStop`, `attachPlan`. Refuse
+anything else by name rather than ignoring it — a call that never comes back
+leaves the panel stuck on "Working…".
+
+The events pushed back are whatever your Claude runner emits: `start`, `text`,
+`tool`, `error`, `done`, plus `dictate-text` / `dictate-done` / `dictate-error`
+and `auth-url` / `auth-done` if you support those.
+
+**It is one conversation, not two.** The host's panel and this one share a
+thread, so asking here writes into both. That is the point: asking about the
+plan in here and about the joinery in there is one conversation that has seen
+both. If your host has no panel of its own, nothing changes.
+
+In Bathroom the whole answer is about forty lines at the end of the chat panel's
+script in `bathroom.html` — forward those ten methods to `window.bathroomChat`,
+and fan `onEvent` out to whichever frames have said hello. Copy that.
 
 ## If you are hosting it somewhere that isn't Electron
 

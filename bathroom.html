@@ -22471,7 +22471,9 @@ try {
 
   // Text arrives in pieces; they belong in one paragraph rather than one each.
   bridge.onEvent(evt => {
-    if(evt.type === 'start'){ reply = null; return; }
+    // A turn can start from the site measure's panel rather than this one, and
+    // it is the same Claude either way — so follow it whoever asked.
+    if(evt.type === 'start'){ reply = null; if(!busy) setBusy(true); return; }
     if(evt.type === 'text'){
       const was = atBottom();
       if(!reply) reply = add('chat-msg claude', '');
@@ -22637,6 +22639,63 @@ try {
     else add('chat-err', state.message);
     return false;
   }
+
+  // ---- answering for the site measure ------------------------------------
+  // The site measure is a page in an iframe with no shell behind it, so it
+  // cannot reach Claude itself. It asks whoever is hosting it; this is the
+  // answer. Same bridge, same Claude, same thread — asking in there and asking
+  // in here is one conversation, which is why events go to both panels.
+  //
+  // Only ever set up when there is a bridge to forward to. A plain browser gets
+  // no listener, the site measure's hello goes unanswered, and its button never
+  // appears — which is the same rule this whole panel follows.
+  (function(){
+    const RELAYED = ['status','ask','stop','reset','loginStart','loginCode',
+                     'loginCancel','dictateStart','dictateStop','attachPlan'];
+    const frames = new Set();
+
+    window.addEventListener('message', async ev => {
+      const m = ev && ev.data;
+      if(!m || !m.type) return;
+      const source = ev.source;
+      if(!source) return;
+
+      if(m.type === 'sm-chat-hello'){
+        frames.add(source);
+        try { source.postMessage({ type:'sm-chat-ready', available:true }, '*'); } catch(_){}
+        return;
+      }
+      if(m.type !== 'sm-chat-call') return;
+
+      const answer = payload => {
+        try { source.postMessage(Object.assign({ type:'sm-chat-result', reqId:m.reqId }, payload), '*'); }
+        catch(_){}
+      };
+      if(RELAYED.indexOf(m.method) < 0){
+        return answer({ ok:false, error:'The app cannot do "' + m.method + '".' });
+      }
+      try {
+        const a = m.args || {};
+        let value;
+        switch(m.method){
+          case 'ask':       value = await bridge.ask(a.text); break;
+          case 'loginCode': value = await bridge.loginCode(a.code); break;
+          case 'dictateStart': value = await bridge.dictateStart(a.lang || null); break;
+          default:          value = await bridge[m.method](); break;
+        }
+        answer({ ok:true, value: value === undefined ? null : value });
+      } catch(err){
+        answer({ ok:false, error: String(err && err.message || err) });
+      }
+    });
+
+    // One subscription, fanned out to whichever frames have asked to hear it.
+    bridge.onEvent(payload => {
+      frames.forEach(f => {
+        try { f.postMessage({ type:'sm-chat-event', payload }, '*'); } catch(_){}
+      });
+    });
+  })();
 
   // The sheet tabs wrap onto a second line on a narrow window, so where they end
   // is not a number that can be written into the stylesheet. Sit the panel under

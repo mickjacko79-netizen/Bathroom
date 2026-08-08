@@ -22,6 +22,51 @@
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
+
+  /* Ask Claude. Hidden until a host answers for it, so opening this file on
+     its own in a browser shows no button and runs none of it. */
+  .smchat { position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 92vw; z-index: 60;
+            background: #0f172a; border-left: 1px solid #334155; display: none; flex-direction: column;
+            box-shadow: -8px 0 24px rgba(0,0,0,0.45); }
+  .smchat.on { display: flex; }
+  /* Make room for it rather than sitting on top of the toolbar — the Plan
+     toolbar wraps, so an overlay hides whichever buttons happen to land under
+     it. On a narrow window there is no room to give, so it overlays instead. */
+  @media (min-width: 900px) { body.smchat-open { padding-right: 380px; } }
+  .smchat-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+                 border-bottom: 1px solid #334155; background: #1e293b; }
+  .smchat-head h3 { font-size: 13px; font-weight: 600; margin: 0; }
+  .smchat-head .sp { flex: 1; }
+  .smchat-head button { font-size: 11px; padding: 3px 8px; border-radius: 4px;
+                        border: 1px solid #475569; background: #334155; color: #cbd5e1; cursor: pointer; }
+  .smchat-head button:hover { background: #475569; color: #fff; }
+  .smchat-log { flex: 1; overflow: auto; padding: 12px; font-size: 12.5px; line-height: 1.5; }
+  .smchat-log p { margin: 0 0 9px; }
+  .smchat-msg { white-space: pre-wrap; word-break: break-word; }
+  .smchat-msg.you { color: #93c5fd; }
+  .smchat-msg.claude { color: #e2e8f0; }
+  .smchat-tool { color: #64748b; font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
+  .smchat-note { color: #94a3b8; font-size: 11.5px; }
+  .smchat-err { color: #fca5a5; }
+  .smchat-ask { border-top: 1px solid #334155; padding: 10px 12px 12px; }
+  .smchat-ask textarea { width: 100%; box-sizing: border-box; resize: none; min-height: 56px;
+                         font: inherit; font-size: 12.5px; background: #1e293b; color: #e2e8f0;
+                         border: 1px solid #475569; border-radius: 4px; padding: 7px 8px; }
+  .smchat-ask textarea:disabled { opacity: 0.6; }
+  .smchat-ask .row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+  .smchat-ask .hintline { flex: 1; font-size: 10.5px; color: #64748b; }
+  .smchat-ask .go { border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 4px;
+                    padding: 5px 14px; font-size: 12px; cursor: pointer; }
+  .smchat-ask .go[disabled] { opacity: 0.45; cursor: default; }
+  .smchat-ask .mic { border: 1px solid #475569; background: #1e293b; color: #94a3b8;
+                     border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; }
+  .smchat-ask .mic:hover { color: #e2e8f0; border-color: #2563eb; }
+  .smchat-ask .mic.listening { border-color: #ef4444; color: #fca5a5; background: #450a0a; }
+  .smchat-ask .mic[disabled] { opacity: 0.45; cursor: default; }
+  .smchat-signin { border: 1px solid #475569; border-radius: 6px; padding: 10px; margin-bottom: 9px;
+                   background: #1e293b; }
+  .smchat-signin input { width: 100%; box-sizing: border-box; background: #0f172a; color: #e2e8f0;
+                         border: 1px solid #475569; border-radius: 4px; padding: 6px 8px; font-size: 12px; }
 </style>
 </head>
 <body class="h-full flex flex-col">
@@ -37,6 +82,8 @@
   </div>
   <div class="flex-1"></div>
   <span id="saveStatus" class="text-xs text-slate-400">Saved</span>
+  <button id="btnSmChat" class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-500 rounded" style="display:none"
+          title="Ask Claude about this site measure, or ask for a change to it">🤖 Ask Claude</button>
   <button id="btnJobsTop" class="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded">Jobs</button>
   <button id="btnLegal" class="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded"
           title="Ownership, licence, disclaimer and third-party notices">⚖ Legal</button>
@@ -1080,6 +1127,33 @@
 </div>
 
 <div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-700 px-4 py-2 rounded shadow-lg text-sm z-50"></div>
+
+<!-- ASK CLAUDE ==============================================================
+     The same conversation the host app has, seen from in here, so measuring a
+     room and asking for it to be drawn are the same gesture.
+
+     The site measure has no way of its own to reach Claude — it is a page in an
+     iframe. It asks whoever is hosting it, and a host that cannot answer leaves
+     the button hidden and none of this running. Opened on its own in a browser
+     there is nobody to ask, and it stays out of the way entirely. -->
+<div class="smchat" id="smChatPanel">
+  <div class="smchat-head">
+    <h3>Ask Claude</h3>
+    <div class="sp"></div>
+    <button id="smChatReset" title="Forget the conversation so far and start again">New</button>
+    <button id="smChatClose" title="Close">Close</button>
+  </div>
+  <div class="smchat-log" id="smChatLog"></div>
+  <div class="smchat-ask">
+    <textarea id="smChatInput" placeholder="Draw the outside 8800 x 8200 in brick veneer, then a partition 3600 in from the west…"></textarea>
+    <div class="row">
+      <button class="mic" id="smChatPlan" title="Hand Claude a floor plan to read">📐 Plan</button>
+      <button class="mic" id="smChatMic" title="Speak instead of typing">🎤 Speak</button>
+      <span class="hintline" id="smChatHint">Enter to send · Shift+Enter for a new line</span>
+      <button class="go" id="smChatSend">Send</button>
+    </div>
+  </div>
+</div>
 
 <div id="errorBanner" class="hidden fixed top-0 left-0 right-0 bg-red-700 text-white text-xs p-2 z-50 font-mono whitespace-pre-wrap cursor-pointer" title="Click to dismiss"></div>
 <script>
@@ -11686,6 +11760,293 @@ window.addEventListener('message', (ev) => {
                             error: String((err && err.message) || err) }));
   }
 });
+
+/* =====================================================================
+   19d. Ask Claude — the panel, and the host that answers for it
+   =====================================================================
+   The site measure cannot reach Claude itself. It is a page in an iframe with
+   no shell behind it, and it stays that way deliberately: the moment it needs
+   something the host has to install, it stops being one file you can drop into
+   the next app.
+
+   So it asks. Every call goes out as a message and comes back as one:
+
+     out  { type:'sm-chat-call', reqId, method, args }
+     back { type:'sm-chat-result', reqId, ok, value }   or { ok:false, error }
+     push { type:'sm-chat-event', payload }             as a turn is written
+
+   A host that wants to answer needs about thirty lines: forward those methods
+   to whatever it uses to run Claude, and forward the events back. A host that
+   doesn't answer 'sm-chat-hello' leaves the button hidden and nothing here
+   runs, which is what a plain browser gets.
+
+   The conversation is the HOST'S conversation, not a second one. Ask from here
+   and the host's own panel is written into as well, because it is the same
+   Claude with the same thread — which is the point. Asking about the plan in
+   here and about the joinery in there is one conversation that has seen both.
+   ===================================================================== */
+(function(){
+  const panel = document.getElementById('smChatPanel');
+  const btn   = document.getElementById('btnSmChat');
+  if(!panel || !btn) return;                 // a host that trimmed the markup
+  if(window.parent === window) return;       // nobody to ask
+
+  const log   = document.getElementById('smChatLog');
+  const input = document.getElementById('smChatInput');
+  const send  = document.getElementById('smChatSend');
+  const hint  = document.getElementById('smChatHint');
+  const mic   = document.getElementById('smChatMic');
+
+  const waiting = new Map();
+  let host = null;                           // the window that answered
+
+  function call(method, args){
+    return new Promise((resolve, reject) => {
+      if(!host) return reject(new Error('Nothing is hosting this site measure.'));
+      const reqId = 'ch' + Math.random().toString(36).slice(2);
+      const timer = setTimeout(() => { waiting.delete(reqId);
+        reject(new Error('The app did not answer.')); }, 600000);
+      waiting.set(reqId, { resolve, reject, timer });
+      host.postMessage({ type:'sm-chat-call', reqId, method, args: args || null }, '*');
+    });
+  }
+
+  const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  const scroll = was => { if(was) log.scrollTop = log.scrollHeight; };
+  function add(cls, text){
+    const was = atBottom();
+    const p = document.createElement('p');
+    p.className = cls;
+    p.textContent = text || '';
+    log.appendChild(p);
+    scroll(was);
+    return p;
+  }
+
+  let busy = false, reply = null, listening = false, signinBox = null;
+
+  function setBusy(on){
+    busy = on;
+    send.disabled = on;
+    send.textContent = on ? 'Working…' : 'Send';
+    input.disabled = on;
+    hint.textContent = on ? 'Working — the plan will change as it goes.'
+                          : 'Enter to send · Shift+Enter for a new line';
+  }
+  function setListening(on){
+    listening = on;
+    mic.classList.toggle('listening', on);
+    mic.textContent = on ? '● Listening' : '🎤 Speak';
+    mic.title = on ? 'Stop listening' : 'Speak instead of typing';
+  }
+
+  // Text arrives in pieces; they belong in one paragraph rather than one each.
+  function onChatEvent(evt){
+    if(!evt || !evt.type) return;
+    if(evt.type === 'start'){ reply = null; if(!busy) setBusy(true); return; }
+    if(evt.type === 'text'){
+      const was = atBottom();
+      if(!reply) reply = add('smchat-msg claude', '');
+      reply.textContent += evt.text;
+      scroll(was);
+      return;
+    }
+    if(evt.type === 'tool'){
+      // Seeing which tool ran is how you know what a Ctrl+Z would take back.
+      add('smchat-tool', '· ' + String(evt.name || '').replace(/_/g, ' '));
+      reply = null;
+      return;
+    }
+    if(evt.type === 'error'){ add('smchat-err', evt.message); reply = null; return; }
+    if(evt.type === 'done'){
+      setBusy(false); reply = null;
+      // Whatever it just did was done to the job under this page, so redraw.
+      try { renderAll(); } catch(_){}
+      return;
+    }
+    // Dictation lands in the box, not in the conversation — it is a draft to
+    // correct, not something already said.
+    if(evt.type === 'dictate-text'){
+      input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + evt.text;
+      input.scrollTop = input.scrollHeight;
+      return;
+    }
+    if(evt.type === 'dictate-done'){ setListening(false); input.focus(); return; }
+    if(evt.type === 'dictate-error'){ add('smchat-err', evt.message); setListening(false); return; }
+    if(evt.type === 'auth-url'){ if(signinBox) signinBox.__url = evt.url; return; }
+    if(evt.type === 'auth-done'){
+      if(signinBox){ signinBox.remove(); signinBox = null; }
+      if(evt.ok) add('smchat-note', 'Signed in. Ask away.');
+      else { add('smchat-err', evt.message); showState(); }
+      return;
+    }
+  }
+
+  window.addEventListener('message', ev => {
+    const m = ev && ev.data;
+    if(!m || !m.type) return;
+    if(m.type === 'sm-chat-ready'){
+      if(!host){ host = ev.source || window.parent; btn.style.display = ''; }
+      return;
+    }
+    if(m.type === 'sm-chat-event'){ onChatEvent(m.payload); return; }
+    if(m.type === 'sm-chat-result'){
+      const w = waiting.get(m.reqId);
+      if(!w) return;
+      clearTimeout(w.timer);
+      waiting.delete(m.reqId);
+      if(m.ok) w.resolve(m.value); else w.reject(new Error(m.error || 'That did not work.'));
+    }
+  });
+
+  // Knock until somebody answers. The host page may not have its own bridge up
+  // yet when this loads, so a single ask would miss it.
+  let knocks = 0;
+  const knocker = setInterval(() => {
+    if(host || ++knocks > 40){ clearInterval(knocker); return; }
+    try { window.parent.postMessage({ type:'sm-chat-hello' }, '*'); } catch(_){}
+  }, 500);
+  try { window.parent.postMessage({ type:'sm-chat-hello' }, '*'); } catch(_){}
+
+  async function ask(){
+    const text = input.value.trim();
+    if(!text || busy) return;
+    input.value = '';
+    add('smchat-msg you', text);
+    setBusy(true);
+    try { await call('ask', { text }); }
+    catch(err){ add('smchat-err', String(err && err.message || err)); setBusy(false); }
+  }
+
+  send.addEventListener('click', ask);
+  input.addEventListener('keydown', e => {
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); ask(); }
+  });
+
+  mic.addEventListener('click', async () => {
+    try {
+      if(listening){ await call('dictateStop'); setListening(false); return; }
+      setListening(true);
+      const r = await call('dictateStart');
+      if(r && r.error){ add('smchat-err', r.error); setListening(false); }
+    } catch(err){ add('smchat-err', String(err && err.message || err)); setListening(false); }
+  });
+
+  document.getElementById('smChatPlan').addEventListener('click', async () => {
+    if(busy) return;
+    try {
+      const r = await call('attachPlan');
+      if(!r || r.cancelled) return;
+      if(r.error){ add('smchat-err', r.error); return; }
+      add('smchat-note', 'Attached ' + r.name + '. Ask for it to be drawn, and check the '
+                       + 'dimensions it reads off before you rely on them.');
+      // Written into the box rather than sent, so the ask can be narrowed first.
+      const line = 'Here is a floor plan to read: ' + r.path
+                 + '\nTake the dimensions off it and draw it in the site measure — give the room '
+                 + 'sizes as the inside face. Then put the doors, windows and room labels on it.';
+      input.value = input.value ? (input.value.replace(/\s*$/, '\n') + line) : line;
+      input.focus();
+      input.scrollTop = input.scrollHeight;
+    } catch(err){ add('smchat-err', String(err && err.message || err)); }
+  });
+
+  document.getElementById('smChatReset').addEventListener('click', async () => {
+    try { await call('reset'); } catch(_){}
+    log.innerHTML = '';
+    add('smchat-note', 'Started again. It has forgotten what was said before this point.');
+  });
+  document.getElementById('smChatClose').addEventListener('click', () => setOpen(false));
+
+  // The browser does the signing in. This only starts it and carries back the
+  // one-time code the browser shows at the end — which is typed here, goes
+  // straight to the Claude Code running on this machine, and is kept nowhere.
+  function offerSignIn(){
+    const was = atBottom();
+    const box = document.createElement('div');
+    box.className = 'smchat-signin';
+    box.innerHTML =
+      '<p class="smchat-note" style="margin-bottom:8px">Sign in to Claude to use this panel. '
+    + 'It opens your browser; nothing is stored here but the sign-in Claude Code keeps for itself.</p>'
+    + '<button class="go" data-go>Sign in to Claude</button>'
+    + '<div data-step2 style="display:none;margin-top:10px">'
+    +   '<p class="smchat-note" style="margin-bottom:6px">Finish in the browser, then paste the code it '
+    +   'shows you here.</p>'
+    +   '<input data-code type="text" autocomplete="off" spellcheck="false" placeholder="Paste the code">'
+    +   '<div class="row" style="margin-top:6px">'
+    +     '<a data-link href="#" class="hintline" style="flex:1">Browser did not open? Open it here.</a>'
+    +     '<button class="go" data-send>Done</button>'
+    +   '</div>'
+    + '</div>';
+    log.appendChild(box);
+    scroll(was);
+
+    const step2 = box.querySelector('[data-step2]');
+    const code  = box.querySelector('[data-code]');
+    box.querySelector('[data-go]').addEventListener('click', async () => {
+      try {
+        const r = await call('loginStart');
+        if(r && r.error){ add('smchat-err', r.error); return; }
+        step2.style.display = ''; code.focus();
+      } catch(err){ add('smchat-err', String(err && err.message || err)); }
+    });
+    const submit = async () => {
+      const v = code.value.trim();
+      if(!v) return;
+      code.value = '';                       // gone from the page immediately
+      try {
+        const r = await call('loginCode', { code: v });
+        if(r && r.error) add('smchat-err', r.error); else add('smchat-note', 'Checking…');
+      } catch(err){ add('smchat-err', String(err && err.message || err)); }
+    };
+    box.querySelector('[data-send]').addEventListener('click', submit);
+    code.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); submit(); } });
+    box.querySelector('[data-link]').addEventListener('click', e => {
+      e.preventDefault();
+      if(box.__url) window.open(box.__url, '_blank');
+    });
+    return box;
+  }
+
+  async function showState(){
+    let state;
+    try { state = await call('status'); }
+    catch(err){ add('smchat-err', String(err && err.message || err)); return false; }
+    if(state && state.ready){
+      add('smchat-note',
+          'Ask about this site measure, or ask for a change to it — walls and the types they are '
+        + 'built in, doors and windows, rooms and their finishes. External walls mitre at a corner '
+        + 'and internal walls butt into the face, and it knows that. Everything it does is one undo '
+        + 'step, so Ctrl+Z takes it back.');
+      return true;
+    }
+    if(state && state.reason === 'not-logged-in') signinBox = offerSignIn();
+    else add('smchat-err', (state && state.message) || 'Claude is not available from here.');
+    return false;
+  }
+
+  // The canvas sizes itself to what is left of the window, so it has to be told
+  // when that changes — otherwise the plan keeps the old width and the drawing
+  // sits off-centre under the panel.
+  function setOpen(on){
+    panel.classList.toggle('on', on);
+    document.body.classList.toggle('smchat-open', on);
+    try { resizeCanvas(); renderCanvas(); } catch(_){}
+  }
+
+  let greeted = false;
+  btn.addEventListener('click', async () => {
+    setOpen(!panel.classList.contains('on'));
+    if(!panel.classList.contains('on')) return;
+    input.focus();
+    if(greeted) return;
+    greeted = true;
+    await showState();                       // say what is wrong before they type
+  });
+
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && panel.classList.contains('on')) setOpen(false);
+  });
+})();
 
 /* ---------- 20. Init ---------- */
 (async function init() {

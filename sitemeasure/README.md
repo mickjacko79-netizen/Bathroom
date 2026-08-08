@@ -56,7 +56,14 @@ importing a plan or changing a wall's type. Running it twice changes nothing.
 SiteMeasure carries its own Claude integration — `window.smClaude`, plus a
 postMessage door for whichever app it is embedded in. Walls, wall types,
 openings and rooms are all reachable, and everything drawn through it follows
-the junction rule above. See [CLAUDE-INTEGRATION.md](CLAUDE-INTEGRATION.md).
+the junction rule above.
+
+There is an **🤖 Ask Claude** panel in the top bar too, so you can ask for the
+plan to be drawn without leaving it. It only appears when the app hosting
+SiteMeasure says it can answer; on its own in a browser there is nobody to ask
+and the button stays hidden.
+
+See [CLAUDE-INTEGRATION.md](CLAUDE-INTEGRATION.md).
 
 ## Notes / known limits (this is v1)
 

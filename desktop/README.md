@@ -153,6 +153,12 @@ and it adds:
 Everything there is millimetres on wall centrelines, x right and y down, 0° east
 and 90° north on screen.
 
+**Asking from inside the site measure.** There is an **🤖 Ask Claude** panel in
+the site measure's own top bar as well. It has no bridge of its own — it asks
+this shell, which forwards to the same Claude Code the drawing's panel uses. One
+thread, seen from two places: ask about the plan in there and about the joinery
+in here and it is one conversation that has seen both.
+
 **The junction rule.** External walls mitre where they meet at an external
 corner. An internal wall butts — it stops on the face of whatever it meets, and
 that wall runs on past it unbroken. Where two internals meet, the longer runs
