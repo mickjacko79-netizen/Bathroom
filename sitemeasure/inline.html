@@ -902,12 +902,15 @@
 
       <!-- Layer editor -->
       <div>
-        <div class="flex items-center justify-between mb-1">
-          <label class="text-xs text-slate-400">Layers (inside → outside)</label>
-          <span id="compTotalReadout" class="text-xs text-slate-300 font-mono">Total: 0 mm</span>
+        <div class="flex items-center justify-between mb-1 gap-2">
+          <label class="text-xs text-slate-400" id="compLayerOrderLabel">Layers (inside → outside)</label>
+          <button id="btnCompFlipSkins" type="button"
+                  class="px-2 py-0.5 text-[10px] bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded"
+                  title="Swap which end of the build-up is the inside skin. The wall is drawn with that skin facing into the building, whichever way round the wall was drawn.">⇄ Flip inside skin</button>
+          <span id="compTotalReadout" class="text-xs text-slate-300 font-mono ml-auto">Total: 0 mm</span>
         </div>
-        <div id="compLayersHeader" class="grid gap-1 px-2 text-[10px] text-slate-500 uppercase tracking-wide" style="grid-template-columns: 20px 1fr 90px 40px 24px;">
-          <div>#</div><div>Material</div><div>Thk (mm)</div><div>Colour</div><div></div>
+        <div id="compLayersHeader" class="grid gap-1 px-2 text-[10px] text-slate-500 uppercase tracking-wide" style="grid-template-columns: 52px 1fr 90px 40px 24px;">
+          <div>Face</div><div>Material</div><div>Thk (mm)</div><div>Colour</div><div></div>
         </div>
         <div id="compLayers" class="space-y-1 mt-1"></div>
         <button id="btnCompAddLayer" type="button" class="mt-2 w-full px-3 py-1.5 bg-slate-700 hover:bg-slate-600 border border-dashed border-slate-500 rounded text-xs">+ Add layer</button>
@@ -1022,6 +1025,16 @@
           <button data-face="B" class="face-btn flex-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded text-sm">⌂ Inside face</button>
         </div>
         <div class="text-[10px] text-slate-500 mt-1">Outside is typical for room dims, inside for envelope. Tap to flip if it's drawn on the wrong side.</div>
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">Which side the building is on</label>
+        <div class="flex gap-1 items-center">
+          <span id="wallSkinReadout" class="text-xs text-slate-300 flex-1"></span>
+          <button id="btnWallFlipSkins" type="button"
+                  class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded"
+                  title="Turn this wall's build-up round. Use it when the inside skin has come out on the outside of the plan.">⇄ Flip skins</button>
+        </div>
+        <div class="text-[10px] text-slate-500 mt-1">Worked out from the shape of the outside walls. Flip it if this one has come out the wrong way round.</div>
       </div>
       <div class="text-xs text-slate-500" id="wallInfo"></div>
       <div class="border-t border-slate-700 pt-3">
@@ -1740,17 +1753,25 @@ function slideWallPerpendicular(w, deltaWorld) {
 }
 
 /* ---------- 2b. Default Australian residential wall composites ---------- */
+// insideFirst says which end of the build-up faces into the building. Most of
+// these read the way a spec is written — outermost skin first — which is the
+// opposite of what the layer editor's label used to claim, and is why a brick
+// veneer wall drew its brickwork on the inside.
 const DEFAULT_COMPOSITES = [
   { id: 'cmp_bv230', name: 'Brick veneer (230mm)', thicknessMm: 230, category: 'external',
-    buildUp: '110 face brick + 50 cavity + 90 stud + 10 plasterboard', color: '#c2410c', hatch: true },
+    buildUp: '110 face brick + 50 cavity + 90 stud + 10 plasterboard', color: '#c2410c', hatch: true,
+    insideFirst: false },
   { id: 'cmp_cb270', name: 'Cavity brick (270mm)', thicknessMm: 270, category: 'external',
     buildUp: '110 brick + 50 cavity + 110 brick', color: '#9a3412', hatch: true },
   { id: 'cmp_wb120', name: 'Weatherboard external (120mm)', thicknessMm: 120, category: 'external',
-    buildUp: '20 weatherboard + 90 stud + 10 plasterboard', color: '#a16207', hatch: false },
+    buildUp: '20 weatherboard + 90 stud + 10 plasterboard', color: '#a16207', hatch: false,
+    insideFirst: false },
   { id: 'cmp_fc115', name: 'FC sheet cladding (115mm)', thicknessMm: 115, category: 'external',
-    buildUp: '9 fibre cement + 6 batten + 90 stud + 10 plasterboard', color: '#6b7280', hatch: false },
+    buildUp: '9 fibre cement + 6 batten + 90 stud + 10 plasterboard', color: '#6b7280', hatch: false,
+    insideFirst: false },
   { id: 'cmp_heb90', name: 'Hebel / AAC panel (90mm)', thicknessMm: 90, category: 'external',
-    buildUp: '75 AAC panel + render', color: '#e5e7eb', hatch: false },
+    buildUp: '75 AAC panel + render', color: '#e5e7eb', hatch: false,
+    insideFirst: false },
   { id: 'cmp_int90', name: 'Internal partition 90mm stud (110mm)', thicknessMm: 110, category: 'internal',
     buildUp: '10 PB + 90 stud + 10 PB', color: '#94a3b8', hatch: false },
   { id: 'cmp_int70', name: 'Internal partition 70mm stud (90mm)', thicknessMm: 90, category: 'internal',
@@ -1762,6 +1783,23 @@ const DEFAULT_COMPOSITES = [
   { id: 'cmp_brick110', name: 'Single skin brick (110mm)', thicknessMm: 110, category: 'external',
     buildUp: '110 face brick', color: '#b91c1c', hatch: true }
 ];
+
+/* Which way round a build-up written before insideFirst existed was meant to
+   read. A wall type that starts with something you would only ever see from the
+   street and ends with something you would only ever see from a room was
+   written outermost-first, whatever the label above it said. Anything less
+   clear-cut is left alone — inside-first is the safe reading, and the flip
+   button in the editor is one click. */
+const SM_OUTER_SKINS = /brick|weatherboard|fibre\s*cement|fc\b|render|aac|hebel|cladding|stone|blockwork|masonry|colorbond|metal\s*sheet/i;
+const SM_INNER_SKINS = /plasterboard|villaboard|\bpb\b|lining|gyprock|wet\s*area\s*sheet|ceramic|tile/i;
+function smInferInsideFirst(layers){
+  if(!Array.isArray(layers) || layers.length < 2) return true;
+  const first = String(layers[0].material || '');
+  const last  = String(layers[layers.length - 1].material || '');
+  const firstIsOuter = SM_OUTER_SKINS.test(first) && !SM_INNER_SKINS.test(first);
+  const lastIsInner  = SM_INNER_SKINS.test(last)  && !SM_OUTER_SKINS.test(last);
+  return !(firstIsOuter && lastIsInner);
+}
 
 // state.compositeLibs = { active: "<name>", libs: { "<name>": [composite,...] } }
 // state.composites always points at the ACTIVE library's array, so all the
@@ -1781,6 +1819,15 @@ async function loadComposites() {
     state.compositeLibs.active = Object.keys(state.compositeLibs.libs)[0];
   }
   state.composites = state.compositeLibs.libs[state.compositeLibs.active];
+  // One-off for libraries saved before a build-up said which end faced in.
+  for(const name of Object.keys(state.compositeLibs.libs)){
+    for(const c of state.compositeLibs.libs[name]){
+      if(c && c.insideFirst === undefined){
+        const ls = (Array.isArray(c.layers) && c.layers.length) ? c.layers : parseBuildUpSM(c.buildUp || '');
+        c.insideFirst = smInferInsideFirst(ls);
+      }
+    }
+  }
   await saveComposites();
   if (!state.currentCompositeId && state.composites.length) {
     state.currentCompositeId = state.composites[0].id;
@@ -4020,9 +4067,12 @@ function drawWallFill(c, w) {
   // fall back to parsing the legacy build-up string. Previously this always
   // parsed buildUp, so a user-edited layer set — or a build-up written with
   // shorthand like "10 PB each side" — rendered with the wrong skins.
-  const layers = comp
+  const rawLayers = comp
     ? ((Array.isArray(comp.layers) && comp.layers.length) ? comp.layers : parseBuildUpSM(comp.buildUp))
     : null;
+  // Turned round if need be, so the inside skin faces into the building
+  // whichever way this wall happens to have been drawn.
+  const layers = smOrderedLayers(w, comp, rawLayers);
   // Compute mm-per-pixel so hatch feature sizes (brick courses etc.) render
   // at their real dimensions regardless of zoom. Fall back to a sensible
   // default if the world scale isn't set yet.
@@ -8144,6 +8194,10 @@ const COMP_TEMPLATES = {
 };
 // Editing state: draft array of layer objects while modal is open.
 let compEditLayers = [];
+// Which end of the build-up faces into the building. Stored on the composite as
+// insideFirst, and true unless said otherwise — every wall type written before
+// this existed was listed inside first, and the label said so.
+let compEditInsideFirst = true;
 let _compSelectedLayer = -1;   // index into compEditLayers highlighted for palette apply
 
 /* ---------- Architectural material palette ----------
@@ -8239,6 +8293,7 @@ function openCompEditModal(c) {
   } else {
     compEditLayers = [];
   }
+  compEditInsideFirst = c ? (c.insideFirst !== false) : true;
   document.getElementById('compThickness').value = c?.thicknessMm || sumLayerThickness() || 110;
   _compSelectedLayer = compEditLayers.length > 0 ? 0 : -1;
   renderCompEditLayers();
@@ -8255,19 +8310,41 @@ function renderCompEditLayers() {
   wrap.innerHTML = '';
   const matOptions = MATERIAL_LIBRARY.map(m =>
     `<option value="${escapeHtml(m.material)}">${escapeHtml(m.material)}</option>`).join('');
+  const last = compEditLayers.length - 1;
   compEditLayers.forEach((L, i) => {
     const row = document.createElement('div');
     row.className = 'grid gap-1 items-center';
-    row.style.gridTemplateColumns = '20px 1fr 90px 40px 24px';
+    row.style.gridTemplateColumns = '52px 1fr 90px 40px 24px';
+    // Only the two ends of a build-up can be a face, so only they are marked.
+    // Clicking either one swaps which is which — the thing you want when the
+    // brick has come out on the wrong side.
+    const isInside = (i === 0) === compEditInsideFirst;
+    const faceCell = (i === 0 || i === last) && last > 0
+      ? `<button type="button" data-face
+                 class="w-full text-[9px] leading-none py-1 rounded border ${isInside
+                   ? 'bg-sky-900 border-sky-600 text-sky-200' : 'bg-slate-800 border-slate-600 text-slate-400'}"
+                 title="${isInside ? 'This skin faces into the building. Click to make it the outside instead.'
+                                   : 'This skin faces out. Click to make it the inside instead.'}"
+          >${isInside ? '⌂ INSIDE' : 'OUTSIDE'}</button>`
+      : `<div class="text-[10px] text-slate-500 text-center">${i+1}</div>`;
     row.innerHTML = `
-      <div class="text-[10px] text-slate-500 text-center">${i+1}</div>
+      ${faceCell}
       <div class="flex gap-1">
         <input type="text" list="matList" value="${escapeHtml(L.material || '')}" class="flex-1 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-xs" placeholder="Material">
       </div>
       <input type="number" min="0" value="${L.thicknessMm || 0}" class="bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-xs text-right">
       <input type="color" value="${L.color || '#94a3b8'}" class="w-full h-7 bg-slate-900 border border-slate-700 rounded cursor-pointer">
       <button type="button" title="Remove layer" class="text-slate-400 hover:text-red-400">×</button>`;
-    const [matIn, thkIn, colIn, delBtn] = row.querySelectorAll('input, button');
+    const faceBtn = row.querySelector('[data-face]');
+    if(faceBtn) faceBtn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      compEditInsideFirst = !compEditInsideFirst;
+      renderCompEditLayers();
+    });
+    const matIn = row.querySelector('input[type="text"]');
+    const thkIn = row.querySelector('input[type="number"]');
+    const colIn = row.querySelector('input[type="color"]');
+    const delBtn = row.querySelector('button[title="Remove layer"]');
     matIn.addEventListener('input', () => {
       L.material = matIn.value;
       // Autofill from library on exact match
@@ -8324,6 +8401,9 @@ function renderCompEditLayers() {
 function renderCompTotal() {
   const total = sumLayerThickness();
   document.getElementById('compTotalReadout').textContent = `Total: ${Math.round(total)} mm`;
+  const orderLabel = document.getElementById('compLayerOrderLabel');
+  if(orderLabel) orderLabel.textContent = compEditInsideFirst
+    ? 'Layers (inside → outside)' : 'Layers (outside → inside)';
   // Auto-populate the total thickness input if layers define one
   const thkIn = document.getElementById('compThickness');
   if (total > 0) thkIn.value = Math.round(total);
@@ -8337,6 +8417,14 @@ function renderCompEditPreview() {
     prev.innerHTML = '<div class="w-full flex items-center justify-center text-[10px] text-slate-500">Add layers to see the cross-section</div>';
     return;
   }
+  // Which end of the preview the building is on, so the cross-section reads the
+  // way you would look at it on the plan rather than needing the label decoded.
+  const mark = document.createElement('div');
+  mark.style.cssText = 'flex:0 0 auto;display:flex;align-items:center;padding:0 4px;'
+                     + 'font-size:9px;letter-spacing:.04em;color:#7dd3fc;background:#0b1220';
+  mark.textContent = '⌂';
+  mark.title = 'The building is on this side';
+  if(compEditInsideFirst) prev.appendChild(mark);
   compEditLayers.forEach(L => {
     const pct = ((parseFloat(L.thicknessMm) || 0) / total) * 100;
     const strip = document.createElement('div');
@@ -8344,7 +8432,13 @@ function renderCompEditPreview() {
     strip.title = `${L.material || '(unnamed)'} — ${L.thicknessMm || 0}mm`;
     prev.appendChild(strip);
   });
+  if(!compEditInsideFirst) prev.appendChild(mark);
 }
+
+document.getElementById('btnCompFlipSkins').addEventListener('click', () => {
+  compEditInsideFirst = !compEditInsideFirst;
+  renderCompEditLayers();
+});
 
 document.getElementById('btnCompAddLayer').addEventListener('click', () => {
   compEditLayers.push({ material: '', thicknessMm: 0, color: '#94a3b8' });
@@ -8363,6 +8457,10 @@ document.getElementById('compTemplate').addEventListener('change', e => {
   const tpl = COMP_TEMPLATES[key];
   if (!tpl) return;
   compEditLayers = tpl.map(L => ({ ...L }));
+  // The templates read the way a spec is written — outermost skin first for the
+  // external ones — so the inside end follows from the template, not from
+  // whatever the last wall type happened to be set to.
+  compEditInsideFirst = smInferInsideFirst(compEditLayers);
   // Suggest a name if user hasn't set one
   const nameIn = document.getElementById('compName');
   if (!nameIn.value.trim()) {
@@ -8394,6 +8492,7 @@ document.getElementById('btnCompSave').addEventListener('click', async () => {
     category: document.getElementById('compCategory').value,
     buildUp: buildUpStr,      // legacy string kept in sync for older code paths
     layers: layers,           // new structured field
+    insideFirst: compEditInsideFirst,   // which end of that list faces the building
     color: document.getElementById('compColor').value,
     hatch: document.getElementById('compHatch').checked
   };
@@ -8447,6 +8546,45 @@ document.querySelectorAll('.anchor-btn').forEach(b => {
 
 /* ---------- 12c. Wall properties modal ---------- */
 const modalWall = document.getElementById('modalWall');
+
+/* What the wall modal says about which way round the build-up is drawn, and
+   the button that overrides it. A partition has rooms on both sides, so there
+   is nothing to be right or wrong about and it says so. */
+function refreshWallSkinReadout(w){
+  const out = document.getElementById('wallSkinReadout');
+  const btn = document.getElementById('btnWallFlipSkins');
+  if(!out || !btn) return;
+  const comp = w.compositeId ? getComposite(w.compositeId) : null;
+  const layers = comp
+    ? ((Array.isArray(comp.layers) && comp.layers.length) ? comp.layers : parseBuildUpSM(comp.buildUp || ''))
+    : null;
+  if(!layers || layers.length < 2){
+    out.textContent = 'This wall type has no separate skins.';
+    btn.disabled = true; btn.style.opacity = 0.45;
+    return;
+  }
+  if(smWallClass(w) === 'internal'){
+    out.textContent = 'Internal wall — rooms both sides, so it is drawn in the order the type lists.';
+    btn.disabled = true; btn.style.opacity = 0.45;
+    return;
+  }
+  btn.disabled = false; btn.style.opacity = 1;
+  const ordered = smOrderedLayers(w, comp, layers);
+  const overridden = (w.insideFace === 'A' || w.insideFace === 'B');
+  out.textContent = (ordered[0].material || 'first layer') + ' faces in, '
+                  + (ordered[ordered.length-1].material || 'last layer') + ' faces out'
+                  + (overridden ? ' (set by hand)' : '');
+}
+
+document.getElementById('btnWallFlipSkins').addEventListener('click', () => {
+  const w = state.job && state.job.walls.find(x => x.id === state.editingWallId);
+  if(!w) return;
+  const now = (w.insideFace === 'A' || w.insideFace === 'B') ? w.insideFace : smFaceTowardInterior(w);
+  w.insideFace = now === 'A' ? 'B' : 'A';
+  refreshWallSkinReadout(w);
+  debouncedSave();
+  renderCanvas();
+});
 function openWallModal(w) {
   state.editingWallId = w.id;
   const sel = document.getElementById('wallComposite');
@@ -8481,6 +8619,7 @@ function openWallModal(w) {
   const lenUnits = Math.hypot(w.x2-w.x1, w.y2-w.y1);
   const sketchMm = state.job.scaleMmPerUnit ? Math.round(lenUnits * state.job.scaleMmPerUnit) : '(unscaled)';
   document.getElementById('wallInfo').textContent = `Sketched length: ${sketchMm} mm  ·  thickness: ${getWallThicknessMm(w)} mm  ·  current angle: ${Math.round(currentAngleDeg*10)/10}°`;
+  refreshWallSkinReadout(w);
   populateParallelList(w);
   modalWall.classList.remove('hidden');
   // Focus the length field so the user can type immediately. setTimeout
@@ -9459,6 +9598,7 @@ function drawPlanToPdf(doc, pageW, pageH) {
       if(!comp._layers) comp._layers = parseBuildUpSM(comp.buildUp || '');
       if(Array.isArray(comp.layers) && comp.layers.length) layers = comp.layers;
       else if(comp._layers && comp._layers.length) layers = comp._layers;
+      layers = smOrderedLayers(w, comp, layers);   // inside skin faces in
     }
     if(!layers || layers.length < 2){
       const col = hexToRgb(getWallColor(w));
@@ -11160,6 +11300,58 @@ function smClassifyJunction(a, b){
   return null;
 }
 
+/* Which face of this wall the building is on: 'A' or 'B'.
+   ---------------------------------------------------------------------------
+   Face A is the +normal side, and the normal comes off the wall's own
+   direction — so a rectangle traced clockwise has its inside on one face and
+   the same rectangle traced anticlockwise has it on the other, and one wall
+   drawn back to front has it on the opposite side to its neighbours. That is
+   why the brick comes out on the wrong side.
+
+   Answered by parity: step just off face A and count how many external walls a
+   ray from there crosses. Odd is inside. Only external walls are counted,
+   because only they enclose anything — a partition has rooms on both sides, so
+   for one of those the question has no answer and the type's own order stands.
+
+   There is an older detectInsideFace() a few hundred lines down. It is a
+   centroid-distance test carrying a comment describing a ray cast, with an
+   inversion applied on top after testing disagreed with it. It decides which
+   side dimension chains land on and it is left alone; this does not use it. */
+function smFaceTowardInterior(w){
+  if(!state.job || smWallClass(w) !== 'external') return 'A';
+  const shell = (state.job.walls || []).filter(o => smWallClass(o) === 'external');
+  if(shell.length < 3) return 'A';
+  const [ux, uy] = smWallUnit(w);
+  const nx = -uy, ny = ux;
+  // A touch beyond the face, so the probe is clear of its own wall.
+  const t = getWallThicknessWorld(w) / 2 * 1.2;
+  const px = (w.x1 + w.x2) / 2 + nx * t;
+  const py = (w.y1 + w.y2) / 2 + ny * t;
+  let crossings = 0;
+  for(const o of shell){
+    // A ray straight out along +x. A segment counts when it straddles the
+    // ray's line and crosses it to the right of where the ray starts.
+    if((o.y1 > py) === (o.y2 > py)) continue;
+    const at = o.x1 + (py - o.y1) / (o.y2 - o.y1) * (o.x2 - o.x1);
+    if(at > px) crossings++;
+  }
+  return (crossings % 2) === 1 ? 'A' : 'B';
+}
+
+/* The build-up in the order it should be drawn across this particular wall:
+   inside skin on the face the building is actually on. The composite says
+   which end of its list is the inside skin; the wall can override the guess
+   about which way it is facing. */
+function smOrderedLayers(w, comp, layers){
+  if(!layers || layers.length < 2) return layers;
+  const insideFirst = !(comp && comp.insideFirst === false);
+  const interior = (w && (w.insideFace === 'A' || w.insideFace === 'B'))
+    ? w.insideFace : smFaceTowardInterior(w);
+  // Layers are drawn from face A across to face B, so the inside skin belongs
+  // first exactly when face A is the one facing in.
+  return (insideFirst === (interior === 'A')) ? layers : layers.slice().reverse();
+}
+
 /* How far past the wall it meets an end may sit and still be meant to meet it.
    A touch more than anything in the wall-type library is thick, so a wall drawn
    long or short off a plan still lands, without being greedy enough to reach a
@@ -11334,7 +11526,16 @@ function smWallOut(w){
     angleDeg: smAngleOf(w),
     heightMm: w.heightMm || DEFAULT_WALL_HEIGHT_MM,
     status: w.status || 'existing',
-    mitresLocked: !!w.mitersLocked
+    mitresLocked: !!w.mitersLocked,
+    // Which of this wall's skins is drawn facing into the building.
+    insideSkin: (function(){
+      const c = w.compositeId ? getComposite(w.compositeId) : null;
+      const ls = c ? ((Array.isArray(c.layers) && c.layers.length) ? c.layers : parseBuildUpSM(c.buildUp || '')) : null;
+      if(!ls || ls.length < 2) return null;
+      const o = smOrderedLayers(w, c, ls);
+      return { facingIn: o[0].material || null, facingOut: o[o.length-1].material || null,
+               setByHand: w.insideFace === 'A' || w.insideFace === 'B' };
+    })()
   };
 }
 function smOpeningOut(o){
@@ -11372,6 +11573,9 @@ function smCompositeOut(c){
     thicknessMm: c.thicknessMm,
     class: (c.category === 'internal' || c.category === 'wet') ? 'internal' : 'external',
     layers: layers.map(L => ({ thicknessMm: L.thicknessMm, material: L.material || 'layer' })),
+    // Which end of that list is the skin facing into the building.
+    insideFirst: c.insideFirst !== false,
+    insideSkin: layers.length ? ((c.insideFirst !== false ? layers[0] : layers[layers.length-1]).material || null) : null,
     buildUp: c.buildUp || '', color: c.color, hatch: !!c.hatch
   };
 }
@@ -11443,6 +11647,7 @@ const SM_CLAUDE_METHODS = {
     const data = {
       name, category, thicknessMm: thickness, layers,
       buildUp: layers.map(L => Math.round(L.thicknessMm) + ' ' + L.material).join(' + '),
+      insideFirst: p.insideFirst === undefined ? true : !!p.insideFirst,
       color: p.color || '#94a3b8',
       hatch: !!p.hatch
     };
@@ -11559,6 +11764,11 @@ const SM_CLAUDE_METHODS = {
     if(p.thicknessMm != null){ w.thicknessMmOverride = +p.thicknessMm; changed.push('thickness'); }
     if(p.heightMm != null){ w.heightMm = +p.heightMm; changed.push('height'); }
     if(p.status){ w.status = String(p.status); changed.push('status'); }
+    if(p.flipSkins){
+      const now = (w.insideFace === 'A' || w.insideFace === 'B') ? w.insideFace : smFaceTowardInterior(w);
+      w.insideFace = now === 'A' ? 'B' : 'A';
+      changed.push('which side the build-up faces');
+    }
     if(Array.isArray(p.start)){ w.x1 = smToUnits(+p.start[0]); w.y1 = smToUnits(+p.start[1]); changed.push('start'); }
     if(Array.isArray(p.end)){   w.x2 = smToUnits(+p.end[0]);   w.y2 = smToUnits(+p.end[1]);   changed.push('end'); }
     if(p.angleDeg != null){ applyAngleChange(w, +p.angleDeg, false); changed.push('angle'); }
@@ -11824,20 +12034,32 @@ window.addEventListener('message', (ev) => {
   }
 
   let busy = false, reply = null, listening = false, signinBox = null;
+  let noiseRun = 0, sawPartial = false;
+
+  const NORMAL_HINT = 'Enter to send · Shift+Enter for a new line';
 
   function setBusy(on){
     busy = on;
     send.disabled = on;
     send.textContent = on ? 'Working…' : 'Send';
     input.disabled = on;
-    hint.textContent = on ? 'Working — the plan will change as it goes.'
-                          : 'Enter to send · Shift+Enter for a new line';
+    hint.textContent = on ? 'Working — the plan will change as it goes.' : NORMAL_HINT;
+  }
+  // The hint line doubles as the "what am I hearing" line while dictating —
+  // there is nowhere better to put it, and it is exactly where you are looking.
+  function heard(text, isPartial){
+    if(!listening) return;
+    if(isPartial) sawPartial = true;
+    hint.textContent = '● ' + (text.length > 58 ? '…' + text.slice(-58) : text);
   }
   function setListening(on){
     listening = on;
+    noiseRun = 0;
+    sawPartial = false;
     mic.classList.toggle('listening', on);
     mic.textContent = on ? '● Listening' : '🎤 Speak';
     mic.title = on ? 'Stop listening' : 'Speak instead of typing';
+    if(!busy) hint.textContent = on ? '● starting…' : NORMAL_HINT;
   }
 
   // Text arrives in pieces; they belong in one paragraph rather than one each.
@@ -11869,10 +12091,27 @@ window.addEventListener('message', (ev) => {
     if(evt.type === 'dictate-text'){
       input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + evt.text;
       input.scrollTop = input.scrollHeight;
+      noiseRun = 0; sawPartial = false;
+      heard('listening — say something');
       return;
     }
     if(evt.type === 'dictate-done'){ setListening(false); input.focus(); return; }
     if(evt.type === 'dictate-error'){ add('smchat-err', evt.message); setListening(false); return; }
+    if(evt.type === 'dictate-ready'){ heard('listening — say something'); return; }
+    // What it is hearing, while it hears it. Without this there is no way to
+    // tell a microphone that is working from one that is not until the end.
+    if(evt.type === 'dictate-partial'){ noiseRun = 0; heard(evt.text, true); return; }
+    if(evt.type === 'dictate-level'){
+      if(!sawPartial) heard(evt.level > 2 ? 'hearing you…' : 'listening — say something');
+      return;
+    }
+    if(evt.type === 'dictate-noise'){
+      // One is a cough. Two in a row is a room the recogniser cannot work in.
+      if(++noiseRun >= 2) heard('hearing sound, not words — try closer to the microphone');
+      return;
+    }
+    if(evt.type === 'dictate-silent'){ add('smchat-err', evt.message); return; }
+    if(evt.type === 'dictate-audio'){ return; }
     if(evt.type === 'auth-url'){ if(signinBox) signinBox.__url = evt.url; return; }
     if(evt.type === 'auth-done'){
       if(signinBox){ signinBox.remove(); signinBox = null; }

@@ -22465,8 +22465,7 @@ try {
     send.disabled = on;
     send.textContent = on ? 'Working…' : 'Send';
     input.disabled = on;
-    hint.textContent = on ? 'Working — the drawing will change as it goes.'
-                          : 'Enter to send · Shift+Enter for a new line';
+    hint.textContent = on ? 'Working — the drawing will change as it goes.' : NORMAL_HINT;
   }
 
   // Text arrives in pieces; they belong in one paragraph rather than one each.
@@ -22494,11 +22493,27 @@ try {
     if(evt.type === 'dictate-text'){
       input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + evt.text;
       input.scrollTop = input.scrollHeight;
+      noiseRun = 0; sawPartial = false;
+      heard('listening — say something');
       return;
     }
     if(evt.type === 'dictate-done'){ setListening(false); input.focus(); return; }
     if(evt.type === 'dictate-error'){ add('chat-err', evt.message); setListening(false); return; }
-    if(evt.type === 'dictate-ready'){ return; }
+    if(evt.type === 'dictate-ready'){ heard('listening — say something'); return; }
+    // What it is hearing, while it hears it. Without this there is no way to
+    // tell a microphone that is working from one that is not until the end.
+    if(evt.type === 'dictate-partial'){ noiseRun = 0; heard(evt.text, true); return; }
+    if(evt.type === 'dictate-level'){
+      if(!sawPartial) heard(evt.level > 2 ? 'hearing you…' : 'listening — say something');
+      return;
+    }
+    if(evt.type === 'dictate-noise'){
+      // One is a cough. Two in a row is a room the recogniser cannot work in.
+      if(++noiseRun >= 2) heard('hearing sound, not words — try closer to the microphone');
+      return;
+    }
+    if(evt.type === 'dictate-silent'){ add('chat-err', evt.message); return; }
+    if(evt.type === 'dictate-audio'){ return; }
     // The address to sign in at, in case the browser did not open by itself.
     if(evt.type === 'auth-url'){ if(signinBox) signinBox.__url = evt.url; return; }
     if(evt.type === 'auth-done'){
@@ -22530,13 +22545,25 @@ try {
   // because the engine doing the listening is the one built into Windows and it
   // is right about most of a sentence rather than all of it.
   const mic = document.getElementById('chatMic');
-  let listening = false;
+  let listening = false, noiseRun = 0, sawPartial = false;
+
+  const NORMAL_HINT = 'Enter to send · Shift+Enter for a new line';
+  // The hint line doubles as the "what am I hearing" line while dictating —
+  // there is nowhere better to put it, and it is exactly where you are looking.
+  function heard(text, isPartial){
+    if(!listening) return;
+    if(isPartial) sawPartial = true;
+    hint.textContent = '● ' + (text.length > 58 ? '…' + text.slice(-58) : text);
+  }
 
   function setListening(on){
     listening = on;
+    noiseRun = 0;
+    sawPartial = false;
     mic.classList.toggle('listening', on);
     mic.textContent = on ? '● Listening' : '🎤 Speak';
     mic.title = on ? 'Stop listening' : 'Speak instead of typing';
+    if(!busy) hint.textContent = on ? '● starting…' : NORMAL_HINT;
   }
 
   mic.addEventListener('click', async () => {

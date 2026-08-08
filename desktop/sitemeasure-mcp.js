@@ -152,6 +152,7 @@ function buildTools(win, frameSelector, ensureFn) {
         category: { type: 'string', enum: ['external', 'internal', 'wet', 'party'],
                     description: 'external or party walls mitre at corners; internal and wet walls butt into whatever they meet.' },
         thicknessMm: { type: 'number', description: 'Total thickness. ' + MM + ' Ignored when layers are given — they add up to it.' },
+        insideFirst: { type: 'boolean', description: 'Whether the FIRST layer is the skin that faces into the building. True unless you say otherwise. Walls are drawn with that skin facing in whichever way round they were drawn, so a brick veneer listed 10 plasterboard first is insideFirst true, and one listed 110 face brick first is insideFirst false.' },
         layers: { type: 'array', description: 'The build-up from one face to the other, in order.',
                   items: obj({
                     thicknessMm: { type: 'number', description: 'Thickness of this layer. ' + MM },
@@ -202,6 +203,7 @@ function buildTools(win, frameSelector, ensureFn) {
         end: { type: 'array', description: 'Put the far end at this [x,y]. ' + MM, items: { type: 'number' }, minItems: 2, maxItems: 2 },
         heightMm: { type: 'number', description: 'Wall height. ' + MM },
         status: { type: 'string', enum: ['new', 'existing', 'demo'], description: 'New work, existing, or coming out.' },
+        flipSkins: { type: 'boolean', description: 'Turn this wall\'s build-up round, so the skin that was drawn facing into the building faces out. Use it when describe_site shows the wrong material facing in on one wall.' },
         resolve: { type: 'boolean', description: 'Cut the junctions afterwards. True unless you say otherwise.' }
       }, ['wall'])),
 

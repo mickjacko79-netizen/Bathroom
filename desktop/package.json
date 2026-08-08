@@ -1,6 +1,6 @@
 {
   "name": "bathroom",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Bathroom — architectural drawing set for bathrooms, ensuites and wet areas",
   "main": "main.js",
   "author": "Mike J · Joinery Studio",
@@ -41,6 +41,9 @@
       "icon.png",
       "bundled/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "dictate.ps1"
     ],
     "win": {
       "icon": "icon.ico",

@@ -28,7 +28,42 @@ const os = require('os');
 //
 // So the shims are only used to find the package, and what actually gets spawned
 // is the real binary they point at.
-let resolvedCli = undefined;
+//
+// Two things this used to get wrong, both of which read as "Claude Code is not
+// installed" on a machine where it plainly is:
+//
+//   • A failed lookup was cached for the life of the app. One bad probe — a
+//     slow `where`, a cwd that had been cleaned up under it, anything — and the
+//     panel insisted it was not installed until you restarted. Only a hit is
+//     worth remembering, so only a hit is kept.
+//   • It asked PATH and nothing else. A window opened from Explorer inherits
+//     whatever PATH Explorer started with, which on Windows can be older than
+//     the install. So the usual places are checked too, by looking.
+let resolvedCli = null;
+
+// Where an install actually puts it, in the order worth trying.
+function knownCliPaths() {
+  const home = os.homedir();
+  const out = [];
+  const push = (...parts) => { try { out.push(path.join(...parts.filter(Boolean))); } catch (_) {} };
+  if (process.env.BATHROOM_CLAUDE_CLI) out.push(process.env.BATHROOM_CLAUDE_CLI);
+  const pkgBin = ['node_modules', '@anthropic-ai', 'claude-code', 'bin'];
+  if (process.platform === 'win32') {
+    push(process.env.APPDATA, 'npm', ...pkgBin, 'claude.exe');
+    push(process.env.LOCALAPPDATA, 'npm', ...pkgBin, 'claude.exe');
+    push(process.env.ProgramFiles, 'nodejs', ...pkgBin, 'claude.exe');
+    push(home, '.claude', 'local', 'claude.exe');
+    push(home, 'AppData', 'Roaming', 'npm', ...pkgBin, 'claude.exe');
+  } else {
+    push('/usr/local/lib', ...pkgBin, 'claude');
+    push('/opt/homebrew/lib', ...pkgBin, 'claude');
+    push(home, '.npm-global/lib', ...pkgBin, 'claude');
+    push(home, '.claude', 'local', 'claude');
+    push('/usr/local/bin/claude');
+    push('/opt/homebrew/bin/claude');
+  }
+  return out;
+}
 
 function realBinaryNear(shimPath) {
   // npm lays its shims beside node_modules, and the package's own bin is a
@@ -49,12 +84,20 @@ function realBinaryNear(shimPath) {
 }
 
 function findCli() {
-  if (resolvedCli !== undefined) return Promise.resolve(resolvedCli);
+  // A hit is worth keeping — it cannot go stale within a run. A miss is not:
+  // it may just have been a bad moment, and the cost of asking again is one
+  // process that exits in milliseconds.
+  if (resolvedCli && fs.existsSync(resolvedCli)) return Promise.resolve(resolvedCli);
+  resolvedCli = null;
+
   const probe = process.platform === 'win32'
     ? { cmd: process.env.ComSpec || 'cmd.exe', args: ['/c', 'where', 'claude'] }
     : { cmd: '/bin/sh', args: ['-lc', 'command -v claude'] };
   return new Promise(resolve => {
-    execFile(probe.cmd, probe.args, { windowsHide: true }, (err, stdout) => {
+    // An explicit cwd, because the one inherited from a portable exe can be a
+    // temp folder that is no longer there, and spawning into a missing
+    // directory fails in a way that looks exactly like a missing program.
+    execFile(probe.cmd, probe.args, { windowsHide: true, cwd: os.tmpdir() }, (_err, stdout) => {
       const found = String(stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
       let pick = null;
       // A real executable on PATH is best — some installs put one there.
@@ -63,7 +106,13 @@ function findCli() {
       if (!pick) { for (const s of found) { const real = realBinaryNear(s); if (real) { pick = real; break; } } }
       // On anything but Windows the shim is usually executable itself.
       if (!pick && process.platform !== 'win32') pick = found[0] || null;
-      resolvedCli = (err && !pick) ? null : pick;
+      // PATH knew nothing. Look where it would be anyway.
+      if (!pick) {
+        for (const p of knownCliPaths()) {
+          try { if (fs.existsSync(p)) { pick = p; break; } } catch (_) {}
+        }
+      }
+      resolvedCli = pick || null;
       resolve(resolvedCli);
     });
   });
@@ -158,9 +207,14 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
   async function status() {
     const cli = await findCli();
     if (!cli) {
+      // Say where it looked. "Not installed" on a machine where it is installed
+      // is not something anyone can act on.
       return { ready: false, reason: 'not-installed',
-               message: 'Claude Code is not installed on this machine. Install it with '
-                      + '"npm install -g @anthropic-ai/claude-code", then reopen this panel.' };
+               message: 'Could not find Claude Code. If it is not installed, install it with '
+                      + '"npm install -g @anthropic-ai/claude-code". If it is, it is somewhere this '
+                      + 'looked past — PATH, and ' + knownCliPaths().slice(0, 3).join(', ')
+                      + ' — so set BATHROOM_CLAUDE_CLI to the full path of claude.exe and reopen '
+                      + 'this panel.' };
     }
     if (!bridgeUrl()) {
       return { ready: false, reason: 'no-bridge',
@@ -379,12 +433,28 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
       return { error: 'Dictation here uses the Windows speech engine, and this is not Windows.' };
     }
     if (dictateProc) return { started: true, already: true };
-    const script = path.join(__dirname, 'dictate.ps1');
+    // PowerShell is not Electron and knows nothing about asar archives — a path
+    // inside app.asar simply does not exist as far as it is concerned, and the
+    // spawn fails with something that reads like a broken microphone. Packaging
+    // leaves this one file beside the archive; point at that copy.
+    //
+    // This is why dictation worked when run from a checkout and never once in a
+    // built copy: from source, __dirname is a real folder.
+    const script = path.join(__dirname.replace(/app\.asar([\\/]|$)/, 'app.asar.unpacked$1'),
+                             'dictate.ps1');
+    if (!fs.existsSync(script)) {
+      return { error: 'The dictation script is missing from this build. It should sit beside '
+                    + 'app.asar in resources/app.asar.unpacked.' };
+    }
     let proc;
     try {
       proc = spawn('powershell.exe',
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
         { windowsHide: true, env: Object.assign({}, process.env,
+            // It listens until it is stopped, so it has to know who to outlive
+            // and who to follow. Killing this process leaves the child holding
+            // the microphone open otherwise.
+            { BATHROOM_DICTATE_PARENT: String(process.pid) },
             lang ? { BATHROOM_DICTATE_LANG: String(lang) } : {}) });
     } catch (err) {
       return { error: 'Could not start dictation: ' + err.message };
@@ -402,7 +472,15 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
         if (!line) continue;
         let msg; try { msg = JSON.parse(line); } catch (_) { continue; }
         if (msg.error) { emit('dictate-error', { message: msg.error }); return; }
-        if (msg.ready) { emit('dictate-ready', { culture: msg.culture }); continue; }
+        if (msg.ready) { emit('dictate-ready', { culture: msg.culture, available: msg.available }); continue; }
+        // Everything between starting and a finished sentence, so the panel can
+        // show that it is listening rather than leaving it to be guessed at.
+        if (msg.partial) { emit('dictate-partial', { text: msg.partial }); continue; }
+        if (msg.level != null) { emit('dictate-level', { level: msg.level }); continue; }
+        if (msg.audio) { emit('dictate-audio', { state: msg.audio }); continue; }
+        if (msg.silent) { emit('dictate-silent', { message: msg.message }); continue; }
+        // Heard, but not as words worth keeping.
+        if (msg.noise) { emit('dictate-noise', { confidence: msg.confidence }); continue; }
         if (msg.text)  emit('dictate-text', { text: msg.text, confidence: msg.confidence });
       }
     });
@@ -412,7 +490,10 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
       dictateProc = null;
       emit('dictate-error', { message: 'Could not start dictation: ' + err.message });
     });
-    proc.on('close', () => { dictateProc = null; emit('dictate-done', {}); });
+    proc.on('close', () => {
+      dictateProc = null;
+      if (!proc.__doneSaid) emit('dictate-done', {});
+    });
     return { started: true };
   }
 
@@ -442,6 +523,10 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
 
   function dictateStop() {
     if (!dictateProc) return { stopped: false };
+    // The process exiting emits this too, and the panel gets both. Say it once:
+    // here, because a kill that does not take should still end the listening
+    // state, and let the close handler see that it has already been said.
+    dictateProc.__doneSaid = true;
     try { dictateProc.kill(); } catch (_) {}
     dictateProc = null;
     emit('dictate-done', {});
