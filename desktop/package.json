@@ -31,7 +31,9 @@
     },
     "files": [
       "main.js",
+      "mcp-transport.js",
       "mcp-server.js",
+      "sitemeasure-mcp.js",
       "chat.js",
       "preload.js",
       "dictate.ps1",

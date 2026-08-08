@@ -96,6 +96,7 @@
       <button data-anchor="outside" class="anchor-btn px-2 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded">⌂ Inside</button>
       <div class="w-px h-6 bg-slate-600 mx-1"></div>
       <button id="btnMiter" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Marry near corners together (close gaps where wall ends meet)">⌐ Miter corners</button>
+      <button id="btnJunctions" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Cut every junction the way it is built: two external walls meeting at a corner mitre; an internal wall stops on the face of whatever it meets, and that wall runs on past it unbroken.">⌙ Resolve junctions</button>
       <button id="btnSquareInternals" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Snap SELECTED internal walls onto the nearest external wall's inside face and force perpendicular (90°). Only runs when you click — never automatically.">▢ Square internals</button>
       <button id="btnLockMiters" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Lock every wall's mitre so shared corners survive future length edits or endpoint drags. Click again to unlock all.">🔒 Lock mitres</button>
       <button id="btnAllOutsideFace" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Throw every wall's dimension chain OUTSIDE the plan. This is what a new drawing does on its own; use it after hand-facing a wall you want to put back.">▢ All outside dims</button>
@@ -1354,10 +1355,10 @@ function autoMiterAll() {
       const tB = paramOnWall(wB, sx, sy);
       if (tA > 0.1 && tA < 0.9) continue; // shared point mid-A → T-junction, skip
       if (tB > 0.1 && tB < 0.9) continue; // shared point mid-B → T-junction, skip
-      // Don't mitre across internal / external boundary — an internal
-      // wall meeting an external wall should butt against the face, not
-      // extend its centreline to the external's outside face.
-      if (isInternalWall(wA) !== isInternalWall(wB)) continue;
+      // A mitre is only ever an external corner. Anything with an internal
+      // wall in it is a butt — the through wall runs on unbroken and the
+      // other stops on its face — so leave it to smResolveJunctions().
+      if (isInternalWall(wA) || isInternalWall(wB)) continue;
       if (miterCorner(wA, wB)) {
         wA.mitersLocked = true; wB.mitersLocked = true;
         mitered++;
@@ -3609,11 +3610,11 @@ function wallCornersMitered(w) {
   function pickMiter(endPoint) {
     const adj = findAdjacentWallAtPoint(w, endPoint[0], endPoint[1]);
     if (!adj) return null;
-    // Skip mitre when one wall is internal and the other is external —
-    // internals should butt against external face cleanly, not mitre into
-    // it. Two externals still mitre together, and two internals mitre
-    // together at partition corners.
-    if (isInternalWall(w) !== isInternalWall(adj)) return null;
+    // A mitre is only ever an external corner. If either wall is internal
+    // this junction is a butt: the through wall is drawn square and
+    // unbroken, and the wall meeting it stops on its face. Drawing a mitre
+    // here would run the partition's lining round a corner it doesn't turn.
+    if (isInternalWall(w) || isInternalWall(adj)) return null;
     const oFA = faceLineOf(adj, +1);
     const oFB = faceLineOf(adj, -1);
     const intAA = lineLineIntersect(myFAstart, myFAend, oFA[0], oFA[1]);
@@ -6806,15 +6807,13 @@ function handleCanvasClick(wx, wy, sx, sy) {
         measurementFace: state.drawAnchor === 'outside' ? 'B' : 'A'
       };
       state.job.walls.push(wall);
-      // Auto-miter with previous wall in this chain — and mark both walls as
-      // "mitres locked" so future length edits / endpoint drags preserve the
-      // shared corner instead of silently detaching.
+      // Join to the previous wall in this chain by the drawing rule — an
+      // external corner mitres, anything else butts. smJoinPair marks a
+      // mitred pair as locked so later length edits or endpoint drags keep
+      // the shared corner instead of silently detaching.
       if (state.draft.wallIds && state.draft.wallIds.length) {
         const prev = state.job.walls.find(w => w.id === state.draft.wallIds[state.draft.wallIds.length-1]);
-        if (prev && miterCorner(prev, wall)) {
-          prev.mitersLocked = true;
-          wall.mitersLocked = true;
-        }
+        if (prev) smJoinPair(prev, wall);
       }
       // (Auto-snap of internals-to-externals removed — use the manual
       // "▢ Square internals" toolbar button instead. The auto version
@@ -10546,7 +10545,19 @@ async function applyJobImportPayload(data, opts){
     activeStoryId: data.job.activeStoryId || null,
     logoDataUrl: data.job.logoDataUrl || null
   });
-  if(Array.isArray(data.composites)) state.composites = data.composites;
+  // The wall-type library has to be WRITTEN, not just swapped in. Swapping it
+  // in memory alone leaves whatever was in IndexedDB untouched, so the library
+  // looks right until the next reload puts the old one back — which is how a
+  // wall type that was meant to have gone reappears.
+  if(Array.isArray(data.composites)){
+    state.composites = data.composites;
+    if(state.compositeLibs) state.compositeLibs.libs[state.compositeLibs.active] = data.composites;
+    if(!state.composites.some(c => c.id === state.currentCompositeId)){
+      state.currentCompositeId = state.composites.length ? state.composites[0].id : null;
+    }
+    try { await saveComposites(); } catch(e){ console.warn('composite library save failed', e); }
+    try { refreshCompositePicker(); } catch(_){}
+  }
   if(state.job.underlay && state.job.underlay.dataUrl){
     try { await _loadUnderlayImgFromDataUrl(state.job.underlay.dataUrl); }
     catch(e){ console.warn('Underlay reload failed', e); }
@@ -10944,6 +10955,737 @@ function initFramingBridge() {
     }
   });
 }
+
+/* =====================================================================
+   19b. Wall junctions — where walls meet, and how they are cut
+   =====================================================================
+   The rule, the way it is built and the way it is drawn:
+
+     • Two EXTERNAL walls meeting end to end make an external corner, and
+       they MITRE. Both centrelines run on to their intersection and the
+       faces are cut on the bisector, so the skin turns the corner in one
+       unbroken piece.
+
+     • An INTERNAL wall meeting an external one BUTTS. Its end stops dead
+       on the external's face. The external runs on past it, unbroken —
+       the partition is built into it, not woven through it.
+
+     • Two internals meeting also butt. The longer one runs through; the
+       shorter stops on its face.
+
+   A mitre is only ever an external corner. Everything else is a butt.
+   That is the whole rule, and both the geometry below and the face
+   drawing in wallCornersMitered() follow it.
+   ===================================================================== */
+
+function smWallClass(w){ return isInternalWall(w) ? 'internal' : 'external'; }
+function smWallLenWorld(w){ return Math.hypot(w.x2 - w.x1, w.y2 - w.y1); }
+function smWallUnit(w){
+  const L = smWallLenWorld(w) || 1;
+  return [(w.x2 - w.x1) / L, (w.y2 - w.y1) / L];
+}
+
+/* A wall's two faces, as infinite lines: its centreline offset half a
+   thickness each way. Shortening a wall doesn't move these — they are the
+   lines the wall's skin runs along. */
+function smFaceLines(w){
+  const [ux, uy] = smWallUnit(w);
+  const nx = -uy, ny = ux;
+  const t = getWallThicknessWorld(w) / 2;
+  return [
+    [[w.x1 + nx*t, w.y1 + ny*t], [w.x2 + nx*t, w.y2 + ny*t]],
+    [[w.x1 - nx*t, w.y1 - ny*t], [w.x2 - nx*t, w.y2 - ny*t]]
+  ];
+}
+
+/* Where w's centreline crosses other's two faces, nearest to `from` first.
+   Walking up to a wall you meet its near face before its far one, so [0] is
+   where a butting wall stops and [1] is how far a through wall must run to
+   finish flush. */
+function smFaceCrossings(w, other, from){
+  const out = [];
+  for(const f of smFaceLines(other)){
+    const p = lineLineIntersect([w.x1,w.y1], [w.x2,w.y2], f[0], f[1]);
+    if(p) out.push(p);
+  }
+  out.sort((a,b) =>
+    Math.hypot(a[0]-from[0], a[1]-from[1]) - Math.hypot(b[0]-from[0], b[1]-from[1]));
+  return out;
+}
+
+/* Foot of a point on a wall's centreline, with how far along it landed:
+   0 at the start, 1 at the end. That parameter is what tells a corner
+   (an end) from a tee (a side). */
+function smFootOn(w, px, py){
+  const dx = w.x2 - w.x1, dy = w.y2 - w.y1;
+  const L2 = dx*dx + dy*dy || 1;
+  const t = ((px - w.x1)*dx + (py - w.y1)*dy) / L2;
+  const fx = w.x1 + dx*t, fy = w.y1 + dy*t;
+  return { t, x: fx, y: fy, d: Math.hypot(px - fx, py - fy) };
+}
+
+/* Do these two walls meet, and if so how is the junction cut?
+   Returns null when they don't meet, or:
+     { kind:'mitre', a, b, aEnd, bEnd }          — an external corner
+     { kind:'butt', at:'corner'|'tee',
+       through, throughEnd, guest, guestEnd }     — guest stops on through's face
+*/
+function smClassifyJunction(a, b){
+  if(isParallel(a, b)) return null;              // nothing to cut
+  const tol = Math.max(getWallThicknessWorld(a), getWallThicknessWorld(b));
+
+  // End to end: the closest pair of endpoints, if they are near enough.
+  let corner = null, best = Infinity;
+  for(const ea of [{end:'1', x:a.x1, y:a.y1}, {end:'2', x:a.x2, y:a.y2}]){
+    for(const eb of [{end:'1', x:b.x1, y:b.y1}, {end:'2', x:b.x2, y:b.y2}]){
+      const d = Math.hypot(ea.x - eb.x, ea.y - eb.y);
+      if(d < best){ best = d; corner = { aEnd: ea.end, bEnd: eb.end, d }; }
+    }
+  }
+  if(corner && corner.d < tol){
+    if(smWallClass(a) === 'external' && smWallClass(b) === 'external'){
+      return { kind:'mitre', a, b, aEnd: corner.aEnd, bEnd: corner.bEnd, at:'corner' };
+    }
+    // One of them is internal. Whoever runs through is decided first by
+    // class — an external always wins — and only then by length, so the
+    // answer doesn't depend on the order the walls happen to sit in.
+    let through;
+    if(smWallClass(a) !== smWallClass(b)){
+      through = smWallClass(a) === 'external' ? a : b;
+    } else {
+      const la = smWallLenWorld(a), lb = smWallLenWorld(b);
+      through = (lb > la || (lb === la && String(b.id) < String(a.id))) ? b : a;
+    }
+    const guest = through === a ? b : a;
+    return { kind:'butt', at:'corner', through, guest,
+             throughEnd: through === a ? corner.aEnd : corner.bEnd,
+             guestEnd:   guest   === a ? corner.aEnd : corner.bEnd };
+  }
+
+  // End into a side — a tee. Whoever's body is hit runs through.
+  //
+  // Judged on where the two centrelines cross rather than on how close the
+  // ends are: a partition drawn a bit short of the wall it meets, or a bit past
+  // it, is the same junction either way, and a length taken off a plan by eye
+  // is rarely exact. Two walls that cross with neither end near the crossing
+  // are two walls crossing — a different drawing, and not ours to cut.
+  const X = lineLineIntersect([a.x1,a.y1], [a.x2,a.y2], [b.x1,b.y1], [b.x2,b.y2]);
+  if(!X) return null;
+  const ends = [
+    { w:a, o:b, end:'1', x:a.x1, y:a.y1 }, { w:a, o:b, end:'2', x:a.x2, y:a.y2 },
+    { w:b, o:a, end:'1', x:b.x1, y:b.y1 }, { w:b, o:a, end:'2', x:b.x2, y:b.y2 }
+  ];
+  for(const e of ends){
+    const along = smFootOn(e.o, X[0], X[1]).t;
+    if(along < 0.02 || along > 0.98) continue;   // that is an end, not a side
+    const reach = getWallThicknessWorld(e.o) / 2 + smJoinSlopWorld();
+    if(Math.hypot(e.x - X[0], e.y - X[1]) > reach) continue;
+    return { kind:'butt', at:'tee', through:e.o, guest:e.w,
+             guestEnd:e.end, throughEnd:null };
+  }
+  return null;
+}
+
+/* How far past the wall it meets an end may sit and still be meant to meet it.
+   A touch more than anything in the wall-type library is thick, so a wall drawn
+   long or short off a plan still lands, without being greedy enough to reach a
+   wall it was never near. */
+function smJoinSlopWorld(){
+  const scale = (state.job && state.job.scaleMmPerUnit) || 10;
+  return 250 / scale;
+}
+
+/* Every junction in the job, classified. */
+function smJunctions(){
+  if(!state.job) return [];
+  const walls = state.job.walls || [];
+  const out = [];
+  for(let i = 0; i < walls.length; i++){
+    for(let j = i + 1; j < walls.length; j++){
+      const jn = smClassifyJunction(walls[i], walls[j]);
+      if(jn) out.push(jn);
+    }
+  }
+  return out;
+}
+
+/* Stop the guest wall's end on the through wall's near face, keeping its
+   own direction — it slides along its own centreline, it never rotates. */
+function smButtEndToFace(guest, guestEnd, through){
+  const isStart = guestEnd === '1';
+  const pivot = isStart ? [guest.x2, guest.y2] : [guest.x1, guest.y1];
+  const hits = smFaceCrossings(guest, through, pivot);
+  if(!hits.length) return false;
+  if(isStart){ guest.x1 = hits[0][0]; guest.y1 = hits[0][1]; }
+  else       { guest.x2 = hits[0][0]; guest.y2 = hits[0][1]; }
+  return true;
+}
+
+/* Run the through wall on to the far face of the wall butting into it, so
+   its end face finishes flush with the outside of the corner instead of
+   stopping short and leaving a notch. */
+function smRunThroughPast(through, throughEnd, guest){
+  const isStart = throughEnd === '1';
+  const pivot = isStart ? [through.x2, through.y2] : [through.x1, through.y1];
+  const hits = smFaceCrossings(through, guest, pivot);
+  if(hits.length < 2) return false;
+  if(isStart){ through.x1 = hits[1][0]; through.y1 = hits[1][1]; }
+  else       { through.x2 = hits[1][0]; through.y2 = hits[1][1]; }
+  return true;
+}
+
+/* Cut one junction. Returns 'mitre', 'butt' or null. */
+function smApplyJunction(jn){
+  if(!jn) return null;
+  if(jn.kind === 'mitre'){
+    if(!miterCorner(jn.a, jn.b)) return null;
+    jn.a.mitersLocked = true;
+    jn.b.mitersLocked = true;
+    return 'mitre';
+  }
+  const moved = smButtEndToFace(jn.guest, jn.guestEnd, jn.through);
+  const ran   = jn.at === 'corner'
+    ? smRunThroughPast(jn.through, jn.throughEnd, jn.guest)
+    : false;
+  return (moved || ran) ? 'butt' : null;
+}
+
+/* Join two walls that have just been drawn end to end. */
+function smJoinPair(a, b){ return smApplyJunction(smClassifyJunction(a, b)); }
+
+/* Cut every junction in the job to the rule. Safe to run twice — a junction
+   already cut resolves to the same point, because the face lines it is cut
+   against don't move when a wall is shortened or run on. */
+function smResolveJunctions(){
+  if(!state.job) return { mitred:0, butted:0, junctions:[] };
+  const detail = [];
+  let mitred = 0, butted = 0;
+  for(const jn of smJunctions()){
+    const did = smApplyJunction(jn);
+    if(did === 'mitre'){
+      mitred++;
+      detail.push({ kind:'mitre', walls:[jn.a.id, jn.b.id] });
+    } else if(did === 'butt'){
+      butted++;
+      detail.push({ kind:'butt', at:jn.at, through:jn.through.id, butting:jn.guest.id });
+    }
+  }
+  return { mitred, butted, junctions: detail };
+}
+
+// Guarded, unlike its neighbours: this button is new, and a host that has
+// trimmed the toolbar out of its own copy of this file should lose the button,
+// not the whole app.
+const _btnJunctions = document.getElementById('btnJunctions');
+if(_btnJunctions) _btnJunctions.addEventListener('click', () => {
+  if(!state.job){ toast('Open a job first.'); return; }
+  pushHistory();
+  const r = smResolveJunctions();
+  debouncedSave();
+  renderCanvas();
+  if(!r.mitred && !r.butted){ toast('No junctions to cut — no two walls are meeting.'); return; }
+  const bits = [];
+  if(r.mitred) bits.push(r.mitred + ' external corner' + (r.mitred === 1 ? '' : 's') + ' mitred');
+  if(r.butted) bits.push(r.butted + ' butt' + (r.butted === 1 ? '' : 's') + ' cut to the face');
+  toast(bits.join(', '));
+});
+
+/* =====================================================================
+   19c. Claude — the site measure's own integration
+   =====================================================================
+   This is deliberately self-contained: it reaches nothing outside this
+   file, so the whole integration travels with inline.html into whichever
+   app embeds the site measure. A host page drives it by postMessage; a
+   script on this page can call window.smClaude.call() directly.
+
+   Everything crossing this boundary is in MILLIMETRES, measured on wall
+   CENTRELINES, with x to the right and y downward — the same axes the
+   canvas uses. Angles are degrees, 0° east and 90° north on screen.
+   ===================================================================== */
+
+const SM_CLAUDE_VERSION = '1.0.0';
+const SM_JUNCTION_RULE =
+  'External walls mitre where they meet at an external corner. An internal ' +
+  'wall butts — it stops on the face of whatever it meets, and that wall runs ' +
+  'on past it unbroken. Where two internals meet, the longer runs through. A ' +
+  'mitre is only ever an external corner.';
+
+function smMmPerUnit(){ return (state.job && state.job.scaleMmPerUnit) || 10; }
+function smToMm(u){ return u * smMmPerUnit(); }
+function smToUnits(mm){ return mm / smMmPerUnit(); }
+function smRound(n){ return Math.round(n * 10) / 10; }
+
+function smNeedJob(){
+  if(!state.job) throw new Error('There is no site measure job open. Call set_job with a name to start one.');
+  return state.job;
+}
+function smFindWall(ref){
+  const job = smNeedJob();
+  const w = (job.walls || []).find(x => x.id === ref);
+  if(w) return w;
+  throw new Error('There is no wall "' + ref + '". The walls are ' +
+    ((job.walls || []).map(x => x.id).join(', ') || 'none yet') + '.');
+}
+function smFindComposite(ref){
+  if(!ref) return null;
+  const byId = state.composites.find(c => c.id === ref);
+  if(byId) return byId;
+  const lower = String(ref).toLowerCase();
+  const byName = state.composites.find(c => String(c.name).toLowerCase() === lower)
+              || state.composites.find(c => String(c.name).toLowerCase().includes(lower));
+  if(byName) return byName;
+  throw new Error('There is no wall type "' + ref + '". The library has ' +
+    state.composites.map(c => c.name).join(', ') + '.');
+}
+function smAngleOf(w){
+  // Screen y grows downward, so the sine is flipped to keep 90° pointing up.
+  return smRound(Math.atan2(-(w.y2 - w.y1), w.x2 - w.x1) * 180 / Math.PI);
+}
+function smTouched(){
+  try { debouncedSave(); } catch(_){}
+  try { renderAll(); } catch(_){}
+}
+
+function smWallOut(w){
+  const comp = w.compositeId ? getComposite(w.compositeId) : null;
+  return {
+    id: w.id,
+    class: smWallClass(w),
+    wallType: comp ? { id: comp.id, name: comp.name, category: comp.category } : null,
+    thicknessMm: getWallThicknessMm(w),
+    start: [smRound(smToMm(w.x1)), smRound(smToMm(w.y1))],
+    end:   [smRound(smToMm(w.x2)), smRound(smToMm(w.y2))],
+    lengthMm: smRound(smToMm(smWallLenWorld(w))),
+    measuredLengthMm: w.measuredLengthMm == null ? null : w.measuredLengthMm,
+    angleDeg: smAngleOf(w),
+    heightMm: w.heightMm || DEFAULT_WALL_HEIGHT_MM,
+    status: w.status || 'existing',
+    mitresLocked: !!w.mitersLocked
+  };
+}
+function smOpeningOut(o){
+  const w = (state.job.walls || []).find(x => x.id === o.wallId);
+  return {
+    id: o.id,
+    wallId: o.wallId,
+    type: o.type,
+    label: o.label || '',
+    widthMm: o.widthMm || 0,
+    heightMm: o.heightMm || 0,
+    sillMm: o.sillMm || 0,
+    // Centre of the opening, measured from the wall's start along its centreline.
+    positionMm: w ? smRound(smToMm(smWallLenWorld(w)) * (o.position || 0)) : null,
+    room: o.room || '',
+    hingeSide: o.hingeSide || 'left',
+    swingDir: o.swingDir || 'inside',
+    notes: o.notes || ''
+  };
+}
+function smRoomOut(r){
+  return {
+    id: r.id, label: r.label || '',
+    at: [smRound(smToMm(r.x)), smRound(smToMm(r.y))],
+    color: r.color || null,
+    notes: r.notes || '',
+    floorFinish: r.floorFinish || '', wallFinish: r.wallFinish || '',
+    ceilingFinish: r.ceilingFinish || ''
+  };
+}
+function smCompositeOut(c){
+  const layers = (Array.isArray(c.layers) && c.layers.length) ? c.layers : parseBuildUpSM(c.buildUp || '');
+  return {
+    id: c.id, name: c.name, category: c.category,
+    thicknessMm: c.thicknessMm,
+    class: (c.category === 'internal' || c.category === 'wet') ? 'internal' : 'external',
+    layers: layers.map(L => ({ thicknessMm: L.thicknessMm, material: L.material || 'layer' })),
+    buildUp: c.buildUp || '', color: c.color, hatch: !!c.hatch
+  };
+}
+function smJunctionOut(jn){
+  return jn.kind === 'mitre'
+    ? { kind:'mitre', at:'external corner', walls:[jn.a.id, jn.b.id] }
+    : { kind:'butt', at:jn.at, through:jn.through.id, butting:jn.guest.id };
+}
+
+/* Which way is out of a closed run of points? Positive shoelace area means
+   the points wind clockwise on screen; the outward normal flips with it. */
+function smWindingSign(pts){
+  let area = 0;
+  for(let i = 0; i < pts.length; i++){
+    const [x1,y1] = pts[i], [x2,y2] = pts[(i+1) % pts.length];
+    area += x1*y2 - x2*y1;
+  }
+  return area >= 0 ? 1 : -1;
+}
+
+const SM_CLAUDE_METHODS = {
+
+  /* ---- reading ---- */
+  describe(){
+    const job = state.job;
+    if(!job){
+      return { app:'sitemeasure', version: APP_VERSION, integration: SM_CLAUDE_VERSION,
+               units:'mm', job:null, rule: SM_JUNCTION_RULE,
+               note:'No job is open. Call set_job with a name to start one.' };
+    }
+    const story = (job.stories || []).find(s => s.id === job.activeStoryId);
+    return {
+      app:'sitemeasure', version: APP_VERSION, integration: SM_CLAUDE_VERSION,
+      units:'mm',
+      axes:'x right, y down, angles 0° east and 90° north on screen',
+      geometry:'wall centrelines',
+      job: { id: job.id, name: job.name, address: job.address || '',
+             scaleMmPerUnit: job.scaleMmPerUnit,
+             story: story ? story.name : null },
+      rule: SM_JUNCTION_RULE,
+      walls: (job.walls || []).map(smWallOut),
+      openings: (job.openings || []).map(smOpeningOut),
+      rooms: (job.rooms || []).map(smRoomOut),
+      wallTypes: (state.composites || []).map(smCompositeOut),
+      junctions: smJunctions().map(smJunctionOut)
+    };
+  },
+
+  list_wall_types(){
+    return { wallTypes: (state.composites || []).map(smCompositeOut),
+             defaultForNewWalls: state.currentCompositeId || null };
+  },
+
+  /* ---- the wall type library ---- */
+  async save_wall_type(p){
+    const name = String(p.name || '').trim();
+    if(!name) throw new Error('A wall type needs a name.');
+    const layers = Array.isArray(p.layers)
+      ? p.layers.map(L => ({ thicknessMm: +L.thicknessMm || 0, material: String(L.material || 'layer') }))
+                .filter(L => L.thicknessMm > 0)
+      : [];
+    const fromLayers = layers.reduce((s, L) => s + L.thicknessMm, 0);
+    const thickness = fromLayers > 0 ? Math.round(fromLayers) : (+p.thicknessMm || 0);
+    if(!thickness) throw new Error('A wall type needs either a thickness or some layers to add up.');
+    const category = p.category || 'internal';
+    if(!['external','internal','wet','party'].includes(category)){
+      throw new Error('Category must be external, internal, wet or party — "' + category + '" is none of those.');
+    }
+    const data = {
+      name, category, thicknessMm: thickness, layers,
+      buildUp: layers.map(L => Math.round(L.thicknessMm) + ' ' + L.material).join(' + '),
+      color: p.color || '#94a3b8',
+      hatch: !!p.hatch
+    };
+    const existing = p.id ? state.composites.find(c => c.id === p.id)
+                          : state.composites.find(c => String(c.name).toLowerCase() === name.toLowerCase());
+    let comp;
+    if(existing){ Object.assign(existing, data); comp = existing; }
+    else { comp = { id: newId('cmp'), ...data }; state.composites.push(comp); }
+    await saveComposites();
+    try { renderCompositeList(); } catch(_){}
+    try { refreshCompositePicker(); } catch(_){}
+    if(state.job) renderCanvas();
+    return { saved: smCompositeOut(comp), replaced: !!existing };
+  },
+
+  /* ---- walls ---- */
+  add_walls(p){
+    const job = smNeedJob();
+    // Millimetres are only millimetres once the drawing has a scale. A job
+    // Claude is drawing from scratch has none, so pin it at 1 and the world
+    // units below ARE millimetres.
+    if(!job.scaleMmPerUnit) job.scaleMmPerUnit = 1;
+
+    const comp = p.wallType ? smFindComposite(p.wallType) : null;
+    const compositeId = comp ? comp.id : (state.currentCompositeId || null);
+    const thickWorld = smToUnits(comp ? comp.thicknessMm : 110);
+
+    let pts = Array.isArray(p.points) ? p.points.map(q => [smToUnits(+q[0]), smToUnits(+q[1])]) : null;
+    if(!pts && p.start && Array.isArray(p.segments)){
+      pts = [[smToUnits(+p.start[0]), smToUnits(+p.start[1])]];
+      for(const s of p.segments){
+        const rad = (+s.angleDeg || 0) * Math.PI / 180;
+        const L = smToUnits(+s.lengthMm || 0);
+        const last = pts[pts.length - 1];
+        pts.push([last[0] + Math.cos(rad) * L, last[1] - Math.sin(rad) * L]);
+      }
+    }
+    if(!pts || pts.length < 2){
+      throw new Error('Give either points (at least two [x,y] in mm) or a start plus segments of lengthMm and angleDeg.');
+    }
+    const closed = !!p.closed;
+
+    // The anchor says what the points describe. Centrelines are the default
+    // because that is what the file stores; 'inside' and 'outside' are what
+    // you actually read off a plan, so each run is shifted half a thickness
+    // and the junctions put the corners back together.
+    const anchor = p.anchor || 'centre';
+    if(anchor !== 'centre' && anchor !== 'inside' && anchor !== 'outside'){
+      throw new Error('anchor must be centre, inside or outside.');
+    }
+    if(anchor !== 'centre' && !closed){
+      throw new Error('An inside or outside anchor only means something on a closed run — pass closed:true, or give centrelines.');
+    }
+
+    if(p.replace){
+      job.walls.length = 0;
+      job.openings.length = 0;
+    }
+
+    const segs = [];
+    const last = closed ? pts.length : pts.length - 1;
+    for(let i = 0; i < last; i++) segs.push([pts[i], pts[(i + 1) % pts.length]]);
+
+    if(anchor !== 'centre'){
+      // An inside face given means the wall is built OUTWARD of it, so the
+      // centreline moves away from the middle of the run; an outside face
+      // given means the reverse.
+      const sign = smWindingSign(pts) * (anchor === 'inside' ? -1 : 1);
+      for(const s of segs){
+        const dx = s[1][0] - s[0][0], dy = s[1][1] - s[0][1];
+        const L = Math.hypot(dx, dy) || 1;
+        const ox = (-dy / L) * sign * thickWorld / 2;
+        const oy = ( dx / L) * sign * thickWorld / 2;
+        s[0] = [s[0][0] + ox, s[0][1] + oy];
+        s[1] = [s[1][0] + ox, s[1][1] + oy];
+      }
+    }
+
+    pushHistory();
+    const made = [];
+    for(const s of segs){
+      const w = {
+        id: newId('w'),
+        x1: s[0][0], y1: s[0][1], x2: s[1][0], y2: s[1][1],
+        measuredLengthMm: null,
+        compositeId,
+        measurementFace: 'B'
+      };
+      if(p.heightMm) w.heightMm = +p.heightMm;
+      if(p.status) w.status = String(p.status);
+      job.walls.push(w);
+      made.push(w);
+    }
+
+    const resolve = p.resolve === undefined ? true : !!p.resolve;
+    const cut = resolve ? smResolveJunctions() : { mitred:0, butted:0 };
+    // The measured length is what the schedule and the DXF print, so it has
+    // to be the wall as it now stands, not as it was asked for.
+    for(const w of made) w.measuredLengthMm = Math.round(smToMm(smWallLenWorld(w)));
+    smTouched();
+    return { added: made.map(smWallOut), mitred: cut.mitred, butted: cut.butted };
+  },
+
+  update_wall(p){
+    const w = smFindWall(p.wall || p.id);
+    pushHistory();
+    const changed = [];
+    if(p.wallType){
+      const c = smFindComposite(p.wallType);
+      w.compositeId = c.id;
+      delete w.thicknessMmOverride;
+      changed.push('wall type');
+    }
+    if(p.thicknessMm != null){ w.thicknessMmOverride = +p.thicknessMm; changed.push('thickness'); }
+    if(p.heightMm != null){ w.heightMm = +p.heightMm; changed.push('height'); }
+    if(p.status){ w.status = String(p.status); changed.push('status'); }
+    if(Array.isArray(p.start)){ w.x1 = smToUnits(+p.start[0]); w.y1 = smToUnits(+p.start[1]); changed.push('start'); }
+    if(Array.isArray(p.end)){   w.x2 = smToUnits(+p.end[0]);   w.y2 = smToUnits(+p.end[1]);   changed.push('end'); }
+    if(p.angleDeg != null){ applyAngleChange(w, +p.angleDeg, false); changed.push('angle'); }
+    if(p.lengthMm != null){
+      w.measuredLengthMm = +p.lengthMm;
+      if(!state.job.scaleMmPerUnit) state.job.scaleMmPerUnit = 1;
+      applyMeasuredLength(w, false);
+      changed.push('length');
+    }
+    if(!changed.length) throw new Error('Nothing to change — pass a wallType, thicknessMm, heightMm, status, start, end, angleDeg or lengthMm.');
+    const cut = (p.resolve === undefined ? true : !!p.resolve) ? smResolveJunctions() : { mitred:0, butted:0 };
+    w.measuredLengthMm = Math.round(smToMm(smWallLenWorld(w)));
+    smTouched();
+    return { wall: smWallOut(w), changed, mitred: cut.mitred, butted: cut.butted };
+  },
+
+  remove_wall(p){
+    const job = smNeedJob();
+    const w = smFindWall(p.wall || p.id);
+    const ops = (job.openings || []).filter(o => o.wallId === w.id);
+    pushHistory();
+    job.walls.splice(job.walls.indexOf(w), 1);
+    for(const o of ops) job.openings.splice(job.openings.indexOf(o), 1);
+    smTouched();
+    return { removed: w.id, openingsRemoved: ops.map(o => o.id) };
+  },
+
+  /* ---- openings ---- */
+  save_opening(p){
+    const job = smNeedJob();
+    const existing = p.opening ? (job.openings || []).find(o => o.id === p.opening) : null;
+    if(p.opening && !existing) throw new Error('There is no opening "' + p.opening + '".');
+    const w = existing && !p.wall ? smFindWall(existing.wallId) : smFindWall(p.wall || (existing && existing.wallId));
+    const lenMm = smToMm(smWallLenWorld(w));
+    if(!lenMm) throw new Error('Wall ' + w.id + ' has no length to put an opening in.');
+
+    const type = p.type || (existing && existing.type) || 'window';
+    if(!['door','window','opening','sliding','bifold'].includes(type)){
+      throw new Error('type must be door, window, opening, sliding or bifold.');
+    }
+    const widthMm = p.widthMm != null ? +p.widthMm : (existing ? existing.widthMm : 0);
+    if(!widthMm) throw new Error('An opening needs a widthMm.');
+    if(widthMm > lenMm){
+      throw new Error('That opening is ' + Math.round(widthMm) + 'mm wide and wall ' + w.id +
+                      ' is only ' + Math.round(lenMm) + 'mm long.');
+    }
+    // Measured to the opening's CENTRE, and kept far enough along that the
+    // whole opening stays inside the wall rather than hanging off its end.
+    let posMm = p.positionMm != null ? +p.positionMm
+              : (existing ? existing.position * lenMm : lenMm / 2);
+    const half = widthMm / 2;
+    posMm = Math.max(half, Math.min(lenMm - half, posMm));
+
+    const data = {
+      wallId: w.id,
+      position: posMm / lenMm,
+      type,
+      label: p.label != null ? String(p.label) : (existing ? existing.label : ''),
+      widthMm,
+      heightMm: p.heightMm != null ? +p.heightMm : (existing ? existing.heightMm : (type === 'window' ? 1200 : 2040)),
+      sillMm: p.sillMm != null ? +p.sillMm : (existing ? existing.sillMm : (type === 'window' ? 900 : 0)),
+      room: p.room != null ? String(p.room) : (existing ? existing.room : ''),
+      notes: p.notes != null ? String(p.notes) : (existing ? existing.notes : ''),
+      hingeSide: p.hingeSide || (existing ? existing.hingeSide : 'left'),
+      swingDir: p.swingDir || (existing ? existing.swingDir : 'inside'),
+      lockedWidth: p.lockedWidth != null ? !!p.lockedWidth : (existing ? !!existing.lockedWidth : false)
+    };
+    pushHistory();
+    let op;
+    if(existing){ Object.assign(existing, data); op = existing; }
+    else { op = { id: newId('op'), ...data }; job.openings.push(op); }
+    smTouched();
+    return { saved: smOpeningOut(op), replaced: !!existing };
+  },
+
+  remove_opening(p){
+    const job = smNeedJob();
+    const op = (job.openings || []).find(o => o.id === (p.opening || p.id));
+    if(!op) throw new Error('There is no opening "' + (p.opening || p.id) + '".');
+    pushHistory();
+    job.openings.splice(job.openings.indexOf(op), 1);
+    smTouched();
+    return { removed: op.id };
+  },
+
+  /* ---- rooms ---- */
+  save_room(p){
+    const job = smNeedJob();
+    const existing = p.room ? (job.rooms || []).find(r => r.id === p.room) : null;
+    if(p.room && !existing) throw new Error('There is no room "' + p.room + '".');
+    if(!existing && !Array.isArray(p.at)){
+      throw new Error('A new room needs an "at" of [x, y] in mm — somewhere inside it, where the label sits.');
+    }
+    const data = {};
+    if(p.label != null) data.label = String(p.label);
+    if(Array.isArray(p.at)){ data.x = smToUnits(+p.at[0]); data.y = smToUnits(+p.at[1]); }
+    if(p.color) data.color = String(p.color);
+    if(p.notes != null) data.notes = String(p.notes);
+    if(p.floorFinish != null) data.floorFinish = String(p.floorFinish);
+    if(p.wallFinish != null) data.wallFinish = String(p.wallFinish);
+    if(p.ceilingFinish != null) data.ceilingFinish = String(p.ceilingFinish);
+    pushHistory();
+    let r;
+    if(existing){ Object.assign(existing, data); r = existing; }
+    else {
+      r = { id: newId('rm'), label: 'Room', color: _nextRoomColour(), fillOpacity: 0.28,
+            notes:'', floorFinish:'', wallFinish:'', ceilingFinish:'', ...data };
+      job.rooms.push(r);
+    }
+    smTouched();
+    return { saved: smRoomOut(r), replaced: !!existing };
+  },
+
+  remove_room(p){
+    const job = smNeedJob();
+    const r = (job.rooms || []).find(x => x.id === (p.room || p.id));
+    if(!r) throw new Error('There is no room "' + (p.room || p.id) + '".');
+    pushHistory();
+    job.rooms.splice(job.rooms.indexOf(r), 1);
+    smTouched();
+    return { removed: r.id };
+  },
+
+  /* ---- junctions ---- */
+  resolve_junctions(){
+    smNeedJob();
+    pushHistory();
+    const r = smResolveJunctions();
+    smTouched();
+    return { rule: SM_JUNCTION_RULE, mitred: r.mitred, butted: r.butted, junctions: r.junctions };
+  },
+
+  /* ---- the job itself ---- */
+  async set_job(p){
+    if(p.newJob){
+      const j = newJob({ name: String(p.name || 'Site measure'), address: String(p.address || ''),
+                         client: String(p.client || '') });
+      state.job = j;
+      state.history = []; state.future = [];
+      await saveJob(false);
+      try { document.getElementById('currentJobLabel').textContent = j.name; } catch(_){}
+      try { switchTab('plan'); } catch(_){}
+      try { fitView(); } catch(_){}
+      renderAll();
+      return { job: { id: j.id, name: j.name }, created: true };
+    }
+    const job = smNeedJob();
+    const changed = [];
+    if(p.name){ job.name = String(p.name); changed.push('name');
+      try { document.getElementById('currentJobLabel').textContent = job.name; } catch(_){} }
+    if(p.address != null){ job.address = String(p.address); changed.push('address'); }
+    if(p.scaleMmPerUnit != null){ job.scaleMmPerUnit = +p.scaleMmPerUnit; changed.push('scale'); }
+    if(p.fitView){ try { fitView(); } catch(_){} changed.push('view'); }
+    if(p.showPlan){ try { switchTab('plan'); } catch(_){} changed.push('tab'); }
+    smTouched();
+    return { job: { id: job.id, name: job.name, scaleMmPerUnit: job.scaleMmPerUnit }, changed };
+  }
+};
+
+/* The integration's own front door. Same surface whether it is called from
+   this page or driven by the host through postMessage. */
+window.smClaude = {
+  version: SM_CLAUDE_VERSION,
+  app: 'sitemeasure',
+  rule: SM_JUNCTION_RULE,
+  methods: Object.keys(SM_CLAUDE_METHODS),
+  async call(method, params){
+    const fn = SM_CLAUDE_METHODS[method];
+    if(!fn) throw new Error('The site measure has no "' + method + '". It has ' +
+      Object.keys(SM_CLAUDE_METHODS).join(', ') + '.');
+    return await fn(params || {});
+  }
+};
+
+/* The host side of the same thing. A page embedding this one posts
+     { type:'sm-claude-call', reqId, method, params }
+   and gets back
+     { type:'sm-claude-result', reqId, ok, value }        or { ok:false, error }
+   'sm-claude-hello' answers with the version and the method list, so a host
+   can tell a site measure that carries this integration from one that
+   doesn't without having to guess. */
+window.addEventListener('message', (ev) => {
+  const m = ev && ev.data;
+  if(!m || !m.type) return;
+  const reply = (payload) => {
+    try { (ev.source || window.parent).postMessage(payload, '*'); } catch(_){}
+  };
+  if(m.type === 'sm-claude-hello'){
+    reply({ type:'sm-claude-ready', reqId: m.reqId,
+            version: SM_CLAUDE_VERSION, app:'sitemeasure',
+            methods: Object.keys(SM_CLAUDE_METHODS), rule: SM_JUNCTION_RULE });
+    return;
+  }
+  if(m.type === 'sm-claude-call'){
+    window.smClaude.call(m.method, m.params)
+      .then(value => reply({ type:'sm-claude-result', reqId: m.reqId, ok:true,
+                             value: value === undefined ? null : value }))
+      .catch(err => reply({ type:'sm-claude-result', reqId: m.reqId, ok:false,
+                            error: String((err && err.message) || err) }));
+  }
+});
 
 /* ---------- 20. Init ---------- */
 (async function init() {

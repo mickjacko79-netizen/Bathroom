@@ -11,7 +11,9 @@ Same shell as `JoineryApp`, pointed at a different drawing file.
       sitemeasure/                        the site-measure app, loaded into the Draw tab
       desktop/                            <- you are here
         main.js                           window, native menu, save/print plumbing
-        mcp-server.js                     the Claude bridge — see below
+        mcp-transport.js                  loopback HTTP + JSON-RPC, shared by both bridges
+        mcp-server.js                     the drawing's Claude bridge — see below
+        sitemeasure-mcp.js                the site measure's own bridge — see below
         package.json                      also holds the electron-builder config
         sync-bundle.js                    copies the drawing app into bundled/
         icon.ico / icon.png               app icon (16–256 px)
@@ -81,7 +83,7 @@ Joinery's, so the two apps do not share window state or file overrides.
 | Edit | Undo, Redo, clipboard, delete selected fixture |
 | Sheets | Jump to any sheet (Ctrl+1…Ctrl+9), previous/next |
 | View | Sheet zoom, fit, full screen, reload, DevTools |
-| Claude | The bridge — copy the connect command, start it, stop it |
+| Claude | The two bridges — copy the connect commands, start them, stop them |
 | Help | Keyboard shortcuts, About |
 
 The Sheets menu is read from the running job, not hard-coded — a plan traced
@@ -120,17 +122,56 @@ Start Claude Code afterwards and it can call:
 Every change is one undo step, so `Ctrl+Z` takes back whatever it did, exactly as
 if you had done it by hand.
 
-**What it listens on.** The loopback interface only, so nothing off this machine
-can reach it. It refuses a cross-site `Origin`, so a web page cannot drive it
-through your browser. The address carries a token — kept in the app's own data
-directory so it survives a restart and you configure it once.
+## The site measure's bridge
+
+A second one, on its own port with its own token, because the site measure is a
+separate component that gets embedded in more than one app. Its integration is
+not part of this one: the verbs, the units and the junction rule all live inside
+`sitemeasure/inline.html`, and `sitemeasure-mcp.js` only carries messages to it.
+Copy the site measure into another app and the integration goes with it — see
+[../sitemeasure/CLAUDE-INTEGRATION.md](../sitemeasure/CLAUDE-INTEGRATION.md).
+
+`Claude → Copy connect commands…` hands over both lines. The second is
+`claude mcp add --transport http sitemeasure http://127.0.0.1:8792/mcp/<token>`,
+and it adds:
+
+| Tool | |
+|---|---|
+| `describe_site` | the job, scale, walls, openings, rooms, wall types, and how every junction is cut |
+| `list_wall_types` | the composite library, with each build-up layer by layer |
+| `save_wall_type` | add or edit a composite; layers add up to the thickness |
+| `add_walls` | one wall or a whole outline; junctions cut to the rule as they are made |
+| `update_wall` | type, thickness, height, status, length, bearing, either end |
+| `remove_wall` | and the openings in it |
+| `save_opening` | a door or window, positioned to its centre from the start of the wall |
+| `remove_opening` | |
+| `save_room` | label, position, notes and finishes |
+| `remove_room` | |
+| `resolve_junctions` | re-cut everything to the rule |
+| `set_job` | new job, rename, scale, fit the view, show the plan |
+
+Everything there is millimetres on wall centrelines, x right and y down, 0° east
+and 90° north on screen.
+
+**The junction rule.** External walls mitre where they meet at an external
+corner. An internal wall butts — it stops on the face of whatever it meets, and
+that wall runs on past it unbroken. Where two internals meet, the longer runs
+through. A mitre is only ever an external corner. The tools apply it for you,
+and **⌙ Resolve junctions** in the site measure's own toolbar does the same by
+hand.
+
+**What they listen on.** The loopback interface only, so nothing off this
+machine can reach them. They refuse a cross-site `Origin`, so a web page cannot
+drive them through your browser. Each address carries a token — kept in the
+app's own data directory so it survives a restart and you configure it once.
 
 **What that does not protect against.** Anything running as you on this machine
-can read the token file and drive your drawing. That is the trade for not having
-to authorise every call. If you would rather it were off, **Claude → Stop
-bridge**, or start the app with `BATHROOM_MCP_PORT` pointed somewhere harmless.
-It also takes a port at launch: if another copy of Bathroom already has 8791 the
-bridge just does not start, and the menu says so.
+can read the token files and drive your drawing. That is the trade for not
+having to authorise every call. If you would rather they were off, **Claude →
+Stop drawing bridge** / **Stop site measure bridge**, or start the app with
+`BATHROOM_MCP_PORT` and `SITEMEASURE_MCP_PORT` pointed somewhere harmless. They
+also take their ports at launch: if another copy of Bathroom already has 8791 or
+8792 that bridge just does not start, and the menu says so.
 
 No dependencies were added for this — the app still has none beyond the copy of
 jsPDF beside it, and one endpoint speaking JSON-RPC was not worth breaking that

@@ -77,14 +77,19 @@ function workDir(userDataDir) {
   return dir;
 }
 
-// The bridge, described the way the CLI wants to read it. Written next to the
-// workspace rather than passed inline, because the address carries a token and a
+// The bridges, described the way the CLI wants to read them. Written next to the
+// workspace rather than passed inline, because the addresses carry tokens and a
 // command line is the one place on this machine that is easy to read off.
-function writeMcpConfig(userDataDir, bridgeUrl) {
+//
+// The site measure's bridge is listed only when it is actually up, so a copy of
+// the app running without it does not hand Claude an address that answers
+// nothing.
+function writeMcpConfig(userDataDir, bridgeUrl, siteMeasureUrl) {
   const file = path.join(workDir(userDataDir), 'mcp.json');
-  fs.writeFileSync(file, JSON.stringify({
-    mcpServers: { bathroom: { type: 'http', url: bridgeUrl } }
-  }, null, 2), { mode: 0o600 });
+  const mcpServers = {};
+  if (bridgeUrl) mcpServers.bathroom = { type: 'http', url: bridgeUrl };
+  if (siteMeasureUrl) mcpServers.sitemeasure = { type: 'http', url: siteMeasureUrl };
+  fs.writeFileSync(file, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
   return file;
 }
 
@@ -101,11 +106,26 @@ const SYSTEM_NOTE = [
   'in plain words, is the whole job — they can see the drawing, so do not describe',
   'it back to them. No headings, no bullet lists, no tables unless they ask.',
   '',
-  'When a floor plan is handed to you as a file, read it, take the dimensions off',
-  'it, and reproduce the room with set_site_measure — corners in millimetres, walls',
-  'joining end to end and closing back to the first. Say what you read off it and',
-  'what you had to assume. Then offer to bring it into the drawing rather than',
-  'doing that unasked, because it replaces the room and its walls.',
+  'The sitemeasure tools are a separate thing, and they are the ones to reach for',
+  'when the work is the as-built plan rather than the joinery: walls and the wall',
+  'types they are built in, doors and windows, rooms and their finishes. Call',
+  'describe_site first. Everything there is millimetres on wall centrelines, x',
+  'right and y down, 0 degrees east and 90 north on screen.',
+  '',
+  'Junctions there follow one rule and the tools apply it for you, but know it so',
+  'you can say what you did: external walls mitre where they meet at an external',
+  'corner; an internal wall butts, stopping on the face of whatever it meets while',
+  'that wall runs on past it unbroken; where two internals meet, the longer runs',
+  'through. A mitre is only ever an external corner.',
+  '',
+  'When a floor plan is handed to you as a file, read it and take the dimensions',
+  'off it. If the site measure is what they want, draw it there with add_walls —',
+  'give the room sizes as the inside face and let it work the centrelines out —',
+  'then put the openings and room labels on it. If it is the joinery drawing they',
+  'are after, reproduce the room with set_site_measure instead. Either way, say',
+  'what you read off the plan and what you had to assume. Offer to bring it into',
+  'the drawing rather than doing that unasked, because that replaces the room and',
+  'its walls.',
   '',
   'Deliver what was asked at the scope intended. Make the routine judgment calls',
   'yourself and check in only when two readings would lead to genuinely different',
@@ -113,7 +133,8 @@ const SYSTEM_NOTE = [
   'them one Ctrl+Z — act rather than asking permission for reversible things.',
 ].join('\n');
 
-function createChat({ userDataDir, bridgeUrl, send }) {
+function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
+  const smUrl = siteMeasureUrl || (() => null);
   let child = null;
   let sessionId = null;
   // Set the moment a turn is asked for, not when the process finally exists.
@@ -235,20 +256,23 @@ function createChat({ userDataDir, bridgeUrl, send }) {
     if (!state.ready) { busy = false; emit('error', { message: state.message }); return state; }
 
     const cwd = workDir(userDataDir);
-    const mcpConfig = writeMcpConfig(userDataDir, bridgeUrl());
+    const mcpConfig = writeMcpConfig(userDataDir, bridgeUrl(), smUrl());
 
     const args = [
       '-p', text,
       '--output-format', 'stream-json', '--verbose',
       '--mcp-config', mcpConfig,
-      // Only the bridge. Not whatever else is configured globally on this machine.
+      // Only the bridges. Not whatever else is configured globally on this machine.
       '--strict-mcp-config',
       // Headless cannot put a prompt on screen, so anything not allowed here would
-      // hang rather than ask. The drawing tools, and reading a file — which is how
-      // a floor plan handed to the panel gets looked at. Nothing else: no shell,
-      // no writes, and Read only reaches the working directory below, which holds
-      // copies of what you attached and nothing of yours.
-      '--allowedTools', 'mcp__bathroom', '--allowedTools', 'Read',
+      // hang rather than ask. The drawing tools, the site measure tools, and
+      // reading a file — which is how a floor plan handed to the panel gets looked
+      // at. Nothing else: no shell, no writes, and Read only reaches the working
+      // directory below, which holds copies of what you attached and nothing of
+      // yours.
+      '--allowedTools', 'mcp__bathroom',
+      '--allowedTools', 'mcp__sitemeasure',
+      '--allowedTools', 'Read',
       '--append-system-prompt', SYSTEM_NOTE,
     ];
     // Carry the thread, so "now move it 200 left" means something.
@@ -320,7 +344,7 @@ function createChat({ userDataDir, bridgeUrl, send }) {
             // A tool call is worth showing — it is the app being changed, and
             // seeing which one ran is how you know what to undo.
             if (block.type === 'tool_use') {
-              emit('tool', { name: String(block.name || '').replace(/^mcp__bathroom__/, '') });
+              emit('tool', { name: String(block.name || '').replace(/^mcp__(?:bathroom|sitemeasure)__/, '') });
             }
           });
           return had;

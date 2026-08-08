@@ -40,6 +40,24 @@ python -m http.server 8000
 7. Rooms tab → add finish + defect notes per room.
 8. Export tab → PDF for the client, DXF for the draftsperson.
 
+## Wall junctions
+
+Where walls meet is decided one way, everywhere: external walls mitre at an
+external corner; an internal wall butts, stopping on the face of whatever it
+meets while that wall runs on past it unbroken; where two internals meet, the
+longer runs through. A mitre is only ever an external corner.
+
+Drawing a chain with the Wall tool applies it as you go. **⌙ Resolve junctions**
+in the Plan toolbar re-cuts everything to it, which is what to reach for after
+importing a plan or changing a wall's type. Running it twice changes nothing.
+
+## Claude
+
+SiteMeasure carries its own Claude integration — `window.smClaude`, plus a
+postMessage door for whichever app it is embedded in. Walls, wall types,
+openings and rooms are all reachable, and everything drawn through it follows
+the junction rule above. See [CLAUDE-INTEGRATION.md](CLAUDE-INTEGRATION.md).
+
 ## Notes / known limits (this is v1)
 
 - The "sketch then auto-scale" model uses the first measured wall as the master scale. Other walls keep their sketched proportions but display/export their measured length where given. For a fully reconciled plan, dimension every wall before exporting DXF.

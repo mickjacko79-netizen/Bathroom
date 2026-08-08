@@ -10,6 +10,7 @@ const { app, BrowserWindow, Menu, shell, dialog, ipcMain, clipboard } = require(
 const path = require('path');
 const fs = require('fs');
 const mcp = require('./mcp-server');
+const smMcp = require('./sitemeasure-mcp');
 const chat = require('./chat');
 
 const APP_ID = 'com.joinerystudio.bathroom';
@@ -132,6 +133,52 @@ function stopClaudeBridge() {
   return handle.stop();
 }
 
+// The site measure has a bridge of its own, on its own port with its own token.
+// It is a separate component that gets embedded in more than one app, so its
+// integration is not part of this one — this shell only starts it and points it
+// at the window holding the iframe. Everything it knows about walls, openings,
+// rooms and how junctions are cut lives inside the site measure itself.
+let smHandle = null;
+let smUrl = null;
+
+function startSiteMeasureBridge() {
+  if (smHandle) return;
+  try {
+    smHandle = smMcp.startServer({
+      window: mainWindow,
+      userDataDir: app.getPath('userData'),
+      version: app.getVersion(),
+      // Bathroom builds the iframe on demand, so the bridge does not need the
+      // tab to have been opened by hand first.
+      ensureFn: 'ensureSiteMeasureFrame',
+      frameSelector: '#smFrame',
+      onListening: info => {
+        smUrl = info.url;
+        console.log('[Bathroom] site measure bridge listening at ' + info.url);
+        buildMenu();
+      },
+      onError: err => {
+        console.warn('[Bathroom] site measure bridge did not start:', err.message);
+        smHandle = null;
+        smUrl = null;
+        buildMenu();
+      }
+    });
+  } catch (err) {
+    console.warn('[Bathroom] site measure bridge did not start:', err.message);
+    smHandle = null;
+  }
+}
+
+function stopSiteMeasureBridge() {
+  if (!smHandle) return Promise.resolve();
+  const handle = smHandle;
+  smHandle = null;
+  smUrl = null;
+  buildMenu();
+  return handle.stop();
+}
+
 // ------------------------------------------------------------- chat panel ----
 // The other direction: the panel in the page asks a question, the shell runs
 // Claude Code headless, and what comes back is streamed into the panel. It talks
@@ -144,6 +191,7 @@ function chatFor() {
     chatSession = chat.createChat({
       userDataDir: app.getPath('userData'),
       bridgeUrl: () => mcpUrl,
+      siteMeasureUrl: () => smUrl,
       send: payload => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', payload);
       },
@@ -177,27 +225,34 @@ ipcMain.handle('chat:attachPlan', async () => {
 // The address carries a token, so it is not something to be typed from memory.
 // This hands the whole command over ready to paste.
 function copyClaudeConnectCommand() {
-  if (!mcpUrl) {
+  if (!mcpUrl && !smUrl) {
     dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: 'Claude bridge',
-      message: 'The bridge is not running.',
-      detail: 'Either it is switched off, or it could not take its port — usually another copy of '
-            + 'Bathroom already has it. Start it from this menu, or close the other copy.',
+      message: 'Neither bridge is running.',
+      detail: 'Either they are switched off, or they could not take their ports — usually another '
+            + 'copy of Bathroom already has them. Start them from this menu, or close the other copy.',
       buttons: ['OK'],
     });
     return;
   }
-  const cmd = 'claude mcp add --transport http bathroom ' + mcpUrl;
+  // Two bridges, two commands. The drawing and the site measure are separate
+  // things and either one is worth having on its own, so they are listed
+  // separately rather than bundled into one line.
+  const lines = [];
+  if (mcpUrl) lines.push('claude mcp add --transport http bathroom ' + mcpUrl);
+  if (smUrl)  lines.push('claude mcp add --transport http sitemeasure ' + smUrl);
+  const cmd = lines.join('\n');
   clipboard.writeText(cmd);
   dialog.showMessageBox(mainWindow, {
     type: 'info',
     title: 'Claude bridge',
-    message: 'Connect command copied.',
-    detail: cmd + '\n\nRun it once in a terminal, then start Claude Code. It will be able to read '
-          + 'this drawing and change it while you watch, and everything it does is one undo step.\n\n'
-          + 'The address reaches this machine only, and carries a token — anything that has the '
-          + 'address can drive your drawing, so keep it as private as you would a password.',
+    message: lines.length > 1 ? 'Both connect commands copied.' : 'Connect command copied.',
+    detail: cmd + '\n\nRun them once in a terminal, then start Claude Code. It will be able to read '
+          + 'the drawing and the site measure and change them while you watch, and everything it '
+          + 'does is one undo step.\n\n'
+          + 'The addresses reach this machine only, and each carries a token — anything that has an '
+          + 'address can drive that half of the app, so keep them as private as you would a password.',
     buttons: ['OK'],
   });
 }
@@ -320,14 +375,21 @@ function buildMenu() {
       label: '&Claude',
       submenu: [
         {
-          label: mcpUrl ? 'Bridge is running' : 'Bridge is not running',
+          label: mcpUrl ? 'Drawing bridge is running' : 'Drawing bridge is not running',
+          enabled: false,
+        },
+        {
+          label: smUrl ? 'Site measure bridge is running' : 'Site measure bridge is not running',
           enabled: false,
         },
         { type: 'separator' },
-        { label: 'Copy connect command…', enabled: !!mcpUrl, click: copyClaudeConnectCommand },
+        { label: 'Copy connect commands…', enabled: !!(mcpUrl || smUrl), click: copyClaudeConnectCommand },
         { type: 'separator' },
-        { label: 'Start bridge', enabled: !mcpUrl, click: () => startClaudeBridge() },
-        { label: 'Stop bridge',  enabled: !!mcpUrl, click: () => stopClaudeBridge() },
+        { label: 'Start drawing bridge', enabled: !mcpUrl, click: () => startClaudeBridge() },
+        { label: 'Stop drawing bridge',  enabled: !!mcpUrl, click: () => stopClaudeBridge() },
+        { type: 'separator' },
+        { label: 'Start site measure bridge', enabled: !smUrl, click: () => startSiteMeasureBridge() },
+        { label: 'Stop site measure bridge',  enabled: !!smUrl, click: () => stopSiteMeasureBridge() },
       ],
     },
     {
@@ -523,8 +585,9 @@ if (!single) {
     buildMenu();
     createWindow();
     startClaudeBridge();
+    startSiteMeasureBridge();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { stopClaudeBridge(); });
+  app.on('before-quit', () => { stopClaudeBridge(); stopSiteMeasureBridge(); });
 }
