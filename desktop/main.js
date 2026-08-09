@@ -192,6 +192,8 @@ function chatFor() {
       userDataDir: app.getPath('userData'),
       bridgeUrl: () => mcpUrl,
       siteMeasureUrl: () => smUrl,
+      // Somewhere the user pointed at by hand, when looking for it did not work.
+      cliPath: () => readJson(CONFIG_FILE, {}).claudeCliPath || null,
       send: payload => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', payload);
       },
@@ -221,6 +223,33 @@ ipcMain.handle('chat:attachPlan', async () => {
   if (res.canceled || !res.filePaths.length) return { cancelled: true };
   return chatFor().attachPlan(res.filePaths[0]);
 });
+
+// When looking for Claude Code does not work, being able to point at it beats
+// any amount of cleverness about where it might be. Remembered in config.json,
+// and tried before anything else from then on.
+async function locateClaudeCli() {
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Locate Claude Code',
+    message: 'Select claude.exe.',
+    properties: ['openFile'],
+    filters: process.platform === 'win32'
+      ? [{ name: 'Claude Code', extensions: ['exe'] }]
+      : [{ name: 'All files', extensions: ['*'] }],
+  });
+  if (res.canceled || !res.filePaths.length) return;
+  const cfg = readJson(CONFIG_FILE, {});
+  cfg.claudeCliPath = res.filePaths[0];
+  writeJson(CONFIG_FILE, cfg);
+  // Drop the session's chat so the next question starts from the new path.
+  if (chatSession) { try { chatSession.stop(); } catch (_) {} chatSession = null; }
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Claude Code',
+    message: 'Noted.',
+    detail: cfg.claudeCliPath + '\n\nReopen the Ask Claude panel and it will use that.',
+    buttons: ['OK'],
+  });
+}
 
 // The address carries a token, so it is not something to be typed from memory.
 // This hands the whole command over ready to paste.
@@ -384,6 +413,7 @@ function buildMenu() {
         },
         { type: 'separator' },
         { label: 'Copy connect commands…', enabled: !!(mcpUrl || smUrl), click: copyClaudeConnectCommand },
+        { label: 'Locate Claude Code…', click: locateClaudeCli },
         { type: 'separator' },
         { label: 'Start drawing bridge', enabled: !mcpUrl, click: () => startClaudeBridge() },
         { label: 'Stop drawing bridge',  enabled: !!mcpUrl, click: () => stopClaudeBridge() },

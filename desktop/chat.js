@@ -41,28 +41,69 @@ const os = require('os');
 //     the install. So the usual places are checked too, by looking.
 let resolvedCli = null;
 
-// Where an install actually puts it, in the order worth trying.
-function knownCliPaths() {
+// Where an install actually puts it, in the order worth trying. `saved` is a
+// path the user pointed at by hand through the Claude menu, and it wins over
+// everything — if someone has told the app where it is, the app should believe
+// them rather than go looking.
+function knownCliPaths(saved) {
   const home = os.homedir();
   const out = [];
   const push = (...parts) => { try { out.push(path.join(...parts.filter(Boolean))); } catch (_) {} };
+  if (saved) out.push(saved);
   if (process.env.BATHROOM_CLAUDE_CLI) out.push(process.env.BATHROOM_CLAUDE_CLI);
   const pkgBin = ['node_modules', '@anthropic-ai', 'claude-code', 'bin'];
   if (process.platform === 'win32') {
     push(process.env.APPDATA, 'npm', ...pkgBin, 'claude.exe');
     push(process.env.LOCALAPPDATA, 'npm', ...pkgBin, 'claude.exe');
     push(process.env.ProgramFiles, 'nodejs', ...pkgBin, 'claude.exe');
-    push(home, '.claude', 'local', 'claude.exe');
     push(home, 'AppData', 'Roaming', 'npm', ...pkgBin, 'claude.exe');
+    push(home, '.claude', 'local', 'claude.exe');
+    push(home, '.local', 'bin', 'claude.exe');
   } else {
     push('/usr/local/lib', ...pkgBin, 'claude');
     push('/opt/homebrew/lib', ...pkgBin, 'claude');
     push(home, '.npm-global/lib', ...pkgBin, 'claude');
     push(home, '.claude', 'local', 'claude');
+    push(home, '.local', 'bin', 'claude');
     push('/usr/local/bin/claude');
     push('/opt/homebrew/bin/claude');
   }
   return out;
+}
+
+// Every directory on PATH, looked in directly. `where` is the usual way to ask
+// and it is what runs first, but it depends on a shell starting cleanly and on
+// PATH being what we think it is — and when it comes back empty on a machine
+// where the thing is plainly installed, there is no way to tell which of those
+// went wrong. Looking is cheap and it cannot be wrong about what is there.
+function pathCandidates() {
+  const names = process.platform === 'win32'
+    ? ['claude.exe', 'claude.cmd', 'claude']
+    : ['claude'];
+  const out = [];
+  for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
+    const d = dir.trim().replace(/^"|"$/g, '');
+    if (!d) continue;
+    for (const n of names) out.push(path.join(d, n));
+  }
+  return out;
+}
+
+// Why each place we looked did not answer. Kept from the last failed lookup so
+// the panel can say what happened rather than listing where it went.
+let lastLookup = [];
+let lastTried = 0;
+function noteLookup(where, why) { lastLookup.push({ where, why }); }
+function describeLookup() {
+  // Being refused is worth saying outright — it is a completely different
+  // problem from not being there, and it has a completely different fix.
+  const denied = lastLookup.filter(x => x.why === 'permission denied');
+  if (denied.length) {
+    return 'Windows would not let it look at ' + denied[0].where + ' — that is usually '
+         + 'Controlled folder access or antivirus in the way.';
+  }
+  if (!lastTried) return '';
+  return 'Looked in ' + lastTried + (lastTried === 1 ? ' place' : ' places') + ', and along PATH.';
 }
 
 function realBinaryNear(shimPath) {
@@ -83,12 +124,21 @@ function realBinaryNear(shimPath) {
   return null;
 }
 
-function findCli() {
+function findCli(saved) {
   // A hit is worth keeping — it cannot go stale within a run. A miss is not:
   // it may just have been a bad moment, and the cost of asking again is one
   // process that exits in milliseconds.
-  if (resolvedCli && fs.existsSync(resolvedCli)) return Promise.resolve(resolvedCli);
+  if (resolvedCli && existsQuietly(resolvedCli) === true) return Promise.resolve(resolvedCli);
   resolvedCli = null;
+  lastLookup = [];
+  lastTried = 0;
+
+  // Somewhere the user pointed at, first and without argument.
+  for (const p of [saved, process.env.BATHROOM_CLAUDE_CLI]) {
+    if (!p) continue;
+    if (existsQuietly(p) === true) { resolvedCli = p; return Promise.resolve(p); }
+    noteLookup(p, existsQuietly(p) === 'denied' ? 'permission denied' : 'not there');
+  }
 
   const probe = process.platform === 'win32'
     ? { cmd: process.env.ComSpec || 'cmd.exe', args: ['/c', 'where', 'claude'] }
@@ -97,7 +147,9 @@ function findCli() {
     // An explicit cwd, because the one inherited from a portable exe can be a
     // temp folder that is no longer there, and spawning into a missing
     // directory fails in a way that looks exactly like a missing program.
-    execFile(probe.cmd, probe.args, { windowsHide: true, cwd: os.tmpdir() }, (_err, stdout) => {
+    const cwd = existsQuietly(os.tmpdir()) === true ? os.tmpdir() : undefined;
+    execFile(probe.cmd, probe.args, { windowsHide: true, cwd }, (err, stdout) => {
+      if (err) noteLookup('the "where claude" lookup', err.message);
       const found = String(stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
       let pick = null;
       // A real executable on PATH is best — some installs put one there.
@@ -106,16 +158,38 @@ function findCli() {
       if (!pick) { for (const s of found) { const real = realBinaryNear(s); if (real) { pick = real; break; } } }
       // On anything but Windows the shim is usually executable itself.
       if (!pick && process.platform !== 'win32') pick = found[0] || null;
-      // PATH knew nothing. Look where it would be anyway.
+
+      // `where` said nothing useful. Walk PATH ourselves, then the usual
+      // install locations. Between them these cover every way it gets on a
+      // machine; if none of them answer, something is stopping us looking.
       if (!pick) {
-        for (const p of knownCliPaths()) {
-          try { if (fs.existsSync(p)) { pick = p; break; } } catch (_) {}
+        const candidates = pathCandidates().concat(knownCliPaths(saved));
+        lastTried = candidates.length;
+        for (const p of candidates) {
+          const state = existsQuietly(p);
+          if (state === true) {
+            pick = /\.(cmd|ps1)$/i.test(p) || !path.extname(p) ? (realBinaryNear(p) || p) : p;
+            if (pick) break;
+          } else if (state === 'denied') {
+            noteLookup(p, 'permission denied');
+          }
         }
       }
       resolvedCli = pick || null;
       resolve(resolvedCli);
     });
   });
+}
+
+// true / false / 'denied'. A path we are not allowed to look at is a different
+// problem from one that is not there, and telling them apart is the difference
+// between "install it" and "your antivirus is in the way".
+function existsQuietly(p) {
+  try { fs.accessSync(p, fs.constants.F_OK); return true; }
+  catch (e) {
+    if (e && (e.code === 'EACCES' || e.code === 'EPERM')) return 'denied';
+    return false;
+  }
 }
 
 // A working directory of its own. Claude Code wants somewhere to stand; this
@@ -182,8 +256,9 @@ const SYSTEM_NOTE = [
   'them one Ctrl+Z — act rather than asking permission for reversible things.',
 ].join('\n');
 
-function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
+function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, cliPath, send }) {
   const smUrl = siteMeasureUrl || (() => null);
+  const savedCli = cliPath || (() => null);
   let child = null;
   let sessionId = null;
   // Set the moment a turn is asked for, not when the process finally exists.
@@ -205,16 +280,16 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
   }
 
   async function status() {
-    const cli = await findCli();
+    const cli = await findCli(savedCli());
     if (!cli) {
-      // Say where it looked. "Not installed" on a machine where it is installed
-      // is not something anyone can act on.
+      // Say what happened, not where it went. "Not installed" on a machine
+      // where it is installed is not something anyone can act on, and neither
+      // is a list of paths.
       return { ready: false, reason: 'not-installed',
-               message: 'Could not find Claude Code. If it is not installed, install it with '
-                      + '"npm install -g @anthropic-ai/claude-code". If it is, it is somewhere this '
-                      + 'looked past — PATH, and ' + knownCliPaths().slice(0, 3).join(', ')
-                      + ' — so set BATHROOM_CLAUDE_CLI to the full path of claude.exe and reopen '
-                      + 'this panel.' };
+               message: 'Could not find Claude Code. ' + describeLookup()
+                      + ' If it is not installed: "npm install -g @anthropic-ai/claude-code". '
+                      + 'If it is, use Claude → Locate Claude Code… and point at claude.exe — '
+                      + 'that is remembered.' };
     }
     if (!bridgeUrl()) {
       return { ready: false, reason: 'no-bridge',
@@ -239,7 +314,7 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, send }) {
 
   async function loginStart() {
     if (loginProc) return { started: true, already: true };
-    const cli = await findCli();
+    const cli = await findCli(savedCli());
     if (!cli) return { error: 'Claude Code is not installed on this machine.' };
 
     let proc;
