@@ -8916,7 +8916,11 @@ function renderCompEditLayers() {
     const faceBtn = row.querySelector('[data-face]');
     if(faceBtn) faceBtn.addEventListener('click', ev => {
       ev.stopPropagation();
-      compEditInsideFirst = !compEditInsideFirst;
+      // Clicking an end CHOOSES it as the inside face rather than toggling the
+      // pair. Clicking the one that already says INSIDE used to turn it off,
+      // which is the opposite of what pressing a button labelled INSIDE means.
+      // The Flip button is there for when a swap is what you actually want.
+      compEditInsideFirst = (i === 0);
       renderCompEditLayers();
     });
     const matIn = row.querySelector('input[type="text"]');
