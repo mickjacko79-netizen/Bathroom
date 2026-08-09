@@ -243,6 +243,11 @@ function buildTools(win, frameSelector, ensureFn) {
         label: { type: 'string', description: 'What the room is called — "Ensuite", "Kitchen".' },
         at: { type: 'array', description: 'Where the label sits, as [x,y] inside the room. ' + MM,
               items: { type: 'number' }, minItems: 2, maxItems: 2 },
+        outline: { type: 'array', description: 'The room\'s corners in order, as [x,y] pairs. ' + MM + ' ' +
+                   'Give this to draw an L-shaped or T-shaped room outright. Leave it out and the room ' +
+                   'keeps whatever shape it has.',
+                   items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 } },
+        traceOutline: { type: 'boolean', description: 'Work the outline out from the walls and dividers closing the room in, and use that. This is the way to get an L or a T right without listing corners — the room has to be enclosed and its label has to sit inside it.' },
         color: { type: 'string', description: 'Hex tint for the room fill, like "#38bdf8". One is picked for you if you leave it out.' },
         notes: { type: 'string', description: 'Site notes for this room — defects, services, anything measured.' },
         floorFinish: { type: 'string', description: 'Floor finish recorded on site.' },

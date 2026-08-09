@@ -129,6 +129,7 @@
       <button data-tool="dim" class="tool-btn px-3 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded">📏 Dim</button>
       <button data-tool="opening" class="tool-btn px-3 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded">🚪 Opening</button>
       <button data-tool="room" class="tool-btn px-3 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded">🏷️ Room</button>
+      <button data-tool="shape" class="tool-btn px-3 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 border border-emerald-500 rounded font-semibold" title="Reshape a room. Click inside one to pick it up — its corners become nodes you can drag. The hollow handle in the middle of each edge adds a node, so a room can be taken round a corner into an L or a T. Delete removes the node under the cursor.">⬡ Room shape</button>
       <button data-tool="divider" class="tool-btn px-3 py-1.5 text-sm bg-amber-700 hover:bg-amber-600 border border-amber-500 rounded font-semibold" title="Draw a room-divider polyline to break open areas into separate rooms. Click each corner (ortho-locked H/V by default — Shift for any angle). Enter or double-click finishes. Select tool: drag vertex handles to edit, Delete to remove.">➖ Divider</button>
       <button data-tool="select" class="tool-btn px-3 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded">↖ Select</button>
       <button data-tool="pan" class="tool-btn px-3 py-1.5 text-sm bg-slate-700 border border-slate-600 rounded">✋ Pan</button>
@@ -725,6 +726,16 @@
     <div class="flex items-center gap-3 mb-3 flex-wrap">
       <span class="text-[10px] text-slate-500">Quick pick:</span>
       <div id="roomPalette" class="flex gap-1"></div>
+    </div>
+    <div id="roomShapeRow" class="hidden border-t border-slate-700 pt-3 mb-3">
+      <div class="text-xs text-slate-400 mb-1">Shape</div>
+      <div class="flex items-center gap-2">
+        <span id="roomShapeReadout" class="text-xs text-slate-300 flex-1"></span>
+        <button id="btnRoomTrace" type="button" class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded"
+                title="Work the outline out again from the walls and dividers closing this room in.">⟳ From walls</button>
+        <button id="btnRoomClearShape" type="button" class="px-2 py-1 text-xs bg-slate-700 hover:bg-red-700 border border-slate-600 rounded"
+                title="Throw the outline away and go back to reading the shape off the walls each time.">✕ Clear</button>
+      </div>
     </div>
     <div class="flex justify-between gap-2">
       <button id="btnRoomDelete" class="px-3 py-2 bg-red-700 hover:bg-red-600 rounded text-sm">Delete</button>
@@ -3591,6 +3602,8 @@ function _renderCanvasInner() {
   }
   // 6. Rooms
   for (const r of state.job.rooms) drawRoom(r);
+  // 6-. The nodes of whichever room is being reshaped, on top of it
+  drawRoomShapeHandles();
 
   // 6a. North arrow — top-right compass indicator. Rotated by
   // state.job.northDeg (clockwise from screen-up). Skipped when a job
@@ -5028,7 +5041,265 @@ function drawOpeningSymbol(op) {
 // array of the wall segments each ray hit (so callers can compute
 // perimeter and pick wall-height per segment). Returns null if the
 // room isn't enclosed (any ray misses every wall).
+/* =====================================================================
+   Room outlines — the shape of a room, as corners you can move
+   =====================================================================
+   A room used to be a point and nothing else, and its shape was guessed by
+   firing forty-eight rays from that point and joining up where they landed.
+   That is fine for a rectangle and wrong for everything else, because a ray
+   cannot see round a corner: an L-shaped room measured as the star-shaped
+   patch visible from wherever the label happened to sit, and a T-shaped one
+   was worse.
+
+   So a room can carry its own outline now — room.pts, world-space corners in
+   order. When it has one, that IS the room: the fill, the floor area, the
+   perimeter and the wall area all come from it, and every corner is a node
+   you can drag, with a handle on each edge for adding another.
+
+   A room without one behaves exactly as it always did, so nothing drawn
+   before this changes until you touch it.
+   ===================================================================== */
+
+function roomOutline(room){
+  return (room && Array.isArray(room.pts) && room.pts.length >= 3) ? room.pts : null;
+}
+function polyContains(pts, x, y){
+  let inside = false;
+  for(let i = 0, j = pts.length - 1; i < pts.length; j = i++){
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+/* The wall an outline edge is sitting against, so wall areas can still be
+   worked out per wall. Nearest centreline to the edge's midpoint wins. */
+function nearestWallTo(x, y){
+  let best = null, bd = Infinity;
+  for(const w of (state.job.walls || [])){
+    const d = pointToSegmentDist(x, y, w.x1, w.y1, w.x2, w.y2);
+    if(d < bd){ bd = d; best = w; }
+  }
+  return best;
+}
+
+/* ---- turning an enclosure into an outline ---------------------------------
+   The flood fill already knows the true shape of a room — it is bounded by
+   the real wall polygons and by dividers, so it goes round corners perfectly
+   well. This runs that same fill for one room over a world-space grid (not
+   the screen, so the answer does not depend on where you happen to be looking
+   or how far in you are zoomed), walks the edge of what it filled, and tidies
+   the staircase that comes back into a proper polygon. */
+const SM_TRACE_CELL_MM = 25;
+
+function traceRoomOutline(room){
+  if(!state.job) return null;
+  const walls = (state.job.walls || []).filter(isWallStatusVisible);
+  if(!walls.length) return null;
+  const scale = state.job.scaleMmPerUnit || 10;
+
+  const cornersOf = w => { try { return wallCornersMitered(w); } catch(_) { return null; } };
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const eat = (x, y) => { if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; };
+  for(const w of walls){
+    const cs = cornersOf(w) || [[w.x1,w.y1],[w.x2,w.y2]];
+    for(const p of cs) eat(p[0], p[1]);
+  }
+  for(const d of (state.job.dividers || [])) for(const s of _dividerSegments(d)){ eat(s[0][0],s[0][1]); eat(s[1][0],s[1][1]); }
+  eat(room.x, room.y);
+  if(!isFinite(minX)) return null;
+
+  let step = SM_TRACE_CELL_MM / scale;
+  const pad = step * 4;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  // Whatever the scale, keep the raster to something that fills in a blink.
+  const CAP = 1400;
+  const shrink = Math.max(1, (maxX-minX)/step/CAP, (maxY-minY)/step/CAP);
+  step *= shrink;
+  const w = Math.ceil((maxX-minX)/step), h = Math.ceil((maxY-minY)/step);
+  if(w < 4 || h < 4 || w*h > 4e6) return null;
+
+  const off = document.createElement('canvas');
+  off.width = w; off.height = h;
+  const c = off.getContext('2d');
+  c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
+  const X = x => (x - minX)/step, Y = y => (y - minY)/step;
+  c.fillStyle = '#000000'; c.strokeStyle = '#000000';
+  c.lineJoin = 'round'; c.lineCap = 'round';
+  c.lineWidth = 1.5;
+  for(const wl of walls){
+    const cs = cornersOf(wl);
+    if(!cs || cs.length < 3) continue;
+    c.beginPath();
+    cs.forEach((p, i) => i ? c.lineTo(X(p[0]), Y(p[1])) : c.moveTo(X(p[0]), Y(p[1])));
+    c.closePath(); c.fill(); c.stroke();
+  }
+  c.lineWidth = 2.5;
+  for(const d of (state.job.dividers || [])) for(const s of _dividerSegments(d)){
+    c.beginPath(); c.moveTo(X(s[0][0]), Y(s[0][1])); c.lineTo(X(s[1][0]), Y(s[1][1])); c.stroke();
+  }
+  const px = c.getImageData(0, 0, w, h).data;
+  const free = i => px[i*4] >= 128;
+
+  // Flood from the label, stepping off it if it has been dropped inside a wall.
+  let seed = Math.round(Y(room.y))*w + Math.round(X(room.x));
+  if(seed < 0 || seed >= w*h || !free(seed)){
+    let found = -1;
+    const cx = Math.round(X(room.x)), cy = Math.round(Y(room.y));
+    for(let r = 1; r < 60 && found < 0; r++){
+      for(let dy = -r; dy <= r && found < 0; dy++){
+        for(let dx = -r; dx <= r; dx++){
+          if(Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const nx = cx+dx, ny = cy+dy;
+          if(nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const ni = ny*w + nx;
+          if(free(ni)){ found = ni; break; }
+        }
+      }
+    }
+    if(found < 0) return null;
+    seed = found;
+  }
+
+  const mask = new Uint8Array(w*h);
+  const queue = new Int32Array(w*h);
+  let head = 0, tail = 0, count = 0;
+  mask[seed] = 1; queue[tail++] = seed; count++;
+  while(head < tail){
+    const i = queue[head++];
+    const x = i % w, y = (i - x)/w;
+    const push = ni => { if(mask[ni] || !free(ni)) return; mask[ni] = 1; queue[tail++] = ni; count++; };
+    if(x > 0)     push(i-1);
+    if(x < w-1)   push(i+1);
+    if(y > 0)     push(i-w);
+    if(y < h-1)   push(i+w);
+  }
+  if(count < 9) return null;
+  // Reached the edge of the world: the room is not enclosed, so there is no
+  // outline to be had. Better to say so than to hand back the whole sheet.
+  for(let x = 0; x < w; x++) if(mask[x] || mask[(h-1)*w + x]) return null;
+  for(let y = 0; y < h; y++) if(mask[y*w] || mask[y*w + w-1]) return null;
+
+  const loop = _traceMaskEdge(mask, w, h);
+  if(!loop) return null;
+  let pts = _mergeCollinearGrid(loop).map(([gx, gy]) => [minX + gx*step, minY + gy*step]);
+  pts = _dropShortEdges(pts, 120/scale);      // 120mm — smaller than any real jog
+  pts = _squareUpOutline(pts, 60/scale);
+  pts = _snapOutlineToWalls(pts, 70/scale);
+  pts = _mergeCollinearWorld(pts, step*0.35);
+  return pts.length >= 3 ? pts : null;
+}
+
+/* Walk the border of a filled region. Every filled cell contributes a
+   directed unit edge for each side facing empty space, wound so they chain
+   head to tail; following the chain from the topmost-leftmost cell traces the
+   outside of the region and ignores any holes in it. */
+function _traceMaskEdge(mask, w, h){
+  const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? 0 : mask[y*w + x];
+  const edges = new Map();
+  const key = (x, y) => x * 100000 + y;
+  for(let y = 0; y < h; y++) for(let x = 0; x < w; x++){
+    if(!mask[y*w + x]) continue;
+    if(!at(x, y-1)) edges.set(key(x, y),     [x+1, y]);
+    if(!at(x+1, y)) edges.set(key(x+1, y),   [x+1, y+1]);
+    if(!at(x, y+1)) edges.set(key(x+1, y+1), [x, y+1]);
+    if(!at(x-1, y)) edges.set(key(x, y+1),   [x, y]);
+  }
+  if(!edges.size) return null;
+  let start = null;
+  for(let y = 0; y < h && !start; y++) for(let x = 0; x < w; x++) if(mask[y*w + x]){ start = [x, y]; break; }
+  const loop = [];
+  let cur = start;
+  const startKey = key(start[0], start[1]);
+  let guard = edges.size + 8;
+  do {
+    loop.push(cur);
+    const nxt = edges.get(key(cur[0], cur[1]));
+    if(!nxt) return null;
+    cur = nxt;
+  } while(key(cur[0], cur[1]) !== startKey && --guard > 0);
+  return loop.length >= 4 ? loop : null;
+}
+function _mergeCollinearGrid(pts){
+  const out = [];
+  const n = pts.length;
+  for(let i = 0; i < n; i++){
+    const a = pts[(i-1+n)%n], b = pts[i], cc = pts[(i+1)%n];
+    // Integer coordinates, so genuinely collinear is exactly zero.
+    if((b[0]-a[0])*(cc[1]-a[1]) - (b[1]-a[1])*(cc[0]-a[0]) !== 0) out.push(b);
+  }
+  return out.length >= 3 ? out : pts;
+}
+function _mergeCollinearWorld(pts, tol){
+  const out = [];
+  const n = pts.length;
+  for(let i = 0; i < n; i++){
+    const a = pts[(i-1+n)%n], b = pts[i], cc = pts[(i+1)%n];
+    const cross = (b[0]-a[0])*(cc[1]-a[1]) - (b[1]-a[1])*(cc[0]-a[0]);
+    const base = Math.hypot(cc[0]-a[0], cc[1]-a[1]) || 1;
+    if(Math.abs(cross)/base > tol) out.push(b);
+  }
+  return out.length >= 3 ? out : pts;
+}
+function _dropShortEdges(pts, minLen){
+  const out = pts.map(p => p.slice());
+  let changed = true;
+  while(changed && out.length > 3){
+    changed = false;
+    for(let i = 0; i < out.length; i++){
+      const j = (i+1) % out.length;
+      const a = out[i], b = out[j];
+      if(Math.hypot(b[0]-a[0], b[1]-a[1]) < minLen){
+        out[i] = [(a[0]+b[0])/2, (a[1]+b[1])/2];
+        out.splice(j, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return out;
+}
+function _squareUpOutline(pts, tol){
+  const out = pts.map(p => p.slice());
+  const n = out.length;
+  for(let i = 0; i < n; i++){
+    const a = out[i], b = out[(i+1)%n];
+    const dx = Math.abs(b[0]-a[0]), dy = Math.abs(b[1]-a[1]);
+    if(dx < tol && dx <= dy){ const x = (a[0]+b[0])/2; a[0] = x; b[0] = x; }
+    else if(dy < tol && dy <= dx){ const y = (a[1]+b[1])/2; a[1] = y; b[1] = y; }
+  }
+  return out;
+}
+/* The trace lands within half a cell of each wall face. Pull it the rest of
+   the way, so an area is the number off the plan rather than that number plus
+   a rounding. */
+function _snapOutlineToWalls(pts, tol){
+  const xs = [], ys = [];
+  for(const w of (state.job.walls || [])){
+    let cs; try { cs = wallCornersMitered(w); } catch(_) { continue; }
+    if(!cs) continue;
+    for(const p of cs){ xs.push(p[0]); ys.push(p[1]); }
+  }
+  if(!xs.length) return pts;
+  const snap = (v, list) => {
+    let best = v, bd = tol;
+    for(const cand of list){ const d = Math.abs(cand - v); if(d < bd){ bd = d; best = cand; } }
+    return best;
+  };
+  return pts.map(p => [snap(p[0], xs), snap(p[1], ys)]);
+}
+
 function raycastRoomPolygon(room){
+  // An outline the room carries beats anything that can be inferred about it.
+  const own = roomOutline(room);
+  if(own){
+    const pts = own.map(p => [p[0], p[1]]);
+    const hits = pts.map((p, i) => {
+      const q = pts[(i+1) % pts.length];
+      return nearestWallTo((p[0]+q[0])/2, (p[1]+q[1])/2);
+    });
+    return { pts, hits };
+  }
   if(!state.job || !state.job.walls || !state.job.walls.length) return null;
   const N = 48;                         // ray count (7.5° spacing)
   const RAY_LEN = 1e6;
@@ -5092,8 +5363,39 @@ function _hexToRgb(hex){
   const s = h.length === 3 ? h.split('').map(c=>c+c).join('') : h;
   return [parseInt(s.slice(0,2),16), parseInt(s.slice(2,4),16), parseInt(s.slice(4,6),16)];
 }
+/* Rooms that carry their own outline are simply drawn — no flood needed, and
+   no chance of one bleeding into the next. */
+function _drawRoomOutlineFills(){
+  for(const r of (state.job.rooms || [])){
+    const pts = roomOutline(r);
+    if(!pts) continue;
+    const [rr, gg, bb] = _hexToRgb(r.color || '#38bdf8');
+    const op = (typeof r.fillOpacity === 'number') ? r.fillOpacity : 0.28;
+    ctx.save();
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const [sx, sy] = worldToScreen(p[0], p[1]);
+      i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy);
+    });
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${rr},${gg},${bb},${Math.max(0, Math.min(1, op))})`;
+    ctx.fill();
+    // A quiet edge, so you can see where the room is said to stop even where
+    // it does not run along a wall.
+    ctx.strokeStyle = `rgba(${rr},${gg},${bb},0.85)`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 function _drawRoomFills(){
   if(!state.job || !state.job.rooms || !state.job.rooms.length) return;
+  _drawRoomOutlineFills();
+  // Everything below is for rooms that have no outline of their own. A room
+  // that has one must stay out of the flood entirely, or it would go on
+  // claiming cells from its neighbours as well as being drawn properly.
+  if(!(state.job.rooms || []).some(r => !roomOutline(r))) return;
   const rect = canvas.getBoundingClientRect();
   const W = Math.max(1, Math.floor(rect.width));
   const H = Math.max(1, Math.floor(rect.height));
@@ -5168,6 +5470,7 @@ function _drawRoomFills(){
   let qHead = 0, qTail = 0;
   const rooms = state.job.rooms;
   for(let k = 0; k < rooms.length; k++){
+    if(roomOutline(rooms[k])) continue;      // drawn from its own outline instead
     const [sx, sy] = worldToScreen(rooms[k].x, rooms[k].y);
     const cx = Math.max(0, Math.min(w-1, Math.round(sx / SCALE)));
     const cy = Math.max(0, Math.min(h-1, Math.round(sy / SCALE)));
@@ -5416,6 +5719,120 @@ function drawNorthArrow(){
   ctx.textAlign = 'center';
   ctx.fillText(`${Math.round(deg)}°`, cx, cy + r + 10);
   ctx.restore();
+}
+
+/* ---- reshaping a room ------------------------------------------------------
+   Solid squares are the corners; hollow circles sit in the middle of each edge
+   and become a new corner when you drag one. Only ever shown for the room the
+   shape tool is holding, so the plan is not covered in handles. */
+const SM_NODE_HIT_PX = 9;
+
+function shapeRoom(){
+  if(state.tool !== 'shape') return null;
+  const sel = (state.selection || []).find(s => s.type === 'room');
+  if(!sel) return null;
+  return (state.job.rooms || []).find(r => r.id === sel.id) || null;
+}
+function roomNodeHandles(room){
+  const pts = roomOutline(room);
+  if(!pts) return { nodes: [], mids: [] };
+  const nodes = pts.map((p, i) => ({ i, x: p[0], y: p[1] }));
+  const mids = pts.map((p, i) => {
+    const q = pts[(i+1) % pts.length];
+    return { i, x: (p[0]+q[0])/2, y: (p[1]+q[1])/2 };
+  });
+  return { nodes, mids };
+}
+function pickRoomNode(room, wx, wy){
+  const { nodes, mids } = roomNodeHandles(room);
+  const near = h => Math.hypot(wx - h.x, wy - h.y) * state.view.zoom < SM_NODE_HIT_PX;
+  for(const n of nodes) if(near(n)) return { kind: 'node', index: n.i };
+  for(const m of mids)  if(near(m)) return { kind: 'edge', index: m.i };
+  return null;
+}
+/* Which room a click landed in. An outline answers exactly; a room without one
+   falls back to what it looks like it covers, which is good enough to pick it
+   up — the trace that follows is what gets it right. */
+function pickRoomForShape(wx, wy){
+  const rooms = state.job.rooms || [];
+  for(const r of rooms){
+    const pts = roomOutline(r);
+    if(pts && polyContains(pts, wx, wy)) return r;
+  }
+  let best = null, bd = Infinity;
+  for(const r of rooms){
+    if(roomOutline(r)) continue;
+    const poly = raycastRoomPolygon(r);
+    if(!poly || !polyContains(poly.pts, wx, wy)) continue;
+    const d = Math.hypot(wx - r.x, wy - r.y);   // nearest label wins an overlap
+    if(d < bd){ bd = d; best = r; }
+  }
+  if(best) return best;
+  // Last chance: a click near the label itself.
+  for(const r of rooms){
+    if(Math.hypot(wx - r.x, wy - r.y) * state.view.zoom < 24) return r;
+  }
+  return null;
+}
+function drawRoomShapeHandles(){
+  const room = shapeRoom();
+  if(!room) return;
+  const pts = roomOutline(room);
+  if(!pts) return;
+  ctx.save();
+  // The outline itself, brighter than its resting state.
+  ctx.beginPath();
+  pts.forEach((p, i) => { const [sx, sy] = worldToScreen(p[0], p[1]); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+  ctx.closePath();
+  ctx.strokeStyle = '#34d399';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const { nodes, mids } = roomNodeHandles(room);
+  // Midpoints first, so a corner sitting on top of one still reads.
+  for(const m of mids){
+    const [sx, sy] = worldToScreen(m.x, m.y);
+    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(15,23,42,0.85)'; ctx.fill();
+    ctx.strokeStyle = '#34d399'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  for(const n of nodes){
+    const [sx, sy] = worldToScreen(n.x, n.y);
+    ctx.fillStyle = '#34d399';
+    ctx.fillRect(sx-4, sy-4, 8, 8);
+    ctx.strokeStyle = '#052e21'; ctx.lineWidth = 1;
+    ctx.strokeRect(sx-4, sy-4, 8, 8);
+  }
+  ctx.restore();
+}
+/* Keep a dragged corner square to its neighbours unless told otherwise — the
+   same rule the divider vertices follow, because rooms are the same shape of
+   problem. */
+function _orthoRoomNode(pts, vi, nx, ny, free){
+  if(free) return [nx, ny];
+  const n = pts.length;
+  const prev = pts[(vi-1+n) % n], next = pts[(vi+1) % n];
+  // A corner sitting partway along a straight run has no corner to keep
+  // square. Pinning it to both its neighbours would pin it to the run itself,
+  // and it could never be pulled off it — which is the one move that turns a
+  // straight wall into the step of an L. So here, ortho means straight OUT.
+  const runDX = next[0] - prev[0], runDY = next[1] - prev[1];
+  const runLen = Math.hypot(runDX, runDY) || 1;
+  const offRun = Math.abs(runDX * (pts[vi][1] - prev[1]) - runDY * (pts[vi][0] - prev[0])) / runLen;
+  if(offRun < 1e-6){
+    if(Math.abs(runDX) >= Math.abs(runDY)) nx = pts[vi][0];   // run is across, move it up/down
+    else                                   ny = pts[vi][1];   // run is up/down, move it across
+    return [nx, ny];
+  }
+  const prevAxis = Math.abs(pts[vi][0] - prev[0]) < Math.abs(pts[vi][1] - prev[1]) ? 'y' : 'x';
+  const nextAxis = Math.abs(pts[vi][0] - next[0]) < Math.abs(pts[vi][1] - next[1]) ? 'y' : 'x';
+  // Both edges leaning the same way is not a corner to keep square — it is a
+  // shallow bump, and holding both of them would fold it flat again the moment
+  // you touched it. One corner can only ever make a triangle; squaring a notch
+  // off takes a second one. So leave it alone and let the drag have it.
+  if(prevAxis === nextAxis) return [nx, ny];
+  if(prevAxis === 'y') nx = prev[0]; else ny = prev[1];
+  if(nextAxis === 'y') nx = next[0]; else ny = next[1];
+  return [nx, ny];
 }
 
 function drawRoom(r) {
@@ -6127,6 +6544,32 @@ canvas.addEventListener('pointerdown', e => {
     }
   }
   if (state.tool === 'pan') return;
+  // Room shape tool — a press on one of the held room's handles starts a
+  // drag. This has to happen here rather than on the click that follows,
+  // because by then the pointer has already been let go of.
+  if (state.job && state.tool === 'shape') {
+    const held = shapeRoom();
+    if (held) {
+      const [wxs, wys] = screenToWorld(sx, sy);
+      const hit = pickRoomNode(held, wxs, wys);
+      if (hit) {
+        pushHistory();
+        let vi = hit.index;
+        if (hit.kind === 'edge') {
+          // Adding a corner: put it where the handle is and take hold of it.
+          const pts = roomOutline(held);
+          const p = pts[hit.index], q = pts[(hit.index + 1) % pts.length];
+          held.pts.splice(hit.index + 1, 0, [(p[0]+q[0])/2, (p[1]+q[1])/2]);
+          vi = hit.index + 1;
+        }
+        state.dragging = { type: 'room-node', roomId: held.id, vertex: vi };
+        canvas.style.cursor = 'grabbing';
+        renderCanvas();
+        return;
+      }
+    }
+    // Not on a handle — let the click that follows pick a room up.
+  }
   // Room-divider polyline tool — click adds a vertex. Ortho lock is
   // ON by default (each new segment is horizontal or vertical);
   // Shift disables it. Enter or double-click finishes; Esc cancels.
@@ -6367,6 +6810,17 @@ canvas.addEventListener('pointermove', e => {
     //   the shared Y with that neighbour (unless Shift disables).
     // • Same for vertical.
     // • End vertices lock relative to their single neighbour.
+    if (state.dragging.type === 'room-node') {
+      const room = (state.job.rooms || []).find(r => r.id === state.dragging.roomId);
+      const pts = room && roomOutline(room);
+      if(pts){
+        const vi = Math.min(state.dragging.vertex, pts.length - 1);
+        const [nx, ny] = _orthoRoomNode(pts, vi, wx, wy, e.shiftKey);
+        pts[vi] = [nx, ny];
+        renderCanvas();
+      }
+      return;
+    }
     if (state.dragging.type === 'divider-vertex') {
       const d = state.job.dividers.find(x => x.id === state.dragging.dividerId);
       if(d){
@@ -6638,6 +7092,13 @@ function _pointerUpInner(e) {
       renderCanvas();
       return;
     }
+    // A room corner has been moved (or added). Keep the room in hand so the
+    // next corner can be moved straight away.
+    if (dragInfo.type === 'room-node') {
+      debouncedSave();
+      renderCanvas();
+      return;
+    }
     // Marquee end — collect everything inside the rectangle and select
     if (dragInfo.type === 'marquee') {
       if (wasClick) {
@@ -6761,6 +7222,8 @@ document.addEventListener('keydown', e => {
     if (state.dividerDraft) { state.dividerDraft = null; renderCanvas(); return; }
     // Clear an in-progress or displayed measurement
     if (state.measure) { state.measure = null; renderCanvas(); return; }
+    // Let go of the room being reshaped
+    if (state.tool === 'shape' && shapeRoom()) { state.selection = []; renderCanvas(); return; }
   }
   // Enter finishes a divider polyline
   if (e.key === 'Enter' && state.dividerDraft) {
@@ -6771,6 +7234,27 @@ document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); redo(); }
+  // While a room is being reshaped, Delete takes out the corner under the
+  // cursor. Without this it would delete the room, which is a long way from
+  // what anybody means by it with a node under the pointer.
+  if ((e.key === 'Delete' || e.key === 'Backspace') && state.tool === 'shape') {
+    const room = shapeRoom();
+    const pts = room && roomOutline(room);
+    if (pts && state.hover) {
+      e.preventDefault();
+      if (pts.length <= 3) { toast('A room needs at least three corners.'); return; }
+      const hit = pickRoomNode(room, state.hover.x, state.hover.y);
+      if (hit && hit.kind === 'node') {
+        pushHistory();
+        room.pts.splice(hit.index, 1);
+        debouncedSave();
+        renderCanvas();
+      } else {
+        toast('Put the cursor over a corner to remove it.');
+      }
+      return;
+    }
+  }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (state.selection && state.selection.length) deleteSelection();
   }
@@ -6971,7 +7455,41 @@ function handleCanvasClick(wx, wy, sx, sy) {
     document.getElementById('btnRoomDelete').classList.add('hidden');
     document.getElementById('modalRoom').classList.remove('hidden');
     _renderRoomPalette();
+    _refreshRoomShapeRow(null);
     _robustFocus('roomLabelInput');
+    return;
+  }
+  // ----- Reshaping a room -----
+  // Picking one up only. Grabbing a handle happens on pointerdown, because a
+  // drag has to start before the button comes back up.
+  if (state.tool === 'shape') {
+    const held = shapeRoom();
+    // A click that landed on the held room's own handle was a drag that barely
+    // moved; leave the room where it is rather than re-picking underneath it.
+    if (held && pickRoomNode(held, wx, wy)) return;
+    const room = pickRoomForShape(wx, wy);
+    if (!room) {
+      state.selection = [];
+      renderCanvas();
+      toast('No room there. Add a room label inside it first, with the Room tool.');
+      return;
+    }
+    if (!roomOutline(room)) {
+      // Nothing to grab hold of yet. Take the shape from the walls around it,
+      // which is the shape it already reads as on the plan — including round
+      // a corner, which is the whole point.
+      const traced = traceRoomOutline(room);
+      if (!traced) {
+        toast('Could not work out where "' + (room.label || 'that room') + '" stops. '
+            + 'It needs walls or dividers closing it in on every side.');
+        return;
+      }
+      pushHistory();
+      room.pts = traced;
+      debouncedSave();
+    }
+    state.selection = [{ type: 'room', id: room.id }];
+    renderCanvas();
     return;
   }
   // ----- Markup single-click tools -----
@@ -7070,6 +7588,7 @@ function handleCanvasClick(wx, wy, sx, sy) {
       document.getElementById('btnRoomDelete').classList.remove('hidden');
       document.getElementById('modalRoom').classList.remove('hidden');
       _renderRoomPalette();
+      _refreshRoomShapeRow(r);
       _robustFocus('roomLabelInput');
       return;
     }
@@ -7474,6 +7993,7 @@ document.querySelectorAll('[data-tool]').forEach(b => {
       dim:  'Tap a wall, then enter the measured length in millimetres.',
       opening: 'Tap a wall where a door or window goes. Edit details in the dialog.',
       room: 'Tap inside a room to add a label.',
+      shape: 'Click inside a room to pick it up — its outline is traced from the walls around it the first time. Drag a solid node to move a corner; drag a hollow one on an edge to add a corner there. Ortho is on, so nodes stay square to their neighbours — hold Shift for any angle. Delete removes the node under the cursor. Esc lets the room go.',
       divider: 'Click each corner of the divider. Ortho lock is ON (each segment stays H/V) — hold Shift to draw at any angle. Enter or double-click finishes. Esc cancels. Select tool: drag the vertex handles to edit, Delete to remove.',
       select: 'Tap to edit. Drag a corner to stretch (Shift = keep straight). Drag a wall body to slide. Drag a door/window to slide along its wall. Drag empty space to box-select — Delete removes all.',
       pan: 'Drag to pan the view. Scroll/pinch to zoom.',
@@ -8022,6 +8542,51 @@ function _renderRoomPalette(){
 }
 document.getElementById('roomOpacityInput').addEventListener('input', e => {
   document.getElementById('roomOpacityValue').textContent = Math.round((+e.target.value)*100) + '%';
+});
+/* The Shape row in the room dialog. Only shown for a room that exists — a
+   brand-new one has no walls to read a shape from yet. */
+function _refreshRoomShapeRow(room){
+  const row = document.getElementById('roomShapeRow');
+  const out = document.getElementById('roomShapeReadout');
+  if(!row || !out) return;
+  row.classList.toggle('hidden', !room);
+  if(!room) return;
+  const pts = roomOutline(room);
+  out.textContent = pts
+    ? pts.length + ' corners, drawn by hand'
+    : 'Read off the walls each time. Trace it to get corners you can move.';
+  document.getElementById('btnRoomClearShape').disabled = !pts;
+  document.getElementById('btnRoomClearShape').style.opacity = pts ? 1 : 0.45;
+}
+function _editingRoom(){
+  return state.editingRoomId && state.job
+    ? (state.job.rooms || []).find(r => r.id === state.editingRoomId) : null;
+}
+document.getElementById('btnRoomTrace').addEventListener('click', () => {
+  const r = _editingRoom();
+  if(!r) return;
+  const traced = traceRoomOutline(r);
+  if(!traced){
+    toast('Could not work out where that room stops. It needs walls or dividers closing it in '
+        + 'on every side, with its label inside them.');
+    return;
+  }
+  pushHistory();
+  r.pts = traced;
+  _refreshRoomShapeRow(r);
+  debouncedSave();
+  renderCanvas();
+  toast('Traced ' + traced.length + ' corners. Use the Room shape tool to move them.');
+});
+document.getElementById('btnRoomClearShape').addEventListener('click', () => {
+  const r = _editingRoom();
+  if(!r || !roomOutline(r)) return;
+  pushHistory();
+  delete r.pts;
+  _refreshRoomShapeRow(r);
+  debouncedSave();
+  renderCanvas();
+  toast('Outline cleared — back to reading the shape off the walls.');
 });
 document.getElementById('btnRoomCancel').addEventListener('click', () => modalRoom.classList.add('hidden'));
 document.getElementById('btnRoomDelete').addEventListener('click', () => {
@@ -11563,7 +12128,14 @@ function smRoomOut(r){
     color: r.color || null,
     notes: r.notes || '',
     floorFinish: r.floorFinish || '', wallFinish: r.wallFinish || '',
-    ceilingFinish: r.ceilingFinish || ''
+    ceilingFinish: r.ceilingFinish || '',
+    // The room's own outline, when it has one. Null means its shape is still
+    // being read off the walls around it.
+    outline: roomOutline(r)
+      ? roomOutline(r).map(p => [smRound(smToMm(p[0])), smRound(smToMm(p[1]))])
+      : null,
+    floorAreaM2: Math.round(computeRoomAreaMm2(r) / 1e4) / 100,
+    perimeterMm: smRound(computeRoomPerimeterMm(r))
   };
 }
 function smCompositeOut(c){
@@ -11870,6 +12442,14 @@ const SM_CLAUDE_METHODS = {
     if(p.floorFinish != null) data.floorFinish = String(p.floorFinish);
     if(p.wallFinish != null) data.wallFinish = String(p.wallFinish);
     if(p.ceilingFinish != null) data.ceilingFinish = String(p.ceilingFinish);
+    // An outline given outright — corners in mm, in order round the room.
+    if(Array.isArray(p.outline)){
+      if(p.outline.length < 3) throw new Error('An outline needs at least three corners.');
+      data.pts = p.outline.map(pt => {
+        if(!Array.isArray(pt) || pt.length < 2) throw new Error('Each corner is an [x, y] pair in mm.');
+        return [smToUnits(+pt[0]), smToUnits(+pt[1])];
+      });
+    }
     pushHistory();
     let r;
     if(existing){ Object.assign(existing, data); r = existing; }
@@ -11877,6 +12457,17 @@ const SM_CLAUDE_METHODS = {
       r = { id: newId('rm'), label: 'Room', color: _nextRoomColour(), fillOpacity: 0.28,
             notes:'', floorFinish:'', wallFinish:'', ceilingFinish:'', ...data };
       job.rooms.push(r);
+    }
+    // Take the shape from the walls closing the room in. This is what gets an
+    // L or a T right — the fallback that reads a shape by firing rays from the
+    // label cannot see round a corner.
+    if(p.traceOutline){
+      const traced = traceRoomOutline(r);
+      if(!traced){
+        throw new Error('Could not work out where "' + (r.label || 'that room') + '" stops. It needs '
+                      + 'walls or dividers closing it in on every side, and its label has to sit inside it.');
+      }
+      r.pts = traced;
     }
     smTouched();
     return { saved: smRoomOut(r), replaced: !!existing };
