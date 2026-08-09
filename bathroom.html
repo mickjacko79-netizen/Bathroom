@@ -12583,13 +12583,20 @@ function drawElevation(d, area, wallId, opts){
     if(!_inCrop(u1, u2)) return;
     archDimH(d, ox + u1*s, ox + u2*s, y, txt, opts);
   };
+  // Whether there is any joinery on this wall at all. Sanitaryware is not
+  // joinery: a wall carrying a basin, a pan and a shower has no kick, no
+  // cabinet face, no benchtop, and nothing on it is finished in the carcass
+  // board. Two callouts already ask this before they speak; the ones below
+  // did not, and so quoted the vanity's heights and its benchtop on walls that
+  // have neither. Same test, written once.
+  const _hasJoinery = !!(wall && (wall.baseRow || []).some(c => !isSanitary(c)));
   if(state.drawStyle.showOverallDims !== false){
     archDimH(d, ox + _crop.from*s, ox + _crop.to*s, oy + Hm*s + 22,
       _crop.full ? `${wL} mm` : `${Math.round(_crop.to - _crop.from)} of ${wL} mm`, { size:_dts });
     archDimV(d, oy, oy + Hm*s, ox + _crop.to*s + 20, (function(){ const n=(state.drawStyle.vDimNotes||{}).room; return `${Hm} mm` + (n && n.length ? (' ' + n) : ''); })(), { size:_dts });
     // Height dim chain — drawn INSIDE the elevation along the left edge so it's
     // always visible regardless of canvas layout. Uses bold brand colour.
-    if(state.drawStyle.showHeightDims !== false){
+    if(_hasJoinery && state.drawStyle.showHeightDims !== false){
       // _kH is the wall's own kick, worked out up top. Any unit standing on a
       // different one is dimensioned against itself below, since a single chain
       // down the edge of the sheet can only speak for one of them.
@@ -12775,12 +12782,16 @@ function drawElevation(d, area, wallId, opts){
   try { drawElecOnElevation(d, wall, ox, oy, Hm, s, view, _roomObj); }
   catch(e){ console.warn('[Bathroom] electrical layer failed', e.message); }
 
-  // FINISH callout — leader from the benchtop out to the right margin.
-  const fx = ox + wL*s + 12, fy = oy + (Hm - benchTopY)*s + benchT*s/2;
-  d.line(ox + wL*s + 2, fy, fx - 1, fy, COL.ink3, LW.hairline);
-  d.circle(ox + wL*s + 2, fy, 0.8, COL.ink, null);
-  d.text(fx, fy - 0.6, benchSpecLabel(), { size:6, color:COL.ink2 });
-  d.text(fx, fy + 2.6, `Benchtop · ${state.bench.overhang} mm overhang`, { size:5.5, color:COL.muted });
+  // FINISH callout — leader from the benchtop out to the right margin. Only
+  // where there is a benchtop: it was pointing at a height on the tiles and
+  // naming the vanity's stone on walls with no joinery on them.
+  if(_hasJoinery){
+    const fx = ox + wL*s + 12, fy = oy + (Hm - benchTopY)*s + benchT*s/2;
+    d.line(ox + wL*s + 2, fy, fx - 1, fy, COL.ink3, LW.hairline);
+    d.circle(ox + wL*s + 2, fy, 0.8, COL.ink, null);
+    d.text(fx, fy - 0.6, benchSpecLabel(), { size:6, color:COL.ink2 });
+    d.text(fx, fy + 2.6, `Benchtop · ${state.bench.overhang} mm overhang`, { size:5.5, color:COL.muted });
+  }
   // (The fronts finish is stated in the footer note below; the floating duplicate
   // that used to sit here landed on top of the overall dimension line.)
   // The handle callout used to sit here. On a wall of sanitaryware it was
