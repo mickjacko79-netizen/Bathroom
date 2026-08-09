@@ -12690,12 +12690,15 @@ function drawElevation(d, area, wallId, opts){
       // The top of the highest thing actually drawn on this wall, which is not
       // the same as where it was asked to go once it has been held under the
       // ceiling.
-      const _topOfRow = Math.min(Hm, Math.max.apply(null, wall.wallRow.map(c=>{
+      // Where the top of one thing on this row actually lands, once it has been
+      // held under the ceiling — which is not the same as where it was asked to go.
+      const _capTop = c => {
         const want = (hasBottomOverride(c) && c.config && c.config.cabBottomY)
           ? c.config.cabBottomY
           : Math.min(wallBottomY, Math.max(0, Hm - c.H - pelmetUnderH(c) - 50));
         return Math.min(want, Math.max(0, Hm - c.H - pelmetUnderH(c))) + pelmetUnderH(c) + (c.H || 720);
-      })));
+      };
+      const _topOfRow = Math.min(Hm, Math.max.apply(null, wall.wallRow.map(_capTop)));
       const _wallTopY = Math.max(oy + 4, oy + (Hm - _topOfRow)*s - 12);
       // A chain reads end to end, and only things standing end to end can be
       // chained. Now that a fitting hung clear of another in height may sit over
@@ -12720,9 +12723,26 @@ function drawElevation(d, area, wallId, opts){
         if(!line){ line = []; _lines.push(line); }
         line.push(b);
       });
-      _lines.forEach((line, li)=>{
-        // Extra lines stack upward, and stop rather than climb off the sheet.
-        const y = Math.max(oy + 3, _wallTopY - li * 6.5);
+      // Each line sits just above the tallest thing ON THAT LINE, not above the
+      // tallest thing on the wall. A toilet roll holder is on the wall row along
+      // with the wall cabinets, but it hangs at 700 off the floor and they are
+      // up at 2100 — so one height for the whole row set the roll holder out on
+      // blank wall a metre and a half above it, nowhere near the thing it was
+      // describing. A line only ever carries fittings that stand end to end, so
+      // it has one sensible height of its own.
+      const _lineTop = line => Math.min(Hm, Math.max.apply(null, line.map(b => _capTop(b.cab))));
+      const _drawn = [];
+      _lines
+        .map(line => ({ line, y: Math.max(oy + 3, oy + (Hm - _lineTop(line))*s - 12) }))
+        .sort((a, b) => a.y - b.y)
+        .forEach(({ line, y: wantY })=>{
+        // Two lines wanting the same height would print over each other, so the
+        // later one steps up — the old behaviour, now only where it is needed.
+        let y = wantY;
+        let guard = 40;
+        while(guard-- > 0 && _drawn.some(p => Math.abs(p - y) < 6.5)) y -= 6.5;
+        y = Math.max(oy + 3, y);
+        _drawn.push(y);
         let cuW = wallStartU;
         line.forEach(b=>{
           // The clear wall in front of it. With nothing lapping this is exactly
