@@ -7300,9 +7300,14 @@ function drawShowerMixerOnPlan(d, wallId, uOff, plan, M){
   const a0 = P(u, v), a1 = P(u + 10, v);
   const sc = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) / 10 || (plan && plan.s) || 1;
   const plate = (M && M.plate) || 68;
-  // True to scale, but grown as one piece if the plate would come out under
-  // about four page-mm — below that it is a smudge rather than a fitting.
-  const g = Math.max(1, (4.4 / Math.max(sc, 1e-6)) / plate);
+  // True to scale, but grown as one piece if the plate would come out too small
+  // to read. The floor used to be 4.4 page-mm, which at 1:50 grew a 68mm
+  // escutcheon to 220 and stood the body 200 out into the shower — a fitting
+  // three times its own size, and the biggest thing on that wall. The tap
+  // beside it draws true to scale and holds only its smallest details off
+  // vanishing, down around a page-mm; this now works to the same order, and
+  // cannot run away however far out the drawing is zoomed.
+  const g = Math.min(2, Math.max(1, (2.0 / Math.max(sc, 1e-6)) / plate));
   const hw = (plate / 2) * g;        // half the escutcheon, along the wall
   const pt = 11 * g;                 // how far it stands off the tiles
   const bw = plate * 0.40 * g;       // half the body
@@ -9544,7 +9549,13 @@ function drawLowWallOnPlan(d, wall, plan){
   // off a thumbnail, and off the PDF, where it was printing as a red box on an
   // issued sheet. The cabinet handles get out of the export by having the
   // selection cleared; these belong to no selection, so they have to ask.
-  if(!state._planCompact && !_isPdfTarget(d)){
+  //
+  // And only on the wall being worked on. Every low wall in the room showing
+  // its grips at once put coloured squares on the plan that read as part of the
+  // drawing — little boxes sitting in wall lines, nowhere near anything that
+  // was selected.
+  const _lwActive = state.ui && state.ui.activeWall === wall.id;
+  if(_lwActive && !state._planCompact && !_isPdfTarget(d)){
     [['from', L.from], ['to', L.to]].forEach(([end, u])=>{
       const c = planMap(wall.id, u, L.t/2, plan);
       const r = 2.2;
