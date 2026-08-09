@@ -1829,6 +1829,19 @@ async function loadComposites() {
   if (!state.compositeLibs.libs[state.compositeLibs.active]) {
     state.compositeLibs.active = Object.keys(state.compositeLibs.libs)[0];
   }
+  // A stored library that is empty is not a library. Whatever emptied it, an
+  // app with no wall types in it cannot draw a wall, so put the defaults back
+  // rather than opening in a state with no way out but the Restore button.
+  for (const name of Object.keys(state.compositeLibs.libs)) {
+    if (!Array.isArray(state.compositeLibs.libs[name])) state.compositeLibs.libs[name] = [];
+  }
+  if (!state.compositeLibs.libs[state.compositeLibs.active].length) {
+    const stocked = Object.keys(state.compositeLibs.libs)
+      .find(n => state.compositeLibs.libs[n].length);
+    if (stocked) state.compositeLibs.active = stocked;
+    else state.compositeLibs.libs[state.compositeLibs.active] =
+           JSON.parse(JSON.stringify(DEFAULT_COMPOSITES));
+  }
   state.composites = state.compositeLibs.libs[state.compositeLibs.active];
   // One-off for libraries saved before a build-up said which end faced in.
   for(const name of Object.keys(state.compositeLibs.libs)){
@@ -11328,7 +11341,12 @@ async function applyJobImportPayload(data, opts){
   // in memory alone leaves whatever was in IndexedDB untouched, so the library
   // looks right until the next reload puts the old one back — which is how a
   // wall type that was meant to have gone reappears.
-  if(Array.isArray(data.composites)){
+  // An EMPTY list is not an instruction to throw the library away. A job saved
+  // before it had any wall types carries composites: [], and a host that pushes
+  // one of those in on load would otherwise wipe the library and write the wipe
+  // to disk — after which no wall can be built in anything and Claude cannot add
+  // so much as a partition.
+  if(Array.isArray(data.composites) && data.composites.length){
     state.composites = data.composites;
     if(state.compositeLibs) state.compositeLibs.libs[state.compositeLibs.active] = data.composites;
     if(!state.composites.some(c => c.id === state.currentCompositeId)){
@@ -12065,6 +12083,11 @@ function smFindComposite(ref){
   const byName = state.composites.find(c => String(c.name).toLowerCase() === lower)
               || state.composites.find(c => String(c.name).toLowerCase().includes(lower));
   if(byName) return byName;
+  if(!state.composites.length){
+    throw new Error('The wall type library is empty, so there is nothing to build a wall in. '
+                  + 'Open the wall types dialog — the cog beside the wall type picker — and hit '
+                  + 'Restore defaults.');
+  }
   throw new Error('There is no wall type "' + ref + '". The library has ' +
     state.composites.map(c => c.name).join(', ') + '.');
 }
