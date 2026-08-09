@@ -105,9 +105,12 @@ function startClaudeBridge() {
       window: mainWindow,
       userDataDir: app.getPath('userData'),
       version: app.getVersion(),
+      onPortTaken: p => console.warn('[Bathroom] port ' + p + ' is taken by something else — '
+                                   + 'the drawing bridge is taking any free port instead'),
       onListening: info => {
         mcpUrl = info.url;
-        console.log('[Bathroom] Claude bridge listening at ' + info.url);
+        console.log('[Bathroom] Claude bridge listening at ' + info.url
+                  + (info.movedFrom ? '  (moved off ' + info.movedFrom + ')' : ''));
         buildMenu();                    // the menu item can now hand the address over
       },
       onError: err => {
@@ -152,9 +155,12 @@ function startSiteMeasureBridge() {
       // tab to have been opened by hand first.
       ensureFn: 'ensureSiteMeasureFrame',
       frameSelector: '#smFrame',
+      onPortTaken: p => console.warn('[Bathroom] port ' + p + ' is taken by something else — '
+                                   + 'the site measure bridge is taking any free port instead'),
       onListening: info => {
         smUrl = info.url;
-        console.log('[Bathroom] site measure bridge listening at ' + info.url);
+        console.log('[Bathroom] site measure bridge listening at ' + info.url
+                  + (info.movedFrom ? '  (moved off ' + info.movedFrom + ')' : ''));
         buildMenu();
       },
       onError: err => {

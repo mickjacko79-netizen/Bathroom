@@ -12870,6 +12870,7 @@ window.addEventListener('message', (ev) => {
         + 'built in, doors and windows, rooms and their finishes. External walls mitre at a corner '
         + 'and internal walls butt into the face, and it knows that. Everything it does is one undo '
         + 'step, so Ctrl+Z takes it back.');
+      if(state.note) add('smchat-err', state.note);
       return true;
     }
     if(state && state.reason === 'not-logged-in') signinBox = offerSignIn();

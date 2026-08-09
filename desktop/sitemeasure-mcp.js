@@ -282,7 +282,7 @@ function buildTools(win, frameSelector, ensureFn) {
 
 // --------------------------------------------------------------------- HTTP --
 function startServer({ window, userDataDir, version, port, frameSelector, ensureFn,
-                       onListening, onError }) {
+                       onListening, onError, onPortTaken }) {
   return transport.startServer({
     tools: buildTools(window, frameSelector, ensureFn),
     name: 'sitemeasure',
@@ -300,7 +300,7 @@ function startServer({ window, userDataDir, version, port, frameSelector, ensure
       'Every change is one undo step in the app.',
     tokenFile: 'sitemeasure-mcp-token',
     defaultPort: DEFAULT_PORT,
-    userDataDir, version, port, onListening, onError
+    userDataDir, version, port, onListening, onError, onPortTaken
   });
 }
 

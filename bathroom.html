@@ -22660,6 +22660,7 @@ try {
       add('chat-note',
           'Ask about the drawing that is open, or ask for a change to it. Everything it '
         + 'does is one undo step, so Ctrl+Z takes it back.');
+      if(state.note) add('chat-err', state.note);
       return true;
     }
     if(state.reason === 'not-logged-in') signinBox = offerSignIn();

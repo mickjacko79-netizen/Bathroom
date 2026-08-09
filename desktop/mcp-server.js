@@ -445,7 +445,7 @@ function buildTools(win) {
 }
 
 // --------------------------------------------------------------------- HTTP --
-function startServer({ window, userDataDir, version, port, onListening, onError }) {
+function startServer({ window, userDataDir, version, port, onListening, onError, onPortTaken }) {
   return transport.startServer({
     tools: buildTools(window),
     name: 'bathroom',
@@ -457,7 +457,7 @@ function startServer({ window, userDataDir, version, port, onListening, onError 
       "fitting's near edge. Every change is one undo step in the app.",
     tokenFile: 'mcp-token',
     defaultPort: DEFAULT_PORT,
-    userDataDir, version, port, onListening, onError
+    userDataDir, version, port, onListening, onError, onPortTaken
   });
 }
 

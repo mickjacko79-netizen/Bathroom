@@ -117,7 +117,7 @@ async function handleRpc(msg, tools, state, about) {
 
 // --------------------------------------------------------------------- HTTP --
 function startServer({ tools, name, title, instructions, tokenFile, defaultPort,
-                       userDataDir, version, port, onListening, onError }) {
+                       userDataDir, version, port, onListening, onError, onPortTaken }) {
   const token = loadToken(userDataDir, tokenFile);
   const about = { name, title, instructions };
   const sessions = new Map();
@@ -182,12 +182,27 @@ function startServer({ tools, name, title, instructions, tokenFile, defaultPort,
     });
   });
 
-  server.on('error', err => { if (onError) onError(err); });
+  // A taken port used to mean the bridge simply did not start, and nothing said
+  // so — the tools it serves just were not there, and Claude quietly got on
+  // with whatever was left. The ports these want are ordinary numbers that
+  // another app on the same machine can perfectly reasonably be using, so a
+  // clash takes any free one instead. The address is discovered rather than
+  // typed, so which port it lands on does not matter to anything.
+  let fellBack = false;
+  server.on('error', err => {
+    if (err && err.code === 'EADDRINUSE' && !fellBack && (port == null)) {
+      fellBack = true;
+      if (onPortTaken) onPortTaken(defaultPort);
+      try { server.listen(0, '127.0.0.1'); return; } catch (_) {}
+    }
+    if (onError) onError(err);
+  });
   // `== null`, not `||` — port 0 means "any free port the machine will give me",
   // and treating that as unset sends it back to the fixed port instead.
   server.listen(port == null ? defaultPort : port, '127.0.0.1', () => {
     const { port: actual } = server.address();
-    if (onListening) onListening({ url: 'http://127.0.0.1:' + actual + routePath, port: actual, token });
+    if (onListening) onListening({ url: 'http://127.0.0.1:' + actual + routePath, port: actual, token,
+                                   movedFrom: fellBack ? defaultPort : null });
   });
 
   return {

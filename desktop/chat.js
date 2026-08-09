@@ -301,7 +301,15 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, cliPath, send }) {
       return { ready: false, reason: 'not-logged-in',
                message: 'Sign in to Claude to use this panel.' };
     }
-    return { ready: true, cli, authMethod: auth.authMethod };
+    // Half the tools missing is worth saying out loud. Without this, a bridge
+    // that did not start just means Claude quietly does less and reports that
+    // the app cannot do the thing — which reads as the app being incapable
+    // rather than as a bridge being down.
+    const note = smUrl()
+      ? null
+      : 'The site measure bridge is not running, so walls, doors, windows and room labels '
+      + 'in the site measure are out of reach this session. Claude → Start site measure bridge.';
+    return { ready: true, cli, authMethod: auth.authMethod, note };
   }
 
   // ------------------------------------------------------------- signing in --
