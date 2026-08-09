@@ -149,7 +149,8 @@
       <button id="btnLockMiters" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Lock every wall's mitre so shared corners survive future length edits or endpoint drags. Click again to unlock all.">🔒 Lock mitres</button>
       <button id="btnAllOutsideFace" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Throw every wall's dimension chain OUTSIDE the plan. This is what a new drawing does on its own; use it after hand-facing a wall you want to put back.">▢ All outside dims</button>
       <button id="btnAllInsideFace" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Bring every wall's dimension chain INSIDE the plan.">⌂ All inside dims</button>
-      <button id="btnWeld" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Merge collinear walls of the same composite into a single wall">🔗 Weld collinear</button>
+      <button id="btnJoinWalls" class="px-3 py-1.5 text-sm bg-sky-700 hover:bg-sky-600 border border-sky-500 rounded font-semibold" title="Join the selected walls into one. For a wall you stopped and started again in the same line: Select tool, click one, shift-click the other, then Join. They have to run in the same line, meet end to end, and be the same wall type.">⇥ Join walls</button>
+      <button id="btnWeld" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded" title="Sweep the whole plan and merge every run of collinear walls of the same type into single walls">🔗 Weld collinear</button>
       <button id="btnUndo" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded">↶ Undo</button>
       <button id="btnRedo" class="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded">↷ Redo</button>
       <div class="w-px h-6 bg-slate-600 mx-1"></div>
@@ -849,10 +850,10 @@
 
       <div>
         <h4 class="font-semibold text-blue-300">7. Contact</h4>
-        <p>Draw Spec<br>
-          <span class="text-amber-300">[ABN — to be completed]</span><br>
-          <span class="text-amber-300">[Contact email — to be completed]</span><br>
-          <span class="text-amber-300">[Website — to be completed]</span>
+        <p><b>Draw Spec</b><br>
+          ABN 86 639 476 894<br>
+          <a href="mailto:mike@drawspec.com.au" class="text-blue-300 hover:underline">mike@drawspec.com.au</a><br>
+          <a href="https://www.drawspec.com.au" target="_blank" rel="noopener" class="text-blue-300 hover:underline">www.drawspec.com.au</a>
         </p>
       </div>
 
@@ -8030,11 +8031,14 @@ document.getElementById('btnUndo').addEventListener('click', undo);
 document.getElementById('btnRedo').addEventListener('click', redo);
 
 /* ---------- Weld collinear walls of the same composite ---------- */
-function weldCollinearAll(){
+// `onlyIds`, when given, restricts the sweep to those walls — which is what the
+// Join button hands it. Left out, it behaves exactly as it always did and goes
+// over the whole job.
+function weldCollinearAll(onlyIds, opts){
   if(!state.job || !Array.isArray(state.job.walls)) return 0;
   const walls = state.job.walls;
-  const ANG_TOL   = Math.cos(5 * Math.PI/180); // dot > this means <=5° apart
-  const POS_TOL   = 8; // world units — endpoint proximity
+  const ANG_TOL   = Math.cos(((opts && opts.angTolDeg) || 5) * Math.PI/180);
+  const POS_TOL   = (opts && opts.posTol) || 8; // world units — endpoint proximity
   let welded = 0;
   let changed = true;
   let safety = 200;
@@ -8043,11 +8047,13 @@ function weldCollinearAll(){
     outer:
     for(let i = 0; i < walls.length; i++){
       const a = walls[i];
+      if(onlyIds && !onlyIds.has(a.id)) continue;
       const adx = a.x2 - a.x1, ady = a.y2 - a.y1;
       const aLen = Math.hypot(adx, ady) || 1;
       const aUx = adx / aLen, aUy = ady / aLen;
       for(let j = i + 1; j < walls.length; j++){
         const b = walls[j];
+        if(onlyIds && !onlyIds.has(b.id)) continue;
         if(b.compositeId !== a.compositeId) continue;
         if(b.thicknessMmOverride && b.thicknessMmOverride !== a.thicknessMmOverride) continue;
         const bdx = b.x2 - b.x1, bdy = b.y2 - b.y1;
@@ -8082,6 +8088,10 @@ function weldCollinearAll(){
         // occupies the first aLen/(aLen+bLen) fraction, b the rest.
         const total = aLen + bLen;
         const aFrac = aLen / total;
+        // Wall a's own openings, noted before b's are moved onto it — otherwise
+        // the rescale below catches the ones that have just arrived from b and
+        // squashes them a second time.
+        const aOwnOpenings = state.job.openings.filter(op => op.wallId === a.id);
         // Openings on b: their old position (0..1) along b becomes:
         //   if match.at === 'end': new = aFrac + (bReversed ? (1-pos) : pos) * (1-aFrac)
         //   if match.at === 'start': (a is second half) new = (bReversed ? pos : 1-pos) * (1-aFrac)
@@ -8097,15 +8107,15 @@ function weldCollinearAll(){
           op.wallId = a.id;
           op.position = Math.max(0, Math.min(1, pNew));
         }
-        // Also, if this wall a is being extended from its start (not end),
-        // openings on A also need repositioning because a's start moved.
-        if(match.at === 'start'){
-          const aStartFrac = (1 - aFrac); // where a's OLD start now sits
-          for(const op of state.job.openings){
-            if(op.wallId !== a.id) continue;
-            const pOld = +op.position || 0;
-            op.position = aStartFrac + pOld * aFrac;
-          }
+        // Wall a's own openings have to be rescaled too. Their position is a
+        // fraction of the wall, and the wall just got longer — so a door that
+        // was 2000mm along a 4000 wall would otherwise end up 4000mm along the
+        // 8000 one. This only handled a being extended from its start; extended
+        // from its end, every opening already on it quietly slid down the wall.
+        const aStartFrac = (match.at === 'start') ? (1 - aFrac) : 0;
+        for(const op of aOwnOpenings){
+          const pOld = +op.position || 0;
+          op.position = aStartFrac + pOld * aFrac;
         }
         // Update a to span the combined wall — direction from outerA to outerB
         if(match.at === 'end'){
@@ -8135,6 +8145,53 @@ document.getElementById('btnWeld').addEventListener('click', () => {
   debouncedSave();
   renderCanvas();
   toast(n ? `Welded ${n} wall${n>1?'s':''}` : 'No collinear pairs found');
+});
+
+/* Why a pair would not go together. A refusal that does not say what is wrong
+   just looks like a broken button, and there are only three things it can be. */
+function whyNotJoinable(a, b){
+  const scale = (state.job && state.job.scaleMmPerUnit) || 10;
+  if(a.compositeId !== b.compositeId){
+    const na = a.compositeId ? (getComposite(a.compositeId) || {}).name : null;
+    const nb = b.compositeId ? (getComposite(b.compositeId) || {}).name : null;
+    return 'they are different wall types — ' + (na || 'no type') + ' and ' + (nb || 'no type');
+  }
+  const [aux, auy] = smWallUnit(a), [bux, buy] = smWallUnit(b);
+  const deg = Math.acos(Math.min(1, Math.abs(aux*bux + auy*buy))) * 180 / Math.PI;
+  if(deg > 5) return 'they are ' + Math.round(deg) + '° apart, so they are not in the same line';
+  const ends = [[[a.x1,a.y1],[b.x1,b.y1]], [[a.x1,a.y1],[b.x2,b.y2]],
+                [[a.x2,a.y2],[b.x1,b.y1]], [[a.x2,a.y2],[b.x2,b.y2]]];
+  let gap = Infinity;
+  for(const [p, q] of ends) gap = Math.min(gap, Math.hypot(p[0]-q[0], p[1]-q[1]));
+  return 'their nearest ends are ' + Math.round(gap * scale) + 'mm apart, so they do not meet';
+}
+
+document.getElementById('btnJoinWalls').addEventListener('click', () => {
+  if(!state.job){ toast('Open a job first.'); return; }
+  const ids = (state.selection || []).filter(s => s.type === 'wall').map(s => s.id);
+  if(ids.length < 2){
+    toast('Pick the walls to join first — Select tool, click one, then shift-click the next.');
+    return;
+  }
+  const picked = state.job.walls.filter(w => ids.includes(w.id));
+  pushHistory();
+  // A wall stopped and started again lands on the same point, but a plan drawn
+  // by hand can be a few millimetres out, so this is more forgiving than the
+  // whole-plan sweep — the walls being joined were named on purpose.
+  const scale = state.job.scaleMmPerUnit || 10;
+  const n = weldCollinearAll(new Set(ids), { posTol: 150 / scale, angTolDeg: 5 });
+  if(!n){
+    state.history.pop();                       // nothing happened; no undo step
+    toast('Could not join those: ' + (picked.length === 2
+      ? whyNotJoinable(picked[0], picked[1])
+      : 'no two of them run in the same line and meet end to end') + '.');
+    return;
+  }
+  // What is left of the selection is the wall they were joined into.
+  state.selection = state.job.walls.filter(w => ids.includes(w.id)).map(w => ({ type:'wall', id:w.id }));
+  debouncedSave();
+  renderCanvas();
+  toast(n === 1 ? 'Joined into one wall.' : 'Joined ' + (n + 1) + ' walls into one.');
 });
 
 document.getElementById('btnSquareInternals').addEventListener('click', () => {
