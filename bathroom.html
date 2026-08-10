@@ -473,7 +473,8 @@ header .project-label .dot.dirty{background:#F7C04A}
           <button id="measureToggle" class="btn small" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Start measuring</button>
           <button id="measureClear" class="btn small" style="padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Clear</button>
         </div>
-        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:4px">Click two points on the plan or any elevation to measure the distance. Each pair persists per view until cleared.</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:4px" id="measureHint">Click two points on the plan or any elevation. It catches on the corners and faces of anything on the sheet, and squares itself up when it is nearly square. <b>Esc</b> drops a half-made one. Click a figure to remove that measurement.</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:-2px" id="measureCount"></div>
       </div>
 
       <div class="group">
@@ -1600,8 +1601,14 @@ header .project-label .dot.dirty{background:#F7C04A}
               a shelf is behind a door just as much as a socket is. Click one to select it and
               <kbd>Del</kbd> to remove it. Floor wastes are placed the same way from the
               <span class="ui">Floor</span> panel.</p>
-            <p><span class="ui">Measure</span> is a tape: press <b>Start measuring</b>, click two points on a
-              sheet, and the distance is drawn. <kbd>Esc</kbd> or <b>Clear</b> puts it away.</p>
+            <p><span class="ui">Measure</span> is a tape: press <b>Start measuring</b> and click two points
+              on a sheet. The tape follows the cursor between the two clicks with the figure running on
+              it, catches on the corners and faces of anything on the sheet, and squares itself up when
+              it is within a couple of degrees of square — so a measurement off a cabinet face is the
+              face, not near it. It is drawn the way the sheet's own dimensions are, in red, and it stays
+              on the sheet it was taken on. <kbd>Esc</kbd> drops a half-made one and again puts the tape
+              away; clicking a figure removes that one measurement, <b>Clear</b> removes them all from the
+              sheet, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes any of it back.</p>
           </section>
 
           <section id="mn-hardware">
@@ -1787,7 +1794,7 @@ const CATALOG = {
   // finished wall face behind it. It is carried on the fixture rather than
   // derived, because it is the number the drawing exists to communicate.
   'toilet':      { label:'Toilet suite',            defaultW:450, H:830,  D:700, row:'base', hasShelves:false,
-    defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, plateH:1015, panH:0, panShiftU:0, labelText:'' } },
+    defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, plateH:1015, panH:0, panShiftU:0, sideClear:150, labelText:'' } },
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
     defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, bowlShape:'oval', tapMode:'deck', wallTap:'plate-165', tapAbove:230, trapL:145, labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
@@ -3200,6 +3207,8 @@ const state = {
         // Fittings are dropped by clicking and moved by dragging.
         // Openings are dragged too — doors and windows move along their wall.
         selectedFitId:null, placeMode:null, fitDrag:null, cropDrag:null, opDrag:null,
+        // The tape: the point taken so far, and the point under the cursor.
+        measureMode:false, measureP1:null, measureHover:null,
         drag:{ pending:null, active:false, hoverU:0 } },
   rooms: [],
   // The site measure plan this job was traced from, in the measure's own export
@@ -7217,20 +7226,37 @@ function toiletRunSpanU(cab){
   const u0 = rowPositions(arr, s0)[arr.indexOf(cab)];
   const len = wallLength(wall.id);
   if(!(len > 0) || !isFinite(u0)) return null;
-  return { u0, len };
+  return { u0, len, s0 };
+}
+// How close the side of the pan is allowed to come to a wall at either end of
+// the run. A hundred and fifty is what a pan can actually be set out at in a
+// corner — enough to render, tile and clean past, and no more.
+function toiletSideClear(cab){
+  const v = (cab.config || {}).sideClear;
+  return Math.max(0, (v === undefined || v === null) ? 150 : (+v || 0));
 }
 function toiletCentreU(cab){
   const g = toiletGeom(cab);
   const half = (g.panW || 360) / 2;
   const shift = (cab.config && +cab.config.panShiftU) || 0;
   let lo = Math.min(half, cab.W / 2), hi = Math.max(cab.W - half, cab.W / 2);
+  let base = cab.W / 2;
   const run = toiletRunSpanU(cab);
   if(run){
-    lo = half - run.u0;
-    hi = (run.len - half) - run.u0;
+    const clear = toiletSideClear(cab);
+    lo = (half + clear) - run.u0;
+    hi = (run.len - half - clear) - run.u0;
     if(hi < lo){ const m = (lo + hi) / 2; lo = hi = m; }
+    // Hard into a corner, a pan is set out FROM the corner. Left standing in
+    // the middle of its module it kept half the module off the wall whatever
+    // the module was — 270 on a 900, which is a lot of air for a fixture that
+    // wants to tuck in — and the only way past it was to know the shift figure
+    // was there. Against a wall it now sits at the side clearance, which is
+    // what it would be set out at on site.
+    if(run.u0 <= run.s0 + 5) base = lo;
+    else if(run.u0 + cab.W >= run.len - 5) base = hi;
   }
-  return Math.max(lo, Math.min(hi, cab.W / 2 + shift));
+  return Math.max(lo, Math.min(hi, base + shift));
 }
 function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
   const g = toiletGeom(cab);
@@ -10058,33 +10084,117 @@ function findCabAt(view, xMM, yMM){
 // FLOOR PLAN
 // ============================================================
 // Render the user's measurements for a given view (page-mm coordinates).
-function drawMeasurements(d, view){
-  if(!state.measurements || !state.measurements[view]) return;
-  const s = (state._viewScale && state._viewScale[view]) || 1;
-  state.measurements[view].forEach(m => {
-    const x1 = m.p1.x, y1 = m.p1.y, x2 = m.p2.x, y2 = m.p2.y;
-    // Line
-    d.line(x1, y1, x2, y2, '#E04B3B', LW.thin);
-    // End ticks perpendicular to the line
-    const dx = x2 - x1, dy = y2 - y1;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = -dy / len, ny = dx / len;
-    const tickLen = 2.5;
-    d.line(x1 - nx*tickLen, y1 - ny*tickLen, x1 + nx*tickLen, y1 + ny*tickLen, '#E04B3B', LW.thin);
-    d.line(x2 - nx*tickLen, y2 - ny*tickLen, x2 + nx*tickLen, y2 + ny*tickLen, '#E04B3B', LW.thin);
-    // Distance in real mm = page-mm distance / drawing scale
-    const distMm = Math.round(len / s);
-    const mx = (x1 + x2)/2 + nx*4, my = (y1 + y2)/2 + ny*4;
-    // White background pill behind text
-    const labelW = Math.max(12, String(distMm).length * 2.5);
-    d.rect(mx - labelW/2, my - 3, labelW, 5.5, '#fff', '#E04B3B', LW.hairline);
-    d.text(mx, my + 1, `${distMm}`, { align:'center', baseline:'alphabetic', size:5, color:'#E04B3B' });
+// The tape.
+//
+// A measurement is a markup rather than a dimension the sheet owns, so it is
+// drawn in the markup red — but it is drawn the way the sheet's own dimensions
+// are, with 45° ticks and the figure set along the line the right way up.
+// A tape reading that does not look like a dimension is no use to whoever is
+// holding the drawing, and the two ticks square across the line it used to get
+// read as a bracket rather than as a measurement.
+const MEASURE_COL = '#E04B3B';
+// The figure on a measurement is its remove button, so it needs a hit box.
+const measureHitRegistry = {};
+function findMeasureAt(view, px, py){
+  const list = measureHitRegistry[view] || [];
+  for(let k = list.length - 1; k >= 0; k--){
+    const b = list[k].b;
+    if(px >= b[0] && px <= b[2] && py >= b[1] && py <= b[3]) return list[k];
+  }
+  return null;
+}
+// The points a measurement catches on: every corner and edge centre of anything
+// the sheet has hit-tested — cabinets, openings, fittings. Those are the faces
+// you actually want a tape between, and picking them by eye at 1:50 is guesswork
+// worth a few millimetres either way.
+function measureSnapPoints(view){
+  const pts = [];
+  const box = b => {
+    if(!b) return;
+    const [x1, y1, x2, y2] = b;
+    pts.push([x1,y1],[x2,y1],[x1,y2],[x2,y2],
+             [(x1+x2)/2, y1], [(x1+x2)/2, y2], [x1, (y1+y2)/2], [x2, (y1+y2)/2]);
+  };
+  (hitRegistry[view] || []).forEach(r => box(r.bounds));
+  (openingHitRegistry[view] || []).forEach(r => box(r.bounds));
+  (fitHitRegistry[view] || []).forEach(r => box(r.bounds));
+  return pts;
+}
+function measureSnap(view, x, y){
+  let best = null, near = 2.2;               // page-mm
+  measureSnapPoints(view).forEach(([px, py])=>{
+    const dd = Math.hypot(px - x, py - y);
+    if(dd < near){ near = dd; best = [px, py]; }
   });
-  // First click preview — show a small cross at p1 if a measurement is in progress
-  if(state.ui.measureMode && state.ui.measureP1 && state.ui.measureP1.view === view){
-    const p = state.ui.measureP1;
-    d.line(p.x - 3, p.y, p.x + 3, p.y, '#E04B3B', LW.thin);
-    d.line(p.x, p.y - 3, p.x, p.y + 3, '#E04B3B', LW.thin);
+  return best ? { x:best[0], y:best[1], snapped:true } : { x, y, snapped:false };
+}
+// Where a point lands: on a face if it is near one, otherwise square to the
+// first point when it is very nearly square already. An explicit snap wins —
+// catching a corner is a stronger statement than being roughly level with it.
+function measurePoint(view, x, y, from){
+  const p = measureSnap(view, x, y);
+  if(p.snapped || !from) return p;
+  const dx = p.x - from.x, dy = p.y - from.y;
+  if(Math.hypot(dx, dy) < 1) return p;
+  const a = Math.abs(Math.atan2(dy, dx)), tol = 0.045;    // about 2.5°
+  if(a < tol || Math.abs(a - Math.PI) < tol) return { x:p.x, y:from.y, snapped:false, square:true };
+  if(Math.abs(a - Math.PI/2) < tol)          return { x:from.x, y:p.y, snapped:false, square:true };
+  return p;
+}
+function drawOneMeasure(d, x1, y1, x2, y2, s, live){
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if(!(len > 0.6)) return null;
+  const ux = dx/len, uy = dy/len, nx = -uy, ny = ux;
+  const lw = 0.34;
+  if(live) d.dashed(true);
+  d.line(x1 - ux*1.8, y1 - uy*1.8, x2 + ux*1.8, y2 + uy*1.8, MEASURE_COL, lw);
+  if(live) d.dashed(false);
+  const t = 1.0;
+  [[x1,y1],[x2,y2]].forEach(([px, py])=>{
+    // The 45° tick the sheet's own dimensions carry, and a short witness square
+    // across the line so the end is findable over whatever it lands on.
+    d.line(px - ux*t - nx*t, py - uy*t - ny*t, px + ux*t + nx*t, py + uy*t + ny*t, MEASURE_COL, lw*1.25);
+    d.line(px - nx*2.4, py - ny*2.4, px + nx*2.4, py + ny*2.4, MEASURE_COL, lw*0.6);
+  });
+  const label = String(Math.round(len / (s || 1)));
+  const size = 5.2;
+  const tw = label.length * size*0.58 + 3.4, th = size*1.2;
+  // Keep the figure the right way up whichever way the tape runs.
+  let ang = Math.atan2(dy, dx), flip = false;
+  if(ang > Math.PI/2 + 0.001 || ang < -Math.PI/2 - 0.001){ ang += Math.PI; flip = true; }
+  const off = th*0.62 + 0.8;
+  const cx = (x1+x2)/2 + (flip ? -nx : nx)*off;
+  const cy = (y1+y2)/2 + (flip ? -ny : ny)*off;
+  const cA = Math.cos(ang), sA = Math.sin(ang);
+  const at = (a, b) => [cx + a*cA - b*sA, cy + a*sA + b*cA];
+  const quad = [at(-tw/2,-th/2), at(tw/2,-th/2), at(tw/2,th/2), at(-tw/2,th/2)];
+  d.polygon(quad, '#FFFFFF', live ? null : MEASURE_COL, 0.22);
+  d.text(cx - sA*(size*0.36), cy + cA*(size*0.36), label,
+    { align:'center', baseline:'alphabetic', size, color:MEASURE_COL, angle:ang });
+  const xs = quad.map(p=>p[0]), ys = quad.map(p=>p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+function drawMeasurements(d, view){
+  measureHitRegistry[view] = [];
+  const s = (state._viewScale && state._viewScale[view]) || 1;
+  ((state.measurements && state.measurements[view]) || []).forEach((m, i)=>{
+    const b = drawOneMeasure(d, m.p1.x, m.p1.y, m.p2.x, m.p2.y, s, false);
+    if(b) measureHitRegistry[view].push({ i, b });
+  });
+  if(!state.ui.measureMode) return;
+  const p1 = (state.ui.measureP1 && state.ui.measureP1.view === view) ? state.ui.measureP1 : null;
+  const h  = (state.ui.measureHover && state.ui.measureHover.view === view) ? state.ui.measureHover : null;
+  // The first point, marked so it is obvious a measurement is half made.
+  if(p1) d.rect(p1.x - 1.3, p1.y - 1.3, 2.6, 2.6, MEASURE_COL, MEASURE_COL, 0.3);
+  // The tape as it stands, following the cursor, with the running figure on it.
+  if(p1 && h) drawOneMeasure(d, p1.x, p1.y, h.x, h.y, s, true);
+  if(h){
+    d.line(h.x - 3.4, h.y, h.x + 3.4, h.y, MEASURE_COL, 0.26);
+    d.line(h.x, h.y - 3.4, h.x, h.y + 3.4, MEASURE_COL, 0.26);
+    // A box where it has caught a face, so you can see what you are measuring
+    // from before you commit to it.
+    if(h.snapped) d.rect(h.x - 1.7, h.y - 1.7, 3.4, 3.4, null, MEASURE_COL, 0.36);
   }
 }
 // Draws one adjoining room on the kitchen plan. kox/koy are the kitchen's inner
@@ -14800,6 +14910,19 @@ function wireViewport(canvas){
       renderView();
       return;
     }
+    // The tape follows the cursor, so the figure is there before the second
+    // point is committed rather than only after it.
+    if(state.ui.measureMode){
+      const v = state.ui.view;
+      if(v === 'cover'){ state.ui.measureHover = null; return; }
+      const raw = clientToPageMM(canvas, e.clientX, e.clientY);
+      const from = (state.ui.measureP1 && state.ui.measureP1.view === v) ? state.ui.measureP1 : null;
+      const p = measurePoint(v, raw.x, raw.y, from);
+      state.ui.measureHover = { view:v, x:p.x, y:p.y, snapped:!!p.snapped };
+      canvas.style.cursor = findMeasureAt(v, raw.x, raw.y) ? 'pointer' : 'crosshair';
+      renderActive();
+      return;
+    }
     // An end of a low wall is being dragged along its wall.
     if(state.ui.lowWallDrag){
       const D = state.ui.lowWallDrag;
@@ -14985,24 +15108,41 @@ function wireViewport(canvas){
   });
   canvas.addEventListener('mouseleave', e => {
     if(dragging){ dragging = false; canvas.classList.remove('panning'); }
+    // The tape's cursor end goes with the cursor.
+    if(state.ui.measureHover){ state.ui.measureHover = null; renderActive(); }
     // Don't kill the cab drag on mouseleave — let mouseup complete the reorder.
     // (Pan/zoom drag is killed since it depends on tracking mouse on canvas.)
   });
   canvas.addEventListener('click', e => {
     // Measurement mode — capture clicks here so they don't fall through to cab-selection.
     if(state.ui.measureMode){
-      const p = clientToPageMM(canvas, e.clientX, e.clientY);
+      const raw = clientToPageMM(canvas, e.clientX, e.clientY);
       const view = state.ui.view;
       if(view === 'cover') return;
+      flushRender();
+      // The figure is the remove button. One measurement at a time rather than
+      // clearing the sheet, which was the only way to get rid of a stray one.
+      const mh = findMeasureAt(view, raw.x, raw.y);
+      if(mh && state.measurements && state.measurements[view]){
+        pushHistory();
+        state.measurements[view].splice(mh.i, 1);
+        state.ui.measureP1 = null;
+        syncMeasurePanel(); renderActive();
+        return;
+      }
       if(!state.measurements) state.measurements = {};
       if(!state.measurements[view]) state.measurements[view] = [];
-      if(!state.ui.measureP1 || state.ui.measureP1.view !== view){
+      const from = (state.ui.measureP1 && state.ui.measureP1.view === view) ? state.ui.measureP1 : null;
+      const p = measurePoint(view, raw.x, raw.y, from);
+      if(!from){
         state.ui.measureP1 = { view, x: p.x, y: p.y };
       } else {
-        state.measurements[view].push({ p1: { x: state.ui.measureP1.x, y: state.ui.measureP1.y }, p2: { x: p.x, y: p.y } });
+        pushHistory();
+        state.measurements[view].push({ p1: { x: from.x, y: from.y }, p2: { x: p.x, y: p.y } });
         state.ui.measureP1 = null;
       }
-      renderActive();
+      state.ui.measureHover = { view, x:p.x, y:p.y, snapped:!!p.snapped };
+      syncMeasurePanel(); renderActive();
       return;
     }
     // A fitting under the cursor was already handled on mousedown — don't let
@@ -15589,10 +15729,13 @@ function renderEditPanel(){
       if(toiletGeom(cab).wallHung) num('Pan height off floor', 'panH', 100, 600, 5);
       pick('Trap', 'trap', [['p-trap','P-trap'],['s-trap','S-trap']]);
       num('Set-out (wall to pan centre)', 'setOut', 60, 400, 5);
+      // How near the pan may come to a wall at either end of the run, and where
+      // it sits when it is up against one.
+      num('Clear of the side wall', 'sideClear', 0, 600, 5);
       // The module is the clearance zone; this is where the pan sits within it.
-      // Positive shifts it towards the far end of the wall. It may leave the
-      // module — that is how a pan gets tucked into a corner — and is held only
-      // by the wall it is standing on.
+      // Positive shifts it towards the far end of the wall, off wherever it
+      // naturally sits. It may leave the module — that is how a pan gets tucked
+      // into a corner — and is held only by the side clearance above.
       num('Shift along the wall', 'panShiftU', -1200, 1200, 5);
       num('Pan width', 'panW', 250, 600, 5);
       num('Pan projection', 'panD', 400, 900, 5);
@@ -17113,7 +17256,11 @@ function syncActiveWallToView(v){
 function showView(v){
   // A room can be removed while one of its elevations is on screen.
   if(!activeSheets().some(s => s.view === v)) v = 'plan';
+  // A half-made measurement belongs to the sheet it was started on, and the
+  // tape's cursor end is nowhere until the cursor is back over a sheet.
+  if(state.ui.view !== v) state.ui.measureHover = null;
   state.ui.view = v;
+  try { syncMeasurePanel(); } catch(_){}
   if(syncActiveWallToView(v)){
     try { syncSidebarFromState(); } catch(_){}
     try { renderCabinetList(); } catch(_){}
@@ -21066,29 +21213,45 @@ function syncLowWallPanel(){
   });
 })();
 // Measure tool wiring
-(function(){
+function syncMeasurePanel(){
   const btn = document.getElementById('measureToggle');
-  const clr = document.getElementById('measureClear');
-  function syncBtn(){
-    if(!btn) return;
+  if(btn){
     const on = !!state.ui.measureMode;
     btn.textContent = on ? 'Stop measuring' : 'Start measuring';
     btn.style.background = on ? '#1F4E5F' : '#fff';
     btn.style.color = on ? '#fff' : 'inherit';
   }
+  // What is on this sheet, so Clear says what it is about to clear.
+  const cnt = document.getElementById('measureCount');
+  if(cnt){
+    const v = state.ui.view;
+    const n = ((state.measurements && state.measurements[v]) || []).length;
+    cnt.textContent = n ? `${n} on this sheet${state.ui.measureP1 ? ' · one half made' : ''}`
+                        : (state.ui.measureP1 ? 'One half made — click the second point' : '');
+  }
+}
+(function(){
+  const btn = document.getElementById('measureToggle');
+  const clr = document.getElementById('measureClear');
   if(btn) btn.addEventListener('click', ()=>{
     state.ui.measureMode = !state.ui.measureMode;
     state.ui.measureP1 = null;
-    syncBtn();
+    state.ui.measureHover = null;
+    syncMeasurePanel();
     renderActive();
   });
   if(clr) clr.addEventListener('click', ()=>{
     const v = state.ui.view;
-    if(state.measurements && state.measurements[v]) state.measurements[v] = [];
+    if(!state.measurements || !(state.measurements[v] || []).length){
+      state.ui.measureP1 = null; syncMeasurePanel(); renderActive(); return;
+    }
+    pushHistory();
+    state.measurements[v] = [];
     state.ui.measureP1 = null;
+    syncMeasurePanel();
     renderActive();
   });
-  syncBtn();
+  syncMeasurePanel();
 })();
 bindRange('benchThick', v=> { state.bench.thickness = v; }, 'benchThickVal');
 document.getElementById('benchThickReset').addEventListener('click', ()=>{
@@ -22288,10 +22451,14 @@ document.addEventListener('keydown', e=>{
     if(state.ui.placeMode){ setPlaceMode(null); renderView(); return; }
     if(state.ui.selectedFitId){ state.ui.selectedFitId = null; renderElecPanel(); renderView(); return; }
     if(state.ui.measureMode){
-      state.ui.measureMode = false; state.ui.measureP1 = null;
+      // A half-made measurement is what Escape is reaching for first — putting
+      // the tape away as well took two decisions on one key.
+      if(state.ui.measureP1){ state.ui.measureP1 = null; renderView(); return; }
+      state.ui.measureMode = false;
+      state.ui.measureHover = null;
       const b = document.getElementById('measureToggle');
       if(b){ b.textContent = 'Start measuring'; b.style.background = '#fff'; b.style.color = 'inherit'; }
-      renderView(); return;
+      syncMeasurePanel(); renderView(); return;
     }
     if(state.ui.selectedCabId){
       state.ui.selectedCabId = null;
