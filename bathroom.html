@@ -1711,7 +1711,8 @@ header .project-label .dot.dirty{background:#F7C04A}
               thing is rather than how big it is. Press <b>Add a callout</b> and click what it points at;
               the note lands clear of it and you type it there, <kbd>Enter</kbd> for a second line. Drag
               its head to move what it points at, or its note to move the note; click the note to edit it
-              again. It is drawn in the sheet's own dimension style — same ink, same weight, same text
+              again — clicking anywhere on it, note, head or leader, opens the note. It is drawn in the
+              sheet's own dimension style — same ink, same weight, same text
               size — because a note that does not match the dimensions beside it reads as something stuck
               on afterwards. The leader head (arrow, dot or nothing), the shoulder line under the note,
               the box behind it and the colour are all set in the panel, and the colour's <b>reset</b>
@@ -10694,32 +10695,52 @@ function calloutBox(co){
   return { x: co.tx - w/2, y: co.ty - h/2, w, h, lh, size, em };
 }
 const calloutHitRegistry = {};
+// Where the leader leaves the note and where its shoulder runs. Worked out in
+// one place so the drawing and the hit test cannot disagree about where the
+// line is — which they would the moment one of them was changed alone.
+function calloutLeader(co){
+  const cs = calloutStyle();
+  const b = calloutBox(co);
+  const pad = b.em * 0.42;
+  const shY = b.y + b.h + pad*1.6;
+  const shA = b.x - pad, shB = b.x + b.w + pad;
+  const anchorLeft = co.ax < co.tx;
+  return { b, pad, shY, shA, shB,
+           sx: anchorLeft ? shA : shB,
+           sy: cs.shoulder ? shY : co.ty,
+           shoulder: !!cs.shoulder };
+}
 function calloutGrabAt(view, x, y){
   const list = (state.callouts && state.callouts[view]) || [];
   for(let i = list.length - 1; i >= 0; i--){
     const co = list[i];
-    // The head first — it is the smaller target and sits over the drawing.
+    // The head first — it is the smallest target and sits over the drawing.
     if(Math.hypot(co.ax - x, co.ay - y) <= 2.6) return { i, part:'head' };
-    const b = calloutBox(co);
-    if(x >= b.x - 1 && x <= b.x + b.w + 1 && y >= b.y - 1 && y <= b.y + b.h + 1)
+    const L = calloutLeader(co), b = L.b;
+    // The note, with a margin. Set snug to the text it is a small thing to hit
+    // on a busy sheet, and it is the part you reach for most.
+    const m = Math.max(1.2, b.em * 0.8);
+    if(x >= b.x - m && x <= b.x + b.w + m && y >= b.y - m && y <= b.y + b.h + m)
       return { i, part:'text' };
+    // Then the leader and its shoulder. A callout is one object as far as
+    // anyone using it is concerned, so every line of it answers to the cursor.
+    if(distToSeg(x, y, { x:L.sx, y:L.sy }, { x:co.ax, y:co.ay }) <= 1.8)
+      return { i, part:'leader' };
+    if(L.shoulder && distToSeg(x, y, { x:L.shA, y:L.shY }, { x:L.shB, y:L.shY }) <= 1.8)
+      return { i, part:'leader' };
   }
   return null;
 }
 function drawOneCallout(d, co, live){
   const cs = calloutStyle();
   const col = cs.color, lw = calloutLW();
-  const b = calloutBox(co);
   const lines = calloutLines(co);
   // The note sits on the side away from what it points at, so the leader never
-  // crosses its own text.
-  const anchorLeft = co.ax < co.tx;
-  const pad = b.em * 0.42;
-  // The shoulder: the short horizontal under the note that a leader comes off.
-  const shY = b.y + b.h + pad*1.6;
-  const shA = b.x - pad, shB = b.x + b.w + pad;
-  const startX = anchorLeft ? shA : shB;
-  const startY = cs.shoulder ? shY : (co.ty);
+  // crosses its own text. The shoulder is the short horizontal under the note
+  // that the leader comes off.
+  const LD = calloutLeader(co);
+  const b = LD.b, pad = LD.pad, shY = LD.shY, shA = LD.shA, shB = LD.shB;
+  const startX = LD.sx, startY = LD.sy;
   if(live) d.dashed(true);
   if(cs.shoulder) d.line(shA, shY, shB, shY, col, lw);
   d.line(startX, startY, co.ax, co.ay, col, lw);
@@ -14579,7 +14600,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.30.0';
+const APP_VERSION = '1.30.1';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -15620,7 +15641,14 @@ function wireViewport(canvas){
         pushHistory(); D.moved = true;
       }
       if(D.part === 'head'){ co.ax = p.x - D.dx; co.ay = p.y - D.dy; }
-      else                 { co.tx = p.x - D.dx; co.ty = p.y - D.dy; }
+      else if(D.part === 'text'){ co.tx = p.x - D.dx; co.ty = p.y - D.dy; }
+      else {
+        // By the leader — the whole callout travels, keeping what it points at
+        // and where the note sits relative to one another.
+        const mx = p.x - D.ox, my = p.y - D.oy;
+        co.ax += mx; co.ay += my; co.tx += mx; co.ty += my;
+        D.ox = p.x; D.oy = p.y;
+      }
       renderActive();
       return;
     }
@@ -15635,8 +15663,12 @@ function wireViewport(canvas){
     }
     if(!state.ui.measureMode && !state.ui.drag.pending && state.ui.view !== 'cover'){
       const p = clientToPageMM(canvas, e.clientX, e.clientY);
-      if(calloutGrabAt(state.ui.view, p.x, p.y)){ canvas.style.cursor = 'grab'; }
-      else if(canvas.style.cursor === 'grab' && !findFittingAt(state.ui.view, p.x, p.y)) canvas.style.cursor = '';
+      const cg = calloutGrabAt(state.ui.view, p.x, p.y);
+      // A pointer over the note, because a click there is going to open it;
+      // a hand over the rest, because that is what it moves by.
+      if(cg){ canvas.style.cursor = (cg.part === 'text') ? 'pointer' : 'grab'; }
+      else if((canvas.style.cursor === 'grab' || canvas.style.cursor === 'pointer')
+              && !findFittingAt(state.ui.view, p.x, p.y)) canvas.style.cursor = '';
     }
     // A measurement is being dragged: an end on its own, or the whole of it.
     if(state.ui.mDrag){
@@ -15794,7 +15826,11 @@ function wireViewport(canvas){
       state.ui.coDrag = null;
       canvas.style.cursor = '';
       if(D.moved){ scheduleAutosave(); syncCalloutPanel(); renderActive(); }
-      else if(D.part === 'text'){
+      else {
+        // Clicked rather than dragged. Any part of it — note, head or leader —
+        // opens the note, because a callout is one object and clicking it means
+        // one thing. Editing it was the note alone, which is the smallest part
+        // of it and not what most clicks land on.
         const co = ((state.callouts || {})[D.view] || [])[D.i];
         if(co) showCalloutEditor(canvas, D.view, D.i, co.tx, co.ty);
       }
