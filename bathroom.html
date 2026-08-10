@@ -511,6 +511,54 @@ header .project-label .dot.dirty{background:#F7C04A}
       </div>
 
       <div class="group">
+        <h2>Callouts</h2>
+        <div class="ctrl" style="display:flex;gap:6px;flex-wrap:wrap">
+          <button id="calloutAdd" class="btn small" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Add a callout</button>
+          <button id="calloutClear" class="btn small" style="padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Clear</button>
+        </div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:4px">A note with a leader. Press <b>Add a callout</b> and click what it points at; type the note there. Drag its head to move what it points at, or its note to move the note. Click a note to edit it. Drawn in the sheet's own dimension style unless changed below.</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:-2px" id="calloutCount"></div>
+        <div class="row2">
+          <div class="ctrl"><label>Line weight <span class="val"><input class="valInp" id="calloutScaleVal" type="number" min="0.01" max="3" step="0.01" value="1"></span></label><input id="calloutScale" type="range" min="1" max="300" step="1" value="100"></div>
+          <div class="ctrl"><label>Text size <span class="val"><input class="valInp" id="calloutTextVal" type="number" min="3" max="14" step="0.2" value="6"></span></label><input id="calloutText" type="range" min="30" max="140" step="2" value="60"></div>
+        </div>
+        <div class="row2">
+          <div class="ctrl"><label>Leader head</label>
+            <select id="calloutHead">
+              <option value="arrow">Arrow</option>
+              <option value="dot">Dot</option>
+              <option value="none">Nothing</option>
+            </select>
+          </div>
+          <div class="ctrl"><label>Note box</label>
+            <select id="calloutBox">
+              <option value="none">No outline</option>
+              <option value="rect">Rectangle</option>
+              <option value="round">Rounded</option>
+              <option value="pill">Pill</option>
+              <option value="ellipse">Ellipse</option>
+            </select>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="ctrl"><label>Note background</label>
+            <select id="calloutFill">
+              <option value="clear">Clear — nothing behind</option>
+              <option value="white">Opaque white</option>
+              <option value="solid">Opaque colour</option>
+            </select>
+          </div>
+          <div class="ctrl"><label style="display:flex;align-items:center;gap:6px;margin-top:18px"><input type="checkbox" id="calloutShoulder" checked> Shoulder line</label></div>
+        </div>
+        <div class="customRow">
+          <input type="color" id="calloutColor" value="#3C3C3C">
+          <span class="lbl">Callout colour</span>
+          <button class="reset" id="calloutColorReset" title="Follow the sheet's dimension ink">reset</button>
+        </div>
+        <div class="cab-list" id="calloutList"></div>
+      </div>
+
+      <div class="group">
         <h2>Project</h2>
         <div class="ctrl"><label>Project name</label><input id="projName" type="text" value="Holland Park residence"></div>
         <div class="ctrl"><label>Job name</label><input id="jobName" type="text" value="Bathroom"></div>
@@ -1659,6 +1707,16 @@ header .project-label .dot.dirty{background:#F7C04A}
               to its sheet; the cross on the row deletes that one. Which is the way to pick three
               measurements out of a dozen spread over a plan and two elevations — <b>Clear</b> takes a
               whole sheet's worth, and hunting for the right figure to click is the slow way round.</p>
+            <p><span class="ui">Callouts</span> is a note with a leader — the way a drawing says what a
+              thing is rather than how big it is. Press <b>Add a callout</b> and click what it points at;
+              the note lands clear of it and you type it there, <kbd>Enter</kbd> for a second line. Drag
+              its head to move what it points at, or its note to move the note; click the note to edit it
+              again. It is drawn in the sheet's own dimension style — same ink, same weight, same text
+              size — because a note that does not match the dimensions beside it reads as something stuck
+              on afterwards. The leader head (arrow, dot or nothing), the shoulder line under the note,
+              the box behind it and the colour are all set in the panel, and the colour's <b>reset</b>
+              puts it back to following the sheet. Callouts are listed by sheet the same way
+              measurements are.</p>
           </section>
 
           <section id="mn-hardware">
@@ -3259,6 +3317,8 @@ const state = {
         selectedFitId:null, placeMode:null, fitDrag:null, cropDrag:null, opDrag:null,
         // The tape: the point taken so far, and the point under the cursor.
         measureMode:false, measureP1:null, measureHover:null, measureHi:null, mDrag:null,
+        // Callouts: a note with a leader, placed and then dragged.
+        coPlace:null, coDrag:null, calloutHi:null,
         drag:{ pending:null, active:false, hoverU:0 } },
   rooms: [],
   // The site measure plan this job was traced from, in the measure's own export
@@ -3266,6 +3326,10 @@ const state = {
   siteMeasure: null,
   // How the tape is drawn. One setting for the job.
   measureStyle: { color:'#E04B3B', scale:0.34, textSize:5.2, box:'rect', fill:'white' },
+  // Notes with a leader, by sheet, and how they are drawn. Empty entries follow
+  // the sheet's own dimension style.
+  callouts: {},
+  calloutStyle: { color:null, scale:1, textSize:null, box:'none', fill:'clear', head:'arrow', shoulder:true },
   // Per-panel heading look, keyed by the panel's name: { size, color }.
   panelStyle: {},
   // The finishes board on the cover: photographed materials and paint colours,
@@ -7299,14 +7363,32 @@ function toiletCentreU(cab){
     lo = (half + clear) - run.u0;
     hi = (run.len - half - clear) - run.u0;
     if(hi < lo){ const m = (lo + hi) / 2; lo = hi = m; }
-    // Hard into a corner, a pan is set out FROM the corner. Left standing in
+    // Coming up to a corner, a pan is set out FROM the corner. Left standing in
     // the middle of its module it kept half the module off the wall whatever
     // the module was — 270 on a 900, which is a lot of air for a fixture that
-    // wants to tuck in — and the only way past it was to know the shift figure
-    // was there. Against a wall it now sits at the side clearance, which is
-    // what it would be set out at on site.
-    if(run.u0 <= run.s0 + 5) base = lo;
-    else if(run.u0 + cab.W >= run.len - 5) base = hi;
+    // wants to tuck in.
+    //
+    // Switched on the moment the module touched, the pan leapt the whole way
+    // across in one frame while the module was being dragged smoothly. So it
+    // comes across on the approach instead, over exactly the distance it has to
+    // travel: the pan runs at twice the module for that last stretch and is
+    // sitting where it belongs by the time the module lands. Nothing jumps, and
+    // fine movement at the corner is still fine movement.
+    //
+    // Only where the module is wider than the clearance needs. Where it is
+    // narrower the clamp above already holds the pan off the wall, which reads
+    // as the pan stopping while the module keeps coming — right, and smooth.
+    const nearGap = run.u0 - run.s0;
+    const farGap  = run.len - (run.u0 + cab.W);
+    // How far the pan has to come across for a module standing hard against a
+    // wall — a fixed distance, not one that moves with the module.
+    const need = (half + clear) - cab.W/2;
+    const ease = (gap, sign)=>{
+      const R = Math.abs(need);
+      if(!(R > 0.5) || !(gap >= 0) || gap >= R) return 0;
+      return sign * need * (1 - gap/R);
+    };
+    if(need < 0) base += (nearGap <= farGap) ? ease(nearGap, 1) : ease(farGap, -1);
   }
   return Math.max(lo, Math.min(hi, base + shift));
 }
@@ -10145,6 +10227,12 @@ function findCabAt(view, xMM, yMM){
 // holding the drawing, and the two ticks square across the line it used to get
 // read as a bracket rather than as a measurement.
 const MEASURE_COL = '#E04B3B';
+// Text sizes on a sheet are in POINTS — the drawing surface takes them that way
+// so the canvas and the PDF agree. Everything else here is in page millimetres,
+// and boxes and line spacing sized as though a point were a millimetre came out
+// nearly three times too big. PT_MM and textWidthMM are already in the file for
+// exactly this; an em in page millimetres is the piece that was missing.
+function textEm(sizePt){ return (sizePt || 8) * PT_MM; }
 // How the tape is drawn. A markup is read alongside the drawing rather than as
 // part of it, so which red — or which anything — it is depends on what is under
 // it and who it is going to. It is one setting for the job: a sheet of
@@ -10262,8 +10350,8 @@ function drawOneMeasure(d, x1, y1, x2, y2, s, live){
     d.line(px - nx*2.4, py - ny*2.4, px + nx*2.4, py + ny*2.4, col, lw*0.6);
   });
   const label = String(Math.round(len / (s || 1)));
-  const size = ms.textSize;
-  const tw = label.length * size*0.58 + 3.4, th = size*1.2;
+  const size = ms.textSize, em = textEm(size);
+  const tw = textWidthMM(label, size) + em*0.9, th = em*1.5;
   // Keep the figure the right way up whichever way the tape runs.
   let ang = Math.atan2(dy, dx), flip = false;
   if(ang > Math.PI/2 + 0.001 || ang < -Math.PI/2 - 0.001){ ang += Math.PI; flip = true; }
@@ -10306,7 +10394,7 @@ function drawOneMeasure(d, x1, y1, x2, y2, s, live){
     }
     d.polygon(shape, bg, outlined ? col : null, lw*0.65);
   }
-  d.text(cx - sA*(size*0.36), cy + cA*(size*0.36), label,
+  d.text(cx - sA*(em*0.36), cy + cA*(em*0.36), label,
     { align:'center', baseline:'alphabetic', size,
       color: (ms.fill === 'solid') ? '#FFFFFF' : col, angle:tAng });
   const xs = quad.map(p=>p[0]), ys = quad.map(p=>p[1]);
@@ -10392,6 +10480,184 @@ function showMeasureMenu(canvas, view, index, anchorXmm, anchorYmm){
     document.addEventListener('mousedown', away, true);
     document.addEventListener('keydown', esc, true);
   }, 0);
+}
+
+// ============================================================
+// CALLOUTS — a note with a leader, on any sheet
+// ============================================================
+// A drawing says what things are as well as how big they are, and everything
+// this app wrote on a sheet was written by the app. There was no way to point
+// at something and say what it is.
+//
+// A callout is an anchor, a note, and a leader between them. It is drawn in the
+// sheet's own dimension style by default — same ink, same weight, same text
+// size — because a note that does not match the dimensions beside it reads as
+// something stuck on afterwards. Every part of that is then editable.
+function calloutStyle(){
+  const ds = state.drawStyle || {};
+  const c = state.calloutStyle || {};
+  return {
+    color:    c.color || ds.dimColor || '#3C3C3C',
+    scale:    (c.scale > 0) ? c.scale : 1,
+    textSize: (c.textSize > 0) ? c.textSize : (ds.dimTextSize || 6),
+    box:      c.box  || 'none',
+    fill:     c.fill || 'clear',
+    head:     c.head || 'arrow',
+    shoulder: c.shoulder !== false,
+  };
+}
+function calloutLW(){
+  const ds = state.drawStyle || {};
+  return 0.4 * ((ds.dimScale > 0) ? ds.dimScale : 1) * calloutStyle().scale;
+}
+function calloutsOf(view){
+  if(!state.callouts) state.callouts = {};
+  if(!Array.isArray(state.callouts[view])) state.callouts[view] = [];
+  return state.callouts[view];
+}
+function calloutLines(co){
+  const t = String((co && co.text) || '');
+  return t.length ? t.split('\n') : [' '];
+}
+// Where the note block sits, in page-mm. tx,ty is its centre.
+function calloutBox(co){
+  const cs = calloutStyle();
+  const lines = calloutLines(co);
+  const size = cs.textSize, em = textEm(size), lh = em * 1.28;
+  const w = Math.max(em * 2, ...lines.map(s => textWidthMM(s, size))) + em * 0.5;
+  const h = lines.length * lh;
+  return { x: co.tx - w/2, y: co.ty - h/2, w, h, lh, size, em };
+}
+const calloutHitRegistry = {};
+function calloutGrabAt(view, x, y){
+  const list = (state.callouts && state.callouts[view]) || [];
+  for(let i = list.length - 1; i >= 0; i--){
+    const co = list[i];
+    // The head first — it is the smaller target and sits over the drawing.
+    if(Math.hypot(co.ax - x, co.ay - y) <= 2.6) return { i, part:'head' };
+    const b = calloutBox(co);
+    if(x >= b.x - 1 && x <= b.x + b.w + 1 && y >= b.y - 1 && y <= b.y + b.h + 1)
+      return { i, part:'text' };
+  }
+  return null;
+}
+function drawOneCallout(d, co, live){
+  const cs = calloutStyle();
+  const col = cs.color, lw = calloutLW();
+  const b = calloutBox(co);
+  const lines = calloutLines(co);
+  // The note sits on the side away from what it points at, so the leader never
+  // crosses its own text.
+  const anchorLeft = co.ax < co.tx;
+  const pad = b.em * 0.42;
+  // The shoulder: the short horizontal under the note that a leader comes off.
+  const shY = b.y + b.h + pad*1.6;
+  const shA = b.x - pad, shB = b.x + b.w + pad;
+  const startX = anchorLeft ? shA : shB;
+  const startY = cs.shoulder ? shY : (co.ty);
+  if(live) d.dashed(true);
+  if(cs.shoulder) d.line(shA, shY, shB, shY, col, lw);
+  d.line(startX, startY, co.ax, co.ay, col, lw);
+  if(live) d.dashed(false);
+  // The head. An arrow is the drawing convention; a dot is for pointing at a
+  // surface rather than an edge, and nothing is for a leader that lands on a
+  // dimension of its own.
+  const dx = co.ax - startX, dy = co.ay - startY;
+  const L = Math.hypot(dx, dy) || 1;
+  const ux = dx/L, uy = dy/L, nx = -uy, ny = ux;
+  if(cs.head === 'arrow'){
+    const a = b.em * 1.35, wdt = a * 0.34;
+    d.polygon([[co.ax, co.ay],
+               [co.ax - ux*a - nx*wdt, co.ay - uy*a - ny*wdt],
+               [co.ax - ux*a + nx*wdt, co.ay - uy*a + ny*wdt]], col, col, lw*0.5);
+  } else if(cs.head === 'dot'){
+    const r = b.em * 0.42;
+    const pts = [];
+    for(let k = 0; k < 14; k++){ const t = k/14*Math.PI*2; pts.push([co.ax + r*Math.cos(t), co.ay + r*Math.sin(t)]); }
+    d.polygon(pts, col, col, lw*0.5);
+  }
+  // The box behind the note, same choices as the tape's.
+  const bg = (cs.fill === 'solid') ? col : (cs.fill === 'clear' ? null : '#FFFFFF');
+  const outlined = (cs.box !== 'none') && !live;
+  if(bg || outlined){
+    const q = [[b.x - pad*0.6, b.y - pad*0.6], [b.x + b.w + pad*0.6, b.y - pad*0.6],
+               [b.x + b.w + pad*0.6, b.y + b.h + pad*0.6], [b.x - pad*0.6, b.y + b.h + pad*0.6]];
+    let shape = q;
+    const th = b.h + pad*1.2, tw = b.w + pad*1.2;
+    if(cs.box === 'round')     shape = roundPoly(q, Math.min(th*0.3, 2.0), 4);
+    else if(cs.box === 'pill') shape = roundPoly(q, th/2 - 0.05, 7);
+    else if(cs.box === 'ellipse'){
+      shape = [];
+      const cx = b.x + b.w/2, cy = b.y + b.h/2, rx = tw/2*1.16, ry = th/2*1.2;
+      for(let k = 0; k < 30; k++){ const t = k/30*Math.PI*2; shape.push([cx + rx*Math.cos(t), cy + ry*Math.sin(t)]); }
+    }
+    d.polygon(shape, bg, outlined ? col : null, lw);
+  }
+  const textCol = (cs.fill === 'solid') ? '#FFFFFF' : col;
+  lines.forEach((s, k)=>{
+    d.text(b.x + b.w/2, b.y + (k+1)*b.lh - b.lh*0.30, s,
+      { align:'center', baseline:'alphabetic', size:b.size, color:textCol });
+  });
+  return [b.x - pad, b.y - pad, b.x + b.w + pad, b.y + b.h + pad];
+}
+function drawCallouts(d, view){
+  calloutHitRegistry[view] = [];
+  const list = (state.callouts && state.callouts[view]) || [];
+  const hi = state.ui.calloutHi;
+  const cs = calloutStyle();
+  list.forEach((co, i)=>{
+    if(hi && hi.view === view && hi.i === i){
+      const b = calloutBox(co);
+      d.rect(b.x - 1.6, b.y - 1.6, b.w + 3.2, b.h + 3.2, null, shade(cs.color, 0.55), calloutLW()*4);
+    }
+    const bb = drawOneCallout(d, co, false);
+    if(bb) calloutHitRegistry[view].push({ i, b:bb });
+  });
+  // Where the next one will land.
+  if(state.ui.coPlace && state.ui.coPlace.view === view && state.ui.coPlace.at){
+    const p = state.ui.coPlace.at;
+    d.line(p.x - 3.4, p.y, p.x + 3.4, p.y, cs.color, calloutLW()*1.6);
+    d.line(p.x, p.y - 3.4, p.x, p.y + 3.4, cs.color, calloutLW()*1.6);
+  }
+}
+// The note itself, typed on the sheet where it sits.
+function showCalloutEditor(canvas, view, index, anchorXmm, anchorYmm){
+  document.querySelectorAll('.callout-edit').forEach(n => n.remove());
+  const co = (state.callouts && state.callouts[view] || [])[index];
+  if(!co) return;
+  const rect = canvas.getBoundingClientRect();
+  const pxPerMM = rect.width / PAGE_W;
+  const vp = getViewport(state.ui.view);
+  const xv = (anchorXmm - PAGE_W/2) * vp.zoom + PAGE_W/2 + vp.panX;
+  const yv = (anchorYmm - PAGE_H/2) * vp.zoom + PAGE_H/2 + vp.panY;
+  const ta = document.createElement('textarea');
+  ta.className = 'callout-edit';
+  ta.value = co.text || '';
+  ta.rows = 2;
+  ta.placeholder = 'note — Enter for a second line';
+  Object.assign(ta.style, {
+    position:'fixed', left:(rect.left + xv*pxPerMM - 90)+'px', top:(rect.top + yv*pxPerMM - 18)+'px',
+    width:'180px', padding:'4px 6px', border:'1px solid ' + calloutStyle().color, borderRadius:'4px',
+    fontSize:'12px', fontFamily:'inherit', background:'#fff', zIndex:'500', resize:'none',
+    boxShadow:'0 2px 10px rgba(0,0,0,0.18)',
+  });
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  let done = false;
+  const commit = ()=>{
+    if(done) return; done = true;
+    const v = ta.value.replace(/\s+$/,'');
+    ta.remove();
+    if(v !== (co.text || '')){ pushHistory(); co.text = v; scheduleAutosave(); }
+    syncCalloutPanel(); renderActive();
+  };
+  const cancel = ()=>{ if(done) return; done = true; ta.remove(); renderActive(); };
+  ta.addEventListener('blur', commit);
+  ta.addEventListener('keydown', e=>{
+    e.stopPropagation();
+    if(e.key === 'Escape'){ e.preventDefault(); cancel(); }
+    else if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); commit(); }
+  });
 }
 // Draws one adjoining room on the kitchen plan. kox/koy are the kitchen's inner
 // top-left in page-mm; the room is positioned from there.
@@ -11616,6 +11882,7 @@ function drawPlan(d, area, view, opts){
     });
   }
   if(!compact) drawMeasurements(d, V);
+  if(!compact) drawCallouts(d, V);
   return { ox, oy, s };
 }
 
@@ -11857,6 +12124,7 @@ function drawIslandElevation(d, area){
     d.text(area.x + area.w/2, area.y + 40, 'No cupboards yet — add from sidebar "Freestanding vanity → Island cabinets"', { align:'center', size:7, color:COL.accent, italic:true });
   }
   drawMeasurements(d, 'elev-island');
+  drawCallouts(d, 'elev-island');
 }
 
 // opts.view / opts.room let the same renderer produce the pantry elevations,
@@ -13300,6 +13568,7 @@ function drawElevation(d, area, wallId, opts){
     d.line(xL, oy, xL, oy + Hm*s, COL.selected, LW.medium);
   }
   drawMeasurements(d, view);
+  drawCallouts(d, view);
 }
 
 
@@ -14960,6 +15229,39 @@ function wireViewport(canvas){
       return;
     }
     const _view = state.ui.view;
+    // CALLOUTS come before everything. A note is written on top of the drawing,
+    // so it is what you get hold of where it lies over something else — which
+    // is most places, since it is put where there is room for it.
+    if(_view !== 'cover'){
+      const cp = clientToPageMM(canvas, e.clientX, e.clientY);
+      if(state.ui.coPlace){
+        e.preventDefault();
+        pushHistory();
+        const arr = calloutsOf(_view);
+        // The note lands clear of what it points at, up and to the right, which
+        // is where there is usually room. Both ends are dragged from there.
+        const co = { id:'co' + Date.now().toString(36) + Math.floor(Math.random()*1296).toString(36),
+                     ax:cp.x, ay:cp.y, tx:cp.x + 26, ty:cp.y - 16, text:'' };
+        arr.push(co);
+        state.ui.coPlace = null;
+        syncCalloutPanel(); renderActive();
+        setTimeout(()=> showCalloutEditor(canvas, _view, arr.length - 1, co.tx, co.ty), 30);
+        return;
+      }
+      flushRender();
+      const cg = calloutGrabAt(_view, cp.x, cp.y);
+      state.ui._coGesture = !!cg;
+      if(cg){
+        e.preventDefault();
+        const co = state.callouts[_view][cg.i];
+        state.ui.coDrag = { view:_view, i:cg.i, part:cg.part, moved:false,
+          ox:cp.x, oy:cp.y,
+          dx: cp.x - (cg.part === 'head' ? co.ax : co.tx),
+          dy: cp.y - (cg.part === 'head' ? co.ay : co.ty) };
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
+    }
     // FITTINGS come first: they sit on top of the joinery, and a GPO drawn over
     // a cabinet front must be grabbable rather than starting a cabinet drag.
     if(viewTakesFittings(_view)){
@@ -15130,6 +15432,35 @@ function wireViewport(canvas){
       renderView();
       return;
     }
+    // A callout being dragged — its head, or its note.
+    if(state.ui.coDrag){
+      const D = state.ui.coDrag;
+      const co = ((state.callouts || {})[D.view] || [])[D.i];
+      if(!co){ state.ui.coDrag = null; return; }
+      const p = clientToPageMM(canvas, e.clientX, e.clientY);
+      if(!D.moved){
+        if(Math.hypot(p.x - D.ox, p.y - D.oy) < 1.2) return;   // a click, not a drag
+        pushHistory(); D.moved = true;
+      }
+      if(D.part === 'head'){ co.ax = p.x - D.dx; co.ay = p.y - D.dy; }
+      else                 { co.tx = p.x - D.dx; co.ty = p.y - D.dy; }
+      renderActive();
+      return;
+    }
+    // Where the next callout would land, and what the cursor would take hold of.
+    if(state.ui.coPlace){
+      const p = clientToPageMM(canvas, e.clientX, e.clientY);
+      state.ui.coPlace.at = { x:p.x, y:p.y };
+      state.ui.coPlace.view = state.ui.view;
+      canvas.style.cursor = 'crosshair';
+      renderActive();
+      return;
+    }
+    if(!state.ui.measureMode && !state.ui.drag.pending && state.ui.view !== 'cover'){
+      const p = clientToPageMM(canvas, e.clientX, e.clientY);
+      if(calloutGrabAt(state.ui.view, p.x, p.y)){ canvas.style.cursor = 'grab'; }
+      else if(canvas.style.cursor === 'grab' && !findFittingAt(state.ui.view, p.x, p.y)) canvas.style.cursor = '';
+    }
     // A measurement is being dragged: an end on its own, or the whole of it.
     if(state.ui.mDrag){
       const D = state.ui.mDrag;
@@ -15279,6 +15610,20 @@ function wireViewport(canvas){
       e.preventDefault();
       return;
     }
+    // A callout let go. Without having moved it was a click on the note, which
+    // is how a note is edited — you point at what it says and type.
+    if(state.ui.coDrag){
+      const D = state.ui.coDrag;
+      state.ui.coDrag = null;
+      canvas.style.cursor = '';
+      if(D.moved){ scheduleAutosave(); syncCalloutPanel(); renderActive(); }
+      else if(D.part === 'text'){
+        const co = ((state.callouts || {})[D.view] || [])[D.i];
+        if(co) showCalloutEditor(canvas, D.view, D.i, co.tx, co.ty);
+      }
+      e.preventDefault();
+      return;
+    }
     // A measurement finishes where it was let go. Let go without having moved,
     // and it was a click on the figure after all — which asks.
     if(state.ui.mDrag){
@@ -15406,6 +15751,10 @@ function wireViewport(canvas){
       syncMeasurePanel(); renderActive();
       return;
     }
+    // A callout was taken hold of on mousedown — dragged, or clicked to edit
+    // its note. Either way the same gesture must not also select the joinery it
+    // happens to be lying over.
+    if(state.ui._coGesture){ state.ui._coGesture = false; return; }
     // A fitting under the cursor was already handled on mousedown — don't let
     // the same gesture also select the cabinet behind it.
     if(viewTakesFittings(state.ui.view)){
@@ -17519,9 +17868,11 @@ function showView(v){
   if(!activeSheets().some(s => s.view === v)) v = 'plan';
   // A half-made measurement belongs to the sheet it was started on, and the
   // tape's cursor end is nowhere until the cursor is back over a sheet.
-  if(state.ui.view !== v) state.ui.measureHover = null;
+  if(state.ui.view !== v){ state.ui.measureHover = null; state.ui.calloutHi = null;
+                           if(state.ui.coPlace) state.ui.coPlace = { view:v, at:null }; }
   state.ui.view = v;
   try { syncMeasurePanel(); } catch(_){}
+  try { syncCalloutPanel(); } catch(_){}
   if(syncActiveWallToView(v)){
     try { syncSidebarFromState(); } catch(_){}
     try { renderCabinetList(); } catch(_){}
@@ -21627,6 +21978,128 @@ function setMeasureStyle(patch){
   renderActive();
 }
 bindScaleSlider('measureScale', 'measureScaleVal', v => setMeasureStyle({ scale: v }));
+
+// ---- Callouts -------------------------------------------------------------
+function setCalloutStyle(patch){
+  state.calloutStyle = { ...(state.calloutStyle || {}), ...patch };
+  syncCalloutPanel();
+  renderActive();
+}
+function syncCalloutPanel(){
+  const cs = calloutStyle();
+  const raw = state.calloutStyle || {};
+  const put = (id, v)=>{ const n = document.getElementById(id); if(n && n.value !== String(v)) n.value = String(v); };
+  put('calloutColor', cs.color);
+  put('calloutScaleVal', +cs.scale.toFixed(2));
+  put('calloutScale', Math.round(cs.scale * 100));
+  put('calloutTextVal', +cs.textSize.toFixed(1));
+  put('calloutText', Math.round(cs.textSize * 10));
+  put('calloutHead', cs.head);
+  put('calloutBox', cs.box);
+  put('calloutFill', cs.fill);
+  const sh = document.getElementById('calloutShoulder');
+  if(sh) sh.checked = !!cs.shoulder;
+  const btn = document.getElementById('calloutAdd');
+  if(btn){
+    const on = !!state.ui.coPlace;
+    btn.textContent = on ? 'Click what it points at' : 'Add a callout';
+    btn.style.background = on ? '#1F4E5F' : '#fff';
+    btn.style.color = on ? '#fff' : 'inherit';
+  }
+  const cnt = document.getElementById('calloutCount');
+  if(cnt){
+    const n = ((state.callouts && state.callouts[state.ui.view]) || []).length;
+    cnt.textContent = n ? `${n} on this sheet` : '';
+    if(!raw.color) cnt.textContent += (cnt.textContent ? ' · ' : '') + 'following the sheet’s dimension ink';
+  }
+  try { renderCalloutList(); } catch(_){}
+}
+// Every callout in the job, under the sheet it is on — the same list the
+// measurements get, and for the same reason.
+function renderCalloutList(){
+  const host = document.getElementById('calloutList');
+  if(!host) return;
+  host.innerHTML = '';
+  const all = state.callouts || {};
+  const sheets = activeSheets().filter(s => ((all[s.view] || []).length > 0));
+  if(!sheets.length){
+    host.appendChild(el('div', { style:'font-size:11px;color:var(--muted);margin-top:6px' }, 'No callouts yet.'));
+    return;
+  }
+  const hover = (view, i)=>{
+    state.ui.calloutHi = (i == null) ? null : { view, i };
+    if(state.ui.view === view) renderActive();
+  };
+  sheets.forEach(sh=>{
+    const list = all[sh.view];
+    host.appendChild(el('div', { style:'font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;'
+      + 'color:var(--muted);margin:8px 0 1px' }, `${sh.indexTitle} · ${list.length}`));
+    list.forEach((co, i)=>{
+      const label = String(co.text || '').split('\n').join(' / ').trim();
+      const row = el('div', { class:'m-row', title:'Click to go to it on the sheet' },
+        el('span', { class:'sw-dot', style:'background:' + calloutStyle().color }),
+        el('span', {}, label ? (label.length > 26 ? label.slice(0, 25) + '…' : label) : '(empty note)'),
+        (function(){
+          const b = el('button', { class:'ro', title:'Delete this callout' }, '✕');
+          b.addEventListener('click', ev=>{
+            ev.stopPropagation();
+            pushHistory();
+            (all[sh.view] || []).splice(i, 1);
+            state.ui.calloutHi = null;
+            syncCalloutPanel(); renderActive();
+          });
+          return b;
+        })());
+      row.addEventListener('mouseenter', ()=> hover(sh.view, i));
+      row.addEventListener('mouseleave', ()=> hover(sh.view, null));
+      row.addEventListener('click', ()=>{
+        if(state.ui.view !== sh.view) showView(sh.view);
+        hover(sh.view, i);
+      });
+      host.appendChild(row);
+    });
+  });
+}
+(function(){
+  const add = document.getElementById('calloutAdd');
+  if(add) add.addEventListener('click', ()=>{
+    state.ui.coPlace = state.ui.coPlace ? null : { view:state.ui.view, at:null };
+    // Two annotation tools armed at once is one too many.
+    if(state.ui.coPlace && state.ui.measureMode){
+      state.ui.measureMode = false; state.ui.measureP1 = null; state.ui.measureHover = null;
+      syncMeasurePanel();
+    }
+    syncCalloutPanel(); renderActive();
+  });
+  const clr = document.getElementById('calloutClear');
+  if(clr) clr.addEventListener('click', ()=>{
+    const v = state.ui.view;
+    if(!state.callouts || !(state.callouts[v] || []).length){ syncCalloutPanel(); return; }
+    pushHistory();
+    state.callouts[v] = [];
+    syncCalloutPanel(); renderActive();
+  });
+  const col = document.getElementById('calloutColor');
+  if(col) col.addEventListener('input', ()=> setCalloutStyle({ color: col.value }));
+  const colR = document.getElementById('calloutColorReset');
+  if(colR) colR.addEventListener('click', ()=> setCalloutStyle({ color: null }));
+  ['calloutHead:head', 'calloutBox:box', 'calloutFill:fill'].forEach(pair=>{
+    const [id, key] = pair.split(':');
+    const n = document.getElementById(id);
+    if(n) n.addEventListener('change', ()=> setCalloutStyle({ [key]: n.value }));
+  });
+  const sh = document.getElementById('calloutShoulder');
+  if(sh) sh.addEventListener('change', ()=> setCalloutStyle({ shoulder: !!sh.checked }));
+  const tSlider = document.getElementById('calloutText');
+  const tNum    = document.getElementById('calloutTextVal');
+  if(tSlider) tSlider.addEventListener('input', ()=> setCalloutStyle({ textSize: parseInt(tSlider.value,10)/10 }));
+  if(tNum) tNum.addEventListener('change', ()=>{
+    const v = parseFloat(tNum.value);
+    setCalloutStyle({ textSize: isNaN(v) ? null : Math.max(3, Math.min(14, v)) });
+  });
+  syncCalloutPanel();
+})();
+bindScaleSlider('calloutScale', 'calloutScaleVal', v => setCalloutStyle({ scale: v }));
 bindRange('benchThick', v=> { state.bench.thickness = v; }, 'benchThickVal');
 document.getElementById('benchThickReset').addEventListener('click', ()=>{
   state.bench.thickness = null; syncBenchThickFields(); renderActive();
@@ -21862,6 +22335,8 @@ function snapshotDesign(){
     // were being silently discarded on every save/reload.
     measurements: state.measurements || {},
     measureStyle: state.measureStyle || { ...MEASURE_STYLE },
+    callouts: state.callouts || {},
+    calloutStyle: state.calloutStyle || {},
     // The site measure plan the geometry was traced from. Without it the job
     // opens with walls but nothing to re-trace or correct them against.
     siteMeasure: state.siteMeasure || null,
@@ -21930,6 +22405,9 @@ function loadDesign(snap){
   // A job saved before the tape had any settings gets the ones it was drawn
   // with, so it comes back looking the way it went in.
   state.measureStyle = { ...MEASURE_STYLE, ...(snap.measureStyle || {}) };
+  state.callouts     = snap.callouts ? deepClone(snap.callouts) : {};
+  state.calloutStyle = { color:null, scale:1, textSize:null, box:'none', fill:'clear',
+                         head:'arrow', shoulder:true, ...(snap.calloutStyle || {}) };
   state.siteMeasure  = snap.siteMeasure ? deepClone(snap.siteMeasure) : null;
   state.panelStyle   = snap.panelStyle ? deepClone(snap.panelStyle) : {};
   state.samples      = Array.isArray(snap.samples) ? deepClone(snap.samples) : [];
@@ -22826,6 +23304,7 @@ document.addEventListener('keydown', e=>{
 
   if(e.key === 'Escape'){
     if(!document.getElementById('libraryModal').classList.contains('hidden')){ closeLibrary(); return; }
+    if(state.ui.coPlace){ state.ui.coPlace = null; syncCalloutPanel(); renderView(); return; }
     if(state.ui.placeMode){ setPlaceMode(null); renderView(); return; }
     if(state.ui.selectedFitId){ state.ui.selectedFitId = null; renderElecPanel(); renderView(); return; }
     if(state.ui.measureMode){
@@ -22875,6 +23354,7 @@ document.addEventListener('keydown', e=>{
 // Sync sidebar input values from loaded state (called after loadDesign)
 function syncSidebarFromState(){
   try { syncMeasurePanel(); } catch(_){}
+  try { syncCalloutPanel(); } catch(_){}
   const setVal = (id, v)=>{
     const el = document.getElementById(id); if(!el) return;
     if(el.tagName === 'INPUT' || el.tagName === 'SELECT') el.value = v;
