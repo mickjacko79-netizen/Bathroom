@@ -3198,7 +3198,8 @@ const state = {
   ],
   ui: { view:'cover', activeRoom:'kitchen', roomEdit:null, activeWall:'A', selectedCabId:null,
         // Fittings are dropped by clicking and moved by dragging.
-        selectedFitId:null, placeMode:null, fitDrag:null, cropDrag:null,
+        // Openings are dragged too — doors and windows move along their wall.
+        selectedFitId:null, placeMode:null, fitDrag:null, cropDrag:null, opDrag:null,
         drag:{ pending:null, active:false, hoverU:0 } },
   rooms: [],
   // The site measure plan this job was traced from, in the measure's own export
@@ -9547,6 +9548,18 @@ function withPlanVOff(off, fn){
 // the duration and put straight back. Everything that paints a tile reads
 // state.splashback, so lending it the low wall's settings is what lets the same
 // drawing code do both without either knowing about the other.
+// What bond to lend along with a borrowed tile.
+//
+// The size comes with the tile — a different tile is a different module, so the
+// typed-in width and height are dropped. The bond does not: it is a laying
+// decision about the job, not a property of the tile, and the Bond control in
+// Wall tiling is where it is made. Nulling it here meant that control did
+// nothing at all on any wall, blade or low wall carrying its own finish — which
+// after the wizard has set a finish per wall is every wall in the room.
+function lentBond(rec, jobBond){
+  const b = rec && rec.bond;
+  return (b === undefined || b === null) ? jobBond : b;
+}
 // One wall tiled differently from the rest. Same trick as the low wall: the
 // tiling code reads state.splashback, so this wall's settings are lent to it
 // for the length of the draw and put straight back.
@@ -9559,7 +9572,8 @@ function withWallFinish(wall, fn){
   keys.forEach(k => saved[k] = sp[k]);
   const t = WALL_TILE_TYPES[W.tile];
   sp.type = 'tile'; sp.tile = W.tile;
-  sp.tileW = null; sp.tileH = null; sp.bond = null;
+  sp.tileW = null; sp.tileH = null;
+  sp.bond = lentBond(W, saved.bond);
   sp.colorOverride      = W.color || (t ? t.color : null);
   sp.jointColorOverride = W.grout || (t ? t.line  : null);
   try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
@@ -9574,7 +9588,8 @@ function withBladeFinish(cab, fn){
   keys.forEach(k => saved[k] = sp[k]);
   const t = WALL_TILE_TYPES[c.tile];
   sp.type = 'tile'; sp.tile = c.tile;
-  sp.tileW = null; sp.tileH = null; sp.bond = null;
+  sp.tileW = null; sp.tileH = null;
+  sp.bond = lentBond(c, saved.bond);
   sp.colorOverride      = c.color || (t ? t.color : null);
   sp.jointColorOverride = c.grout || (t ? t.line  : null);
   try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
@@ -9593,7 +9608,8 @@ function withLowWallFinish(L, fn){
   keys.forEach(k => saved[k] = sp[k]);
   const t = WALL_TILE_TYPES[L.tile];
   sp.type = 'tile'; sp.tile = L.tile;
-  sp.tileW = null; sp.tileH = null; sp.bond = null;
+  sp.tileW = null; sp.tileH = null;
+  sp.bond = lentBond(L, saved.bond);
   sp.colorOverride      = L.color || (t ? t.color : null);
   sp.jointColorOverride = L.grout || (t ? t.line  : null);
   try { return fn(); } finally { keys.forEach(k => sp[k] = saved[k]); }
@@ -14154,6 +14170,41 @@ function viewUAt(view, wallId, px, py){
   }
   return computeWallU(wallId, px, py);
 }
+// ---- Dragging an opening --------------------------------------------------
+// A door or a window is moved by dragging it, on the plan or on the elevation,
+// the same as everything else on the sheet. It is not in a row, so none of the
+// joinery's machinery applies: an opening is a hole in a wall at a position, and
+// moving it is moving that one figure.
+//
+// Where along the wall the cursor is. Unlike computeWallU, which only knows A to
+// D of the main room, this projects onto the wall's own segment — so it works on
+// a traced plan with walls at any angle, and in a second room.
+function openingUAt(view, wallId, roomObj, px, py){
+  if(view && view.startsWith('elev-')){
+    const o = state._viewOrigin ? state._viewOrigin[view] : null;
+    return o ? (px - o.ox) / o.s : 0;
+  }
+  const lp = state.lastPlan;
+  const seg = wallSegOf(wallId, roomObj || null);
+  if(!lp || !seg) return 0;
+  const X = (px - lp.ox) / lp.s - (roomObj ? roomObj.x : 0);
+  const Y = (py - lp.oy) / lp.s - (roomObj ? roomObj.y : 0);
+  return (X - seg.p1.x) * seg.ux + (Y - seg.p1.y) * seg.uy;
+}
+// Put an opening at a place on its wall. Stepped to 10 like the figure in the
+// panel, held on the wall, and pulled hard into either corner when it comes
+// close — a corner is where an opening is most often actually set out from, and
+// landing 20 short of one is never what was meant.
+function moveOpeningToU(op, wallId, roomObj, u){
+  const seg = wallSegOf(wallId, roomObj || null);
+  const len = seg ? seg.len : wallLength(wallId);
+  const max = Math.max(0, len - op.width);
+  let v = Math.round(u / 10) * 10;
+  if(Math.abs(v) <= 25) v = 0;
+  else if(Math.abs(v - max) <= 25) v = max;
+  op.position = Math.max(0, Math.min(max, v));
+  return op.position;
+}
 // The row a drag is working on, where it starts, and where it has to stop.
 function dragRowOf(pending){
   if(!pending) return null;
@@ -14540,6 +14591,12 @@ window.addEventListener('mouseup', e => {
     try { syncLowWallPanel(); } catch(_){}
     renderActive();
   }
+  // An opening let go off the edge of the sheet stays where it was dragged to.
+  if(state.ui.opDrag){
+    const moved = state.ui.opDrag.moved;
+    state.ui.opDrag = null;
+    if(moved){ scheduleAutosave(); renderActive(); }
+  }
   if(_commitCabDrag()){
     renderCabinetList(); renderActive();
   }
@@ -14645,6 +14702,22 @@ function wireViewport(canvas){
       const hit = gh ? (findCabAt(_view, p.x, p.y) || { cabId: gh.cabId, wallId: state.ui.activeWall })
                      : findCabAt(_view, p.x, p.y);
       if(gh && hit) hit.cabId = gh.cabId;
+      // An opening, picked up where it is drawn. It comes after the joinery on
+      // purpose — openings sit behind it, so a cabinet standing in front of one
+      // still wins the grab, which is the same order the click already used.
+      if(!hit){
+        const ohit = findOpeningAt(_view, p.x, p.y);
+        const oh = openingFromHit(ohit);
+        if(oh){
+          e.preventDefault();
+          state.ui._opGesture = true;
+          state.ui.opDrag = { opId: oh.op.id, wallId: oh.wall.id, roomId: (ohit.roomId || null),
+            view: _view, moved: false,
+            dU: openingUAt(_view, oh.wall.id, oh.room || null, p.x, p.y) - oh.op.position };
+          canvas.style.cursor = 'grabbing';
+          return;
+        }
+      }
       // Where the last drag finished is nothing to do with this one. Left set,
       // it puts the indicator line at the previous item's resting place until
       // the first mousemove works out the real one.
@@ -14740,6 +14813,21 @@ function wireViewport(canvas){
       }
       return;
     }
+    // An opening is being dragged along its wall.
+    if(state.ui.opDrag){
+      const D = state.ui.opDrag;
+      const found = openingFromHit(D);
+      if(found){
+        const p = clientToPageMM(canvas, e.clientX, e.clientY);
+        // Take the drawing down before the first frame moves anything, so the
+        // whole drag is one step back.
+        if(!D.moved){ pushHistory(); D.moved = true; }
+        moveOpeningToU(found.op, D.wallId, found.room || null,
+          openingUAt(D.view, D.wallId, found.room || null, p.x, p.y) - D.dU);
+        renderActive();
+      }
+      return;
+    }
     // A break line is being dragged — narrow or widen the elevation.
     if(state.ui.cropDrag){
       const cd = state.ui.cropDrag;
@@ -14772,10 +14860,13 @@ function wireViewport(canvas){
       dragFittingTo(state.ui.view, p.x, p.y);
       return;
     }
-    // Hover feedback so it's obvious a fitting can be picked up.
+    // Hover feedback so it's obvious a fitting — or an opening — can be picked
+    // up. An opening only says so where nothing of the joinery is over it,
+    // which is exactly where it can be grabbed.
     if(!state.ui.placeMode && viewTakesFittings(state.ui.view)){
       const p = clientToPageMM(canvas, e.clientX, e.clientY);
-      const over = findFittingAt(state.ui.view, p.x, p.y);
+      const over = findFittingAt(state.ui.view, p.x, p.y)
+        || (!findCabAt(state.ui.view, p.x, p.y) && findOpeningAt(state.ui.view, p.x, p.y));
       if(over && !state.ui.drag.pending){ canvas.style.cursor = 'grab'; }
       else if(canvas.style.cursor === 'grab'){ canvas.style.cursor = ''; }
     }
@@ -14809,6 +14900,24 @@ function wireViewport(canvas){
       if(moved){ pushHistory(); scheduleAutosave(); }
       try { syncLowWallPanel(); } catch(_){}
       renderActive();
+      e.preventDefault();
+      return;
+    }
+    // An opening finishes where it was let go. Moved or not, its editor comes
+    // up: the gesture that picks one up is also the one that opens it.
+    if(state.ui.opDrag){
+      const D = state.ui.opDrag;
+      state.ui.opDrag = null;
+      canvas.style.cursor = '';
+      const found = openingFromHit(D);
+      if(found){
+        state.ui.selectedCabId = null;
+        state.ui.activeWall = found.wall.id;
+        if(found.room) state.ui.activeRoom = found.room.id;
+        if(D.moved) scheduleAutosave();
+        renderCabinetList(); renderActive();
+        renderOpeningEditor(found.op, found.wall);
+      }
       e.preventDefault();
       return;
     }
@@ -14902,6 +15011,10 @@ function wireViewport(canvas){
       const pf = clientToPageMM(canvas, e.clientX, e.clientY);
       if(findFittingAt(state.ui.view, pf.x, pf.y)) return;
     }
+    // Same for an opening: it was picked up on mousedown, and after a drag the
+    // cursor is somewhere else entirely — letting the click run would select
+    // whatever it happens to have landed on.
+    if(state.ui._opGesture){ state.ui._opGesture = false; return; }
     // Both plan tabs are resolved by the mouseup handler above.
     if(state.ui.view === 'plan' || state.ui.view === 'plan-base') return;
     if(e.shiftKey) return;
