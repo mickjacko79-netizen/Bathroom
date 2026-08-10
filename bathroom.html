@@ -22555,9 +22555,14 @@ try {
     want:  { shower:true, bath:false, toilet:true, vanity:true, basin:false,
              mirror:true, rail:true, roll:true },
     size:  { shower: 1000, bath: 1700, vanity: 900, toilet: 900, basin: 550 },
+    // What it is finished in. One wall tile for the room, and any wall that is
+    // doing something different named on its own — a feature wall behind the
+    // vanity is the usual reason.
+    fin:   { floor: 'tile-600', wallAll: 'rect-300x600',
+             walls: { A:'rect-300x600', B:'rect-300x600', C:'rect-300x600', D:'rect-300x600' } },
     plan:  [],
   };
-  const STEPS = ['The room', 'The door', 'What goes in', 'Where it goes'];
+  const STEPS = ['The room', 'Finishes', 'The door', 'What goes in', 'Where it goes'];
 
   // ---- the layout ------------------------------------------------------------
   // Which wall is which, going round: A B C D. Walls A and C run the room's
@@ -22694,6 +22699,39 @@ try {
     }
 
     if(W.step === 1){
+      const opts = (obj, cur) => Object.keys(obj).map(k =>
+        '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>' +
+        esc(obj[k].label) + '</option>').join('');
+      b.innerHTML =
+        '<h3>What is it finished in?</h3>' +
+        '<p class="hint">A starting point for the drawing — all of it can be changed later from ' +
+        'the Floor and Wall tiling panels.</p>' +
+        '<div class="wiz-row">' +
+          '<div class="wiz-f" style="flex:1"><label>Floor</label>' +
+            '<select data-fin="floor" style="width:100%">' + opts(FLOOR_MATERIALS, W.fin.floor) + '</select></div>' +
+        '</div>' +
+        '<div class="wiz-row">' +
+          '<div class="wiz-f" style="flex:1"><label>Wall tile — every wall</label>' +
+            '<select data-fin="wallAll" style="width:100%">' + opts(WALL_TILE_TYPES, W.fin.wallAll) + '</select></div>' +
+        '</div>' +
+        '<p class="hint">Any wall doing something different — a feature wall behind the vanity, ' +
+        'say — can be named on its own.</p>' +
+        '<div class="wiz-row">' +
+          ORDER.map(id => '<div class="wiz-f"><label>Wall ' + id + ' &middot; ' + lenOf(id) + ' long</label>' +
+            '<select data-wallfin="' + id + '" style="width:142px">' +
+            opts(WALL_TILE_TYPES, W.fin.walls[id]) + '</select></div>').join('') +
+        '</div>';
+      b.querySelectorAll('[data-fin]').forEach(x => x.onchange = () => {
+        W.fin[x.dataset.fin] = x.value;
+        // Setting the room's tile sets every wall that has not been singled out.
+        if(x.dataset.fin === 'wallAll') { ORDER.forEach(id => W.fin.walls[id] = x.value); drawStep(); }
+      });
+      b.querySelectorAll('[data-wallfin]').forEach(x => x.onchange = () => {
+        W.fin.walls[x.dataset.wallfin] = x.value;
+      });
+    }
+
+    if(W.step === 2){
       b.innerHTML =
         '<h3>Where is the door?</h3>' +
         '<p class="hint">It decides the layout: the shower and bath go to the far end, the basin ' +
@@ -22708,7 +22746,7 @@ try {
       });
     }
 
-    if(W.step === 2){
+    if(W.step === 3){
       const opt = (key, label, note, sizeKey, sizes) =>
         '<label class="wiz-opt' + (W.want[key] ? ' on' : '') + '">' +
           '<input type="checkbox" data-want="' + key + '"' + (W.want[key] ? ' checked' : '') + '>' +
@@ -22740,7 +22778,7 @@ try {
       });
     }
 
-    if(W.step === 3){
+    if(W.step === 4){
       buildPlan();
       const rows = W.plan.map(p =>
         '<div><b>' + esc(p.label) + '</b> ' + p.W + ' wide &rarr; wall ' + p.wall +
@@ -22762,7 +22800,11 @@ try {
     }
 
     b.querySelectorAll('input[data-k]').forEach(x => x.oninput = () => {
-      const target = (W.step === 0) ? W.room : W.door;
+      // The only two steps with typed numbers on them, named rather than
+      // inferred — the finishes step slotted in between and quietly sent the
+      // door's width into the room when this went by position.
+      const target = (W.step === 0) ? W.room : (W.step === 2 ? W.door : null);
+      if(!target) return;
       const v = parseInt(x.value, 10);
       if(!isNaN(v)) target[x.dataset.k] = v;
     });
@@ -22782,6 +22824,21 @@ try {
     // Clear whatever is on the walls first — the wizard lays a room out, it does
     // not add to one. Anything already there was either a demo or a false start.
     (state.walls || []).forEach(w => { w.baseRow = []; w.wallRow = []; });
+
+    // The finishes. The floor is the room's; the wall tile is per wall, which
+    // the drawing already understands — each elevation is drawn with its own
+    // wall's tile swapped in, so a feature wall reads as one.
+    if(state.room.floor && FLOOR_MATERIALS[W.fin.floor]) state.room.floor.material = W.fin.floor;
+    (state.walls || []).forEach(w => {
+      const tile = W.fin.walls[w.id];
+      if(!WALL_TILE_TYPES[tile]) return;
+      if(!w.splashback) w.splashback = { tile:null, color:null, grout:null };
+      w.splashback.tile = tile;
+      // Left null so the tile's own colour and grout are used rather than
+      // whatever a previous job happened to have overridden them to.
+      w.splashback.color = null;
+      w.splashback.grout = null;
+    });
 
     const put = (wallId, type, width, u) => {
       const wall = (state.walls || []).find(x => x.id === wallId);
