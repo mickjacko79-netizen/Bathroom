@@ -473,8 +473,27 @@ header .project-label .dot.dirty{background:#F7C04A}
           <button id="measureToggle" class="btn small" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Start measuring</button>
           <button id="measureClear" class="btn small" style="padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Clear</button>
         </div>
-        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:4px" id="measureHint">Click two points on the plan or any elevation. It catches on the corners and faces of anything on the sheet, and squares itself up when it is nearly square. <b>Esc</b> drops a half-made one. Click a figure to remove that measurement.</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:4px" id="measureHint">Click two points on the plan or any elevation. It catches on the corners and faces of anything on the sheet, and squares itself up when it is nearly square. <b>Esc</b> drops a half-made one. Click a figure to keep or delete that measurement.</div>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:-2px" id="measureCount"></div>
+        <div class="row2">
+          <div class="ctrl"><label>Line weight <span class="val"><input class="valInp" id="measureScaleVal" type="number" min="0.01" max="3" step="0.01" value="0.34"></span></label><input id="measureScale" type="range" min="1" max="300" step="1" value="34"></div>
+          <div class="ctrl"><label>Figure size <span class="val"><input class="valInp" id="measureTextVal" type="number" min="3" max="12" step="0.2" value="5.2"></span></label><input id="measureText" type="range" min="30" max="120" step="2" value="52"></div>
+        </div>
+        <div class="ctrl"><label>Box behind the figure</label>
+          <select id="measureBox">
+            <option value="rect">Rectangle</option>
+            <option value="round">Rounded rectangle</option>
+            <option value="pill">Pill</option>
+            <option value="ellipse">Ellipse</option>
+            <option value="none">None — figure on its own</option>
+          </select>
+        </div>
+        <div class="customRow">
+          <input type="color" id="measureColor" value="#E04B3B">
+          <span class="lbl">Measurement colour</span>
+          <button class="reset" id="measureColorReset" title="Back to the markup red">reset</button>
+        </div>
+        <div class="ctrl" id="measureSwatches" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:-2px"></div>
       </div>
 
       <div class="group">
@@ -1607,8 +1626,14 @@ header .project-label .dot.dirty{background:#F7C04A}
               it is within a couple of degrees of square — so a measurement off a cabinet face is the
               face, not near it. It is drawn the way the sheet's own dimensions are, in red, and it stays
               on the sheet it was taken on. <kbd>Esc</kbd> drops a half-made one and again puts the tape
-              away; clicking a figure removes that one measurement, <b>Clear</b> removes them all from the
-              sheet, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes any of it back.</p>
+              away; clicking a figure asks whether to keep that measurement or delete it, <b>Clear</b>
+              removes them all from the sheet, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes any of it back.</p>
+            <p>The tape's colour, line weight, figure size and the box behind the figure — rectangle,
+              rounded, pill, ellipse or none — are set in the same panel. They are one setting for the
+              job rather than per measurement: a sheet of measurements in four colours reads as a mess
+              rather than as a key. The colour is deliberately not the drawing's own ink, so a
+              measurement is never mistaken for something the sheet is asserting. The settings are saved
+              with the job.</p>
           </section>
 
           <section id="mn-hardware">
@@ -3214,6 +3239,8 @@ const state = {
   // The site measure plan this job was traced from, in the measure's own export
   // format, so the drawing can be handed straight back to it.
   siteMeasure: null,
+  // How the tape is drawn. One setting for the job.
+  measureStyle: { color:'#E04B3B', scale:0.34, textSize:5.2, box:'rect' },
   // Per-panel heading look, keyed by the panel's name: { size, color }.
   panelStyle: {},
   // The finishes board on the cover: photographed materials and paint colours,
@@ -10093,6 +10120,20 @@ function findCabAt(view, xMM, yMM){
 // holding the drawing, and the two ticks square across the line it used to get
 // read as a bracket rather than as a measurement.
 const MEASURE_COL = '#E04B3B';
+// How the tape is drawn. A markup is read alongside the drawing rather than as
+// part of it, so which red — or which anything — it is depends on what is under
+// it and who it is going to. It is one setting for the job: a sheet of
+// measurements in four colours reads as a mess, not as a key.
+const MEASURE_STYLE = { color:MEASURE_COL, scale:0.34, textSize:5.2, box:'rect' };
+function measureStyle(){
+  const m = (state && state.measureStyle) || {};
+  return {
+    color:    m.color || MEASURE_STYLE.color,
+    scale:    (m.scale > 0) ? m.scale : MEASURE_STYLE.scale,
+    textSize: (m.textSize > 0) ? m.textSize : MEASURE_STYLE.textSize,
+    box:      m.box || MEASURE_STYLE.box,
+  };
+}
 // The figure on a measurement is its remove button, so it needs a hit box.
 const measureHitRegistry = {};
 function findMeasureAt(view, px, py){
@@ -10142,23 +10183,25 @@ function measurePoint(view, x, y, from){
   return p;
 }
 function drawOneMeasure(d, x1, y1, x2, y2, s, live){
+  const ms = measureStyle();
+  const col = ms.color;
   const dx = x2 - x1, dy = y2 - y1;
   const len = Math.hypot(dx, dy);
   if(!(len > 0.6)) return null;
   const ux = dx/len, uy = dy/len, nx = -uy, ny = ux;
-  const lw = 0.34;
+  const lw = ms.scale;
   if(live) d.dashed(true);
-  d.line(x1 - ux*1.8, y1 - uy*1.8, x2 + ux*1.8, y2 + uy*1.8, MEASURE_COL, lw);
+  d.line(x1 - ux*1.8, y1 - uy*1.8, x2 + ux*1.8, y2 + uy*1.8, col, lw);
   if(live) d.dashed(false);
   const t = 1.0;
   [[x1,y1],[x2,y2]].forEach(([px, py])=>{
     // The 45° tick the sheet's own dimensions carry, and a short witness square
     // across the line so the end is findable over whatever it lands on.
-    d.line(px - ux*t - nx*t, py - uy*t - ny*t, px + ux*t + nx*t, py + uy*t + ny*t, MEASURE_COL, lw*1.25);
-    d.line(px - nx*2.4, py - ny*2.4, px + nx*2.4, py + ny*2.4, MEASURE_COL, lw*0.6);
+    d.line(px - ux*t - nx*t, py - uy*t - ny*t, px + ux*t + nx*t, py + uy*t + ny*t, col, lw*1.25);
+    d.line(px - nx*2.4, py - ny*2.4, px + nx*2.4, py + ny*2.4, col, lw*0.6);
   });
   const label = String(Math.round(len / (s || 1)));
-  const size = 5.2;
+  const size = ms.textSize;
   const tw = label.length * size*0.58 + 3.4, th = size*1.2;
   // Keep the figure the right way up whichever way the tape runs.
   let ang = Math.atan2(dy, dx), flip = false;
@@ -10169,9 +10212,28 @@ function drawOneMeasure(d, x1, y1, x2, y2, s, live){
   const cA = Math.cos(ang), sA = Math.sin(ang);
   const at = (a, b) => [cx + a*cA - b*sA, cy + a*sA + b*cA];
   const quad = [at(-tw/2,-th/2), at(tw/2,-th/2), at(tw/2,th/2), at(-tw/2,th/2)];
-  d.polygon(quad, '#FFFFFF', live ? null : MEASURE_COL, 0.22);
+  // The box is drawn in the tape's own frame, so it stays with the figure at
+  // whatever angle the tape runs at. Turned off, the figure carries a little
+  // white behind it and no more — over a hatch a bare number is unreadable, and
+  // "no box" means no outline rather than no legibility.
+  if(ms.box !== 'none'){
+    let shape = quad;
+    if(ms.box === 'round')        shape = roundPoly(quad, Math.min(th*0.34, 2.0), 4);
+    else if(ms.box === 'pill')    shape = roundPoly(quad, th/2 - 0.05, 7);
+    else if(ms.box === 'ellipse'){
+      shape = [];
+      const rx = tw/2 * 1.14, ry = th/2 * 1.16;
+      for(let i = 0; i < 28; i++){
+        const a = (i/28) * Math.PI * 2;
+        shape.push(at(rx*Math.cos(a), ry*Math.sin(a)));
+      }
+    }
+    d.polygon(shape, '#FFFFFF', live ? null : col, lw*0.65);
+  } else {
+    d.polygon(quad, '#FFFFFF', null, 0);
+  }
   d.text(cx - sA*(size*0.36), cy + cA*(size*0.36), label,
-    { align:'center', baseline:'alphabetic', size, color:MEASURE_COL, angle:ang });
+    { align:'center', baseline:'alphabetic', size, color:col, angle:ang });
   const xs = quad.map(p=>p[0]), ys = quad.map(p=>p[1]);
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
@@ -10183,19 +10245,67 @@ function drawMeasurements(d, view){
     if(b) measureHitRegistry[view].push({ i, b });
   });
   if(!state.ui.measureMode) return;
+  const col = measureStyle().color;
   const p1 = (state.ui.measureP1 && state.ui.measureP1.view === view) ? state.ui.measureP1 : null;
   const h  = (state.ui.measureHover && state.ui.measureHover.view === view) ? state.ui.measureHover : null;
   // The first point, marked so it is obvious a measurement is half made.
-  if(p1) d.rect(p1.x - 1.3, p1.y - 1.3, 2.6, 2.6, MEASURE_COL, MEASURE_COL, 0.3);
+  if(p1) d.rect(p1.x - 1.3, p1.y - 1.3, 2.6, 2.6, col, col, 0.3);
   // The tape as it stands, following the cursor, with the running figure on it.
   if(p1 && h) drawOneMeasure(d, p1.x, p1.y, h.x, h.y, s, true);
   if(h){
-    d.line(h.x - 3.4, h.y, h.x + 3.4, h.y, MEASURE_COL, 0.26);
-    d.line(h.x, h.y - 3.4, h.x, h.y + 3.4, MEASURE_COL, 0.26);
+    d.line(h.x - 3.4, h.y, h.x + 3.4, h.y, col, 0.26);
+    d.line(h.x, h.y - 3.4, h.x, h.y + 3.4, col, 0.26);
     // A box where it has caught a face, so you can see what you are measuring
     // from before you commit to it.
-    if(h.snapped) d.rect(h.x - 1.7, h.y - 1.7, 3.4, 3.4, null, MEASURE_COL, 0.36);
+    if(h.snapped) d.rect(h.x - 1.7, h.y - 1.7, 3.4, 3.4, null, col, 0.36);
   }
+}
+// Clicking a figure used to take the measurement away on the spot. A tape is
+// worked over — you take one, look at it, take another beside it — and losing
+// one to a stray click on the very thing you were reading is no good. So the
+// figure asks: keep it, or delete it.
+function showMeasureMenu(canvas, view, index, anchorXmm, anchorYmm){
+  document.querySelectorAll('.measure-menu').forEach(n => n.remove());
+  const rect = canvas.getBoundingClientRect();
+  const pxPerMM = rect.width / PAGE_W;
+  const vp = getViewport(state.ui.view);
+  const xv = (anchorXmm - PAGE_W/2) * vp.zoom + PAGE_W/2 + vp.panX;
+  const yv = (anchorYmm - PAGE_H/2) * vp.zoom + PAGE_H/2 + vp.panY;
+  const box = document.createElement('div');
+  box.className = 'measure-menu';
+  Object.assign(box.style, {
+    position:'fixed', left:(rect.left + xv*pxPerMM - 52)+'px', top:(rect.top + yv*pxPerMM - 34)+'px',
+    display:'flex', gap:'4px', padding:'4px', borderRadius:'6px', zIndex:'500',
+    background:'#fff', border:'1px solid ' + measureStyle().color,
+    boxShadow:'0 2px 10px rgba(0,0,0,0.18)',
+  });
+  const mk = (text, fn)=>{
+    const b = document.createElement('button');
+    b.textContent = text;
+    Object.assign(b.style, { padding:'3px 9px', fontSize:'12px', fontFamily:'inherit',
+      border:'1px solid var(--border)', borderRadius:'4px', background:'#fff', cursor:'pointer' });
+    b.addEventListener('click', ev => { ev.stopPropagation(); close(); fn(); });
+    return b;
+  };
+  let gone = false;
+  const close = ()=>{ if(gone) return; gone = true; box.remove();
+    document.removeEventListener('mousedown', away, true);
+    document.removeEventListener('keydown', esc, true); };
+  const away = ev => { if(!box.contains(ev.target)) close(); };
+  const esc  = ev => { if(ev.key === 'Escape'){ ev.stopPropagation(); close(); } };
+  box.appendChild(mk('Keep', ()=>{}));
+  box.appendChild(mk('Delete', ()=>{
+    const arr = state.measurements && state.measurements[view];
+    if(!arr || !arr[index]) return;
+    pushHistory();
+    arr.splice(index, 1);
+    syncMeasurePanel(); renderActive();
+  }));
+  document.body.appendChild(box);
+  setTimeout(()=>{
+    document.addEventListener('mousedown', away, true);
+    document.addEventListener('keydown', esc, true);
+  }, 0);
 }
 // Draws one adjoining room on the kitchen plan. kox/koy are the kitchen's inner
 // top-left in page-mm; the room is positioned from there.
@@ -15120,14 +15230,12 @@ function wireViewport(canvas){
       const view = state.ui.view;
       if(view === 'cover') return;
       flushRender();
-      // The figure is the remove button. One measurement at a time rather than
-      // clearing the sheet, which was the only way to get rid of a stray one.
+      // The figure is the handle on a measurement — keep it or delete it, one
+      // at a time rather than clearing the sheet, which was the only way to get
+      // rid of a stray one.
       const mh = findMeasureAt(view, raw.x, raw.y);
       if(mh && state.measurements && state.measurements[view]){
-        pushHistory();
-        state.measurements[view].splice(mh.i, 1);
-        state.ui.measureP1 = null;
-        syncMeasurePanel(); renderActive();
+        showMeasureMenu(canvas, view, mh.i, (mh.b[0]+mh.b[2])/2, mh.b[1]);
         return;
       }
       if(!state.measurements) state.measurements = {};
@@ -21229,6 +21337,16 @@ function syncMeasurePanel(){
     cnt.textContent = n ? `${n} on this sheet${state.ui.measureP1 ? ' · one half made' : ''}`
                         : (state.ui.measureP1 ? 'One half made — click the second point' : '');
   }
+  const ms = measureStyle();
+  const put = (id, v)=>{ const el2 = document.getElementById(id); if(el2 && el2.value !== String(v)) el2.value = String(v); };
+  put('measureColor', ms.color);
+  put('measureScaleVal', +ms.scale.toFixed(2));
+  put('measureScale', Math.round(ms.scale * 100));
+  put('measureTextVal', +ms.textSize.toFixed(1));
+  put('measureText', Math.round(ms.textSize * 10));
+  put('measureBox', ms.box);
+  document.querySelectorAll('#measureSwatches .sw').forEach(s =>
+    s.classList.toggle('on', (s.dataset.color || '').toLowerCase() === String(ms.color).toLowerCase()));
 }
 (function(){
   const btn = document.getElementById('measureToggle');
@@ -21251,8 +21369,46 @@ function syncMeasurePanel(){
     syncMeasurePanel();
     renderActive();
   });
+  // A few reds and inks that read over a drawing. A markup wants to be seen
+  // without being mistaken for something the sheet is asserting, which is why
+  // none of these is the drawing's own ink.
+  const SW = [['#E04B3B','Markup red'], ['#C0392B','Deep red'], ['#E07C1F','Orange'],
+              ['#1F7A4D','Green'], ['#1B5FA8','Blue'], ['#7A3FA0','Violet'], ['#444444','Graphite']];
+  const host = document.getElementById('measureSwatches');
+  if(host) SW.forEach(([c, title])=>{
+    const b = document.createElement('button');
+    b.className = 'sw'; b.dataset.color = c; b.title = title;
+    Object.assign(b.style, { width:'22px', height:'22px', padding:'0', background:c });
+    b.addEventListener('click', ()=> setMeasureStyle({ color:c }));
+    host.appendChild(b);
+  });
+  const col = document.getElementById('measureColor');
+  if(col) col.addEventListener('input', ()=> setMeasureStyle({ color: col.value }));
+  const colR = document.getElementById('measureColorReset');
+  if(colR) colR.addEventListener('click', ()=> setMeasureStyle({ color: MEASURE_STYLE.color }));
+  const boxSel = document.getElementById('measureBox');
+  if(boxSel) boxSel.addEventListener('change', ()=> setMeasureStyle({ box: boxSel.value }));
+  // The figure size is in page millimetres like every other text size on a
+  // sheet, so the slider carries it at ten times to keep a whole-number step.
+  const tSlider = document.getElementById('measureText');
+  const tNum    = document.getElementById('measureTextVal');
+  if(tSlider) tSlider.addEventListener('input', ()=>
+    setMeasureStyle({ textSize: parseInt(tSlider.value, 10) / 10 }));
+  if(tNum) tNum.addEventListener('change', ()=>{
+    const v = parseFloat(tNum.value);
+    setMeasureStyle({ textSize: isNaN(v) ? MEASURE_STYLE.textSize : Math.max(3, Math.min(12, v)) });
+  });
   syncMeasurePanel();
 })();
+// One place the tape's look is changed, so the panel and the drawing cannot
+// drift apart. It is a job setting rather than a per-measurement one — a sheet
+// of measurements in four colours reads as a mess, not as a key.
+function setMeasureStyle(patch){
+  state.measureStyle = { ...measureStyle(), ...patch };
+  syncMeasurePanel();
+  renderActive();
+}
+bindScaleSlider('measureScale', 'measureScaleVal', v => setMeasureStyle({ scale: v }));
 bindRange('benchThick', v=> { state.bench.thickness = v; }, 'benchThickVal');
 document.getElementById('benchThickReset').addEventListener('click', ()=>{
   state.bench.thickness = null; syncBenchThickFields(); renderActive();
@@ -21487,6 +21643,7 @@ function snapshotDesign(){
     // Measurements are user-authored drawing content, not scratch UI state — they
     // were being silently discarded on every save/reload.
     measurements: state.measurements || {},
+    measureStyle: state.measureStyle || { ...MEASURE_STYLE },
     // The site measure plan the geometry was traced from. Without it the job
     // opens with walls but nothing to re-trace or correct them against.
     siteMeasure: state.siteMeasure || null,
@@ -21552,6 +21709,9 @@ function loadDesign(snap){
   if(snap.kick)          state.kick          = deepClone(snap.kick);
   if(snap.island)        state.island        = deepClone(snap.island);
   state.measurements = snap.measurements ? deepClone(snap.measurements) : {};
+  // A job saved before the tape had any settings gets the ones it was drawn
+  // with, so it comes back looking the way it went in.
+  state.measureStyle = { ...MEASURE_STYLE, ...(snap.measureStyle || {}) };
   state.siteMeasure  = snap.siteMeasure ? deepClone(snap.siteMeasure) : null;
   state.panelStyle   = snap.panelStyle ? deepClone(snap.panelStyle) : {};
   state.samples      = Array.isArray(snap.samples) ? deepClone(snap.samples) : [];
@@ -22496,6 +22656,7 @@ document.addEventListener('keydown', e=>{
 
 // Sync sidebar input values from loaded state (called after loadDesign)
 function syncSidebarFromState(){
+  try { syncMeasurePanel(); } catch(_){}
   const setVal = (id, v)=>{
     const el = document.getElementById(id); if(!el) return;
     if(el.tagName === 'INPUT' || el.tagName === 'SELECT') el.value = v;
