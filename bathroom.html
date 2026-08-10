@@ -98,6 +98,10 @@ header .meta{color:#9FB4C6;font-size:11.5px;letter-spacing:.02em}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
 .cab-list{display:flex;flex-direction:column;gap:5px;margin-top:6px}
+/* One measurement in the list under the Measure panel. */
+.m-row{display:grid;grid-template-columns:10px 1fr auto;align-items:center;gap:7px;padding:4px 8px;background:var(--soft);border:1px solid var(--border);border-radius:5px;font-size:12px;cursor:pointer}
+.m-row:hover{border-color:var(--brand)}
+.m-row .sw-dot{width:9px;height:9px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
 .cab-row{display:grid;grid-template-columns:18px 1fr auto auto auto auto auto;align-items:center;gap:4px;padding:5px 8px;background:var(--soft);border:1px solid var(--border);border-radius:5px;font-size:12px;cursor:pointer}
 .cab-row .ro{background:none;border:0;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px;line-height:1}
 .cab-row .ro:hover:not(:disabled){color:var(--brand)}
@@ -479,14 +483,23 @@ header .project-label .dot.dirty{background:#F7C04A}
           <div class="ctrl"><label>Line weight <span class="val"><input class="valInp" id="measureScaleVal" type="number" min="0.01" max="3" step="0.01" value="0.34"></span></label><input id="measureScale" type="range" min="1" max="300" step="1" value="34"></div>
           <div class="ctrl"><label>Figure size <span class="val"><input class="valInp" id="measureTextVal" type="number" min="3" max="12" step="0.2" value="5.2"></span></label><input id="measureText" type="range" min="30" max="120" step="2" value="52"></div>
         </div>
-        <div class="ctrl"><label>Box behind the figure</label>
-          <select id="measureBox">
-            <option value="rect">Rectangle</option>
-            <option value="round">Rounded rectangle</option>
-            <option value="pill">Pill</option>
-            <option value="ellipse">Ellipse</option>
-            <option value="none">None — figure on its own</option>
-          </select>
+        <div class="row2">
+          <div class="ctrl"><label>Box shape</label>
+            <select id="measureBox">
+              <option value="rect">Rectangle</option>
+              <option value="round">Rounded</option>
+              <option value="pill">Pill</option>
+              <option value="ellipse">Ellipse</option>
+              <option value="none">No outline</option>
+            </select>
+          </div>
+          <div class="ctrl"><label>Box background</label>
+            <select id="measureFill">
+              <option value="white">Opaque white</option>
+              <option value="solid">Opaque colour</option>
+              <option value="clear">Clear — nothing behind</option>
+            </select>
+          </div>
         </div>
         <div class="customRow">
           <input type="color" id="measureColor" value="#E04B3B">
@@ -494,6 +507,7 @@ header .project-label .dot.dirty{background:#F7C04A}
           <button class="reset" id="measureColorReset" title="Back to the markup red">reset</button>
         </div>
         <div class="ctrl" id="measureSwatches" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:-2px"></div>
+        <div class="cab-list" id="measureList"></div>
       </div>
 
       <div class="group">
@@ -1628,12 +1642,19 @@ header .project-label .dot.dirty{background:#F7C04A}
               on the sheet it was taken on. <kbd>Esc</kbd> drops a half-made one and again puts the tape
               away; clicking a figure asks whether to keep that measurement or delete it, <b>Clear</b>
               removes them all from the sheet, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes any of it back.</p>
-            <p>The tape's colour, line weight, figure size and the box behind the figure — rectangle,
-              rounded, pill, ellipse or none — are set in the same panel. They are one setting for the
-              job rather than per measurement: a sheet of measurements in four colours reads as a mess
-              rather than as a key. The colour is deliberately not the drawing's own ink, so a
-              measurement is never mistaken for something the sheet is asserting. The settings are saved
-              with the job.</p>
+            <p>The tape's colour, line weight and figure size are set in the same panel, along with the
+              box behind the figure — its shape (rectangle, rounded, pill, ellipse, or no outline) and
+              what is behind it (opaque white, opaque colour with the figure reversed out, or clear).
+              An opaque tag reads over anything on the sheet; clear is the lightest and will not read
+              over a tile hatch. They are one setting for the job rather than per measurement: a sheet
+              of measurements in four colours reads as a mess rather than as a key. The colour is
+              deliberately not the drawing's own ink, so a measurement is never mistaken for something
+              the sheet is asserting. The settings are saved with the job.</p>
+            <p>Underneath is every measurement in the job, listed under the sheet it was taken on, with
+              its figure. Pointing at a row lights that measurement up on the drawing; clicking one goes
+              to its sheet; the cross on the row deletes that one. Which is the way to pick three
+              measurements out of a dozen spread over a plan and two elevations — <b>Clear</b> takes a
+              whole sheet's worth, and hunting for the right figure to click is the slow way round.</p>
           </section>
 
           <section id="mn-hardware">
@@ -3233,14 +3254,14 @@ const state = {
         // Openings are dragged too — doors and windows move along their wall.
         selectedFitId:null, placeMode:null, fitDrag:null, cropDrag:null, opDrag:null,
         // The tape: the point taken so far, and the point under the cursor.
-        measureMode:false, measureP1:null, measureHover:null,
+        measureMode:false, measureP1:null, measureHover:null, measureHi:null,
         drag:{ pending:null, active:false, hoverU:0 } },
   rooms: [],
   // The site measure plan this job was traced from, in the measure's own export
   // format, so the drawing can be handed straight back to it.
   siteMeasure: null,
   // How the tape is drawn. One setting for the job.
-  measureStyle: { color:'#E04B3B', scale:0.34, textSize:5.2, box:'rect' },
+  measureStyle: { color:'#E04B3B', scale:0.34, textSize:5.2, box:'rect', fill:'white' },
   // Per-panel heading look, keyed by the panel's name: { size, color }.
   panelStyle: {},
   // The finishes board on the cover: photographed materials and paint colours,
@@ -10124,7 +10145,10 @@ const MEASURE_COL = '#E04B3B';
 // part of it, so which red — or which anything — it is depends on what is under
 // it and who it is going to. It is one setting for the job: a sheet of
 // measurements in four colours reads as a mess, not as a key.
-const MEASURE_STYLE = { color:MEASURE_COL, scale:0.34, textSize:5.2, box:'rect' };
+// The shape of the box and what is behind it are two decisions, not one: an
+// outline you can see the drawing through and an opaque tag with the figure
+// reversed out are both wanted, and neither is a shape.
+const MEASURE_STYLE = { color:MEASURE_COL, scale:0.34, textSize:5.2, box:'rect', fill:'white' };
 function measureStyle(){
   const m = (state && state.measureStyle) || {};
   return {
@@ -10132,6 +10156,7 @@ function measureStyle(){
     scale:    (m.scale > 0) ? m.scale : MEASURE_STYLE.scale,
     textSize: (m.textSize > 0) ? m.textSize : MEASURE_STYLE.textSize,
     box:      m.box || MEASURE_STYLE.box,
+    fill:     m.fill || MEASURE_STYLE.fill,
   };
 }
 // The figure on a measurement is its remove button, so it needs a hit box.
@@ -10213,10 +10238,13 @@ function drawOneMeasure(d, x1, y1, x2, y2, s, live){
   const at = (a, b) => [cx + a*cA - b*sA, cy + a*sA + b*cA];
   const quad = [at(-tw/2,-th/2), at(tw/2,-th/2), at(tw/2,th/2), at(-tw/2,th/2)];
   // The box is drawn in the tape's own frame, so it stays with the figure at
-  // whatever angle the tape runs at. Turned off, the figure carries a little
-  // white behind it and no more — over a hatch a bare number is unreadable, and
-  // "no box" means no outline rather than no legibility.
-  if(ms.box !== 'none'){
+  // whatever angle the tape runs at. Opaque colour reverses the figure out of
+  // it, which is what makes a tag readable over anything at all; clear puts
+  // nothing behind, which over a tile hatch is the one that will not read, and
+  // is offered anyway because on a quiet sheet it is the lightest thing there.
+  const bg = (ms.fill === 'solid') ? col : (ms.fill === 'clear' ? null : '#FFFFFF');
+  const outlined = (ms.box !== 'none') && !live;
+  if(bg || outlined){
     let shape = quad;
     if(ms.box === 'round')        shape = roundPoly(quad, Math.min(th*0.34, 2.0), 4);
     else if(ms.box === 'pill')    shape = roundPoly(quad, th/2 - 0.05, 7);
@@ -10228,19 +10256,29 @@ function drawOneMeasure(d, x1, y1, x2, y2, s, live){
         shape.push(at(rx*Math.cos(a), ry*Math.sin(a)));
       }
     }
-    d.polygon(shape, '#FFFFFF', live ? null : col, lw*0.65);
-  } else {
-    d.polygon(quad, '#FFFFFF', null, 0);
+    d.polygon(shape, bg, outlined ? col : null, lw*0.65);
   }
   d.text(cx - sA*(size*0.36), cy + cA*(size*0.36), label,
-    { align:'center', baseline:'alphabetic', size, color:col, angle:ang });
+    { align:'center', baseline:'alphabetic', size,
+      color: (ms.fill === 'solid') ? '#FFFFFF' : col, angle:ang });
   const xs = quad.map(p=>p[0]), ys = quad.map(p=>p[1]);
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
 function drawMeasurements(d, view){
   measureHitRegistry[view] = [];
   const s = (state._viewScale && state._viewScale[view]) || 1;
+  const hi = state.ui.measureHi;
+  const hiCol = shade(measureStyle().color, 0.66);
   ((state.measurements && state.measurements[view]) || []).forEach((m, i)=>{
+    // The figure, kept on the measurement so the list can show it without the
+    // sheet having been opened — a measurement is stored in page millimetres
+    // and read back at the sheet's scale, and a sheet that has not been drawn
+    // this session has no scale to read it at.
+    if(s > 0) m.mm = Math.round(Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y) / s);
+    // The one the list is hovering, so pointing at a row on the list points at
+    // something on the drawing.
+    if(hi && hi.view === view && hi.i === i)
+      d.line(m.p1.x, m.p1.y, m.p2.x, m.p2.y, hiCol, measureStyle().scale * 6);
     const b = drawOneMeasure(d, m.p1.x, m.p1.y, m.p2.x, m.p2.y, s, false);
     if(b) measureHitRegistry[view].push({ i, b });
   });
@@ -21345,8 +21383,71 @@ function syncMeasurePanel(){
   put('measureTextVal', +ms.textSize.toFixed(1));
   put('measureText', Math.round(ms.textSize * 10));
   put('measureBox', ms.box);
+  put('measureFill', ms.fill);
   document.querySelectorAll('#measureSwatches .sw').forEach(s =>
     s.classList.toggle('on', (s.dataset.color || '').toLowerCase() === String(ms.color).toLowerCase()));
+  try { renderMeasureList(); } catch(_){}
+}
+// Every measurement in the job, under the sheet it was taken on.
+//
+// A tape is worked over — you take half a dozen across a plan and two more on
+// an elevation, and then you want three of them gone. Finding those three by
+// clicking the right figures on the right sheets is the slow way round, and
+// Clear, which was the alternative, takes the lot.
+function renderMeasureList(){
+  const host = document.getElementById('measureList');
+  if(!host) return;
+  host.innerHTML = '';
+  const all = state.measurements || {};
+  const sheets = activeSheets().filter(s => ((all[s.view] || []).length > 0));
+  if(!sheets.length){
+    host.appendChild(el('div', { style:'font-size:11px;color:var(--muted);margin-top:6px' },
+      'Nothing measured yet.'));
+    return;
+  }
+  const hover = (view, i)=>{
+    state.ui.measureHi = (i == null) ? null : { view, i };
+    if(state.ui.view === view) renderActive();
+  };
+  // Worked out here rather than read off whatever the last draw left behind:
+  // the list is built before the sheet is drawn as often as after it, and a row
+  // that says it does not know how long it is is no use for picking one out.
+  // A measurement is held in page millimetres and read at the sheet's scale, so
+  // the live scale is the truth where there is one and the figure it was last
+  // drawn at — which is what went into the file — is the fallback.
+  const figureOf = (view, m)=>{
+    const sc = (state._viewScale && state._viewScale[view]) || 0;
+    if(sc > 0) return Math.round(Math.hypot(m.p2.x - m.p1.x, m.p2.y - m.p1.y) / sc);
+    return (m.mm > 0) ? m.mm : null;
+  };
+  sheets.forEach(sh=>{
+    const list = all[sh.view];
+    host.appendChild(el('div', { style:'font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;'
+      + 'color:var(--muted);margin:8px 0 1px' }, `${sh.indexTitle} · ${list.length}`));
+    list.forEach((m, i)=>{
+      const row = el('div', { class:'m-row', title:'Click to go to it on the sheet' },
+        el('span', { class:'sw-dot', style:'background:' + measureStyle().color }),
+        el('span', {}, (function(){ const f = figureOf(sh.view, m); return f ? `${f} mm` : '—'; })()),
+        (function(){
+          const b = el('button', { class:'ro', title:'Delete this measurement' }, '✕');
+          b.addEventListener('click', ev=>{
+            ev.stopPropagation();
+            pushHistory();
+            (all[sh.view] || []).splice(i, 1);
+            state.ui.measureHi = null;
+            syncMeasurePanel(); renderActive();
+          });
+          return b;
+        })());
+      row.addEventListener('mouseenter', ()=> hover(sh.view, i));
+      row.addEventListener('mouseleave', ()=> hover(sh.view, null));
+      row.addEventListener('click', ()=>{
+        if(state.ui.view !== sh.view) showView(sh.view);
+        hover(sh.view, i);
+      });
+      host.appendChild(row);
+    });
+  });
 }
 (function(){
   const btn = document.getElementById('measureToggle');
@@ -21388,6 +21489,8 @@ function syncMeasurePanel(){
   if(colR) colR.addEventListener('click', ()=> setMeasureStyle({ color: MEASURE_STYLE.color }));
   const boxSel = document.getElementById('measureBox');
   if(boxSel) boxSel.addEventListener('change', ()=> setMeasureStyle({ box: boxSel.value }));
+  const fillSel = document.getElementById('measureFill');
+  if(fillSel) fillSel.addEventListener('change', ()=> setMeasureStyle({ fill: fillSel.value }));
   // The figure size is in page millimetres like every other text size on a
   // sheet, so the slider carries it at ten times to keep a whole-number step.
   const tSlider = document.getElementById('measureText');
