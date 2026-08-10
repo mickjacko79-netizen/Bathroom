@@ -5416,10 +5416,21 @@ const BENCH_HATCHES = {
   'concrete':          'Concrete — speckle',
 };
 
+// The stone patterns. A benchtop is drawn empty unless one of these is asked
+// for by name: stone is the one thing on a bathroom sheet whose pattern says
+// nothing the schedule does not already say, and a slab of diagonal hatch or
+// veining under the fittings buries the set-out that the sheet is actually for.
+// Every pattern is still one pick away, and anything that is not stone — timber
+// grain, a tiled top — keeps its own, because there the pattern is the
+// specification.
+const STONE_HATCHES = new Set(['stone','stone-fine','stone-dark','marble','marble-heavy','terrazzo','granite']);
+
 function benchHatch(d, x, y, w, h, materialKey, hatchOverride){
   const def = benchDefOf(materialKey);
   const color = state.bench.colorOverride || def.color;
-  const hatch = hatchOverride || state.bench.hatchOverride || def.hatch;
+  let hatch = hatchOverride || state.bench.hatchOverride || def.hatch;
+  const asked = !!(hatchOverride || state.bench.hatchOverride);
+  if(!asked && STONE_HATCHES.has(hatch)) hatch = 'blank';
   // 'blank' leaves the stone unfilled so it reads as paper with only its outline
   // — the convention when the finish is documented elsewhere or still TBC.
   if(hatch !== 'blank') d.rect(x, y, w, h, color, null);
@@ -7174,19 +7185,50 @@ function toiletPanUV(cu, v0, v1, w){
   return pts;
 }
 // Where the pan sits across its own module. Centred unless it is shifted, and
-// never allowed out of the module.
+// held on the wall it is standing on — not inside its module.
 //
-// The module is the clearance zone, not the fixture: a 900 toilet is a 360 pan
-// with 270 of air either side of it. So a pan whose module is hard against the
-// wall still stands 450 off it, and there was no way to move it — the module
-// could not go any further and the pan would not move within it. This is that
-// way: shift it along and the clearance goes lopsided, which is what happens on
-// site when a pan has to tuck in beside something.
+// The module is the clearance zone, not the fixture: a 450 toilet is a 360 pan
+// with the air either side that a person needs, and a 900 one is the same pan
+// with a great deal more. So a pan whose module is hard against the wall still
+// stands off it by half the difference, and there was no way to move it — the
+// module could not go any further and the pan would not move within it.
+//
+// Holding it inside the module was no answer either: on a 450 it left 45 mm of
+// travel, so asking for anything more came straight back. The module is a
+// booking of wall space, and a pan is allowed to sit at its edge or past it —
+// which is what tucking one into a corner actually is. The wall is the only
+// thing it is held by.
+// How long the roll holder's bar is drawn. The figure in the panel, kept sane —
+// the module it is booked into is wall space and does not decide it.
+function rollBarLen(cab){
+  const v = +((cab.config || {}).bar);
+  return Math.max(60, Math.min(400, isFinite(v) && v > 0 ? v : 200));
+}
+function toiletRunSpanU(cab){
+  const hit = findWallForCab(cab.id);
+  if(!hit) return null;
+  const wall = hit.wall;
+  const arr = (wall.baseRow || []).includes(cab) ? wall.baseRow
+            : (wall.wallRow || []).includes(cab) ? wall.wallRow : null;
+  if(!arr) return null;
+  const isWallRow = arr === wall.wallRow;
+  const s0 = runStartOffset(wall, isWallRow ? 'wall' : 'base');
+  const u0 = rowPositions(arr, s0)[arr.indexOf(cab)];
+  const len = wallLength(wall.id);
+  if(!(len > 0) || !isFinite(u0)) return null;
+  return { u0, len };
+}
 function toiletCentreU(cab){
   const g = toiletGeom(cab);
   const half = (g.panW || 360) / 2;
   const shift = (cab.config && +cab.config.panShiftU) || 0;
-  const lo = Math.min(half, cab.W / 2), hi = Math.max(cab.W - half, cab.W / 2);
+  let lo = Math.min(half, cab.W / 2), hi = Math.max(cab.W - half, cab.W / 2);
+  const run = toiletRunSpanU(cab);
+  if(run){
+    lo = half - run.u0;
+    hi = (run.len - half) - run.u0;
+    if(hi < lo){ const m = (lo + hi) / 2; lo = hi = m; }
+  }
   return Math.max(lo, Math.min(hi, cab.W / 2 + shift));
 }
 function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
@@ -9284,11 +9326,17 @@ function drawAccessoryOnElevation(d, cab, x, y, s, opts){
     // is being specified, and an empty one is what turns up in the box.
     d.rect(x, y, W, H, null, null, 0);
     const cy = y + H*0.55, tube = 10*s;
-    // Handed. The bar runs away from the plate, and which way it runs is what
-    // decides whether it reaches over the pan or over the wall beside it.
+    // Handed — mirrored. The bar runs away from the plate, and which way it runs
+    // is what decides whether it reaches over the pan or over the wall beside
+    // it. So a holder that suits on one side of a pan is the same fitting turned
+    // round on the other, and this is the turning round.
     const lh = (c.hand === 'left');
+    // The bar is drawn at the length it is specified at, off the plate. It used
+    // to be drawn from the module width instead, so the figure in the panel did
+    // nothing at all.
+    const bar = rollBarLen(cab) * s;
     const px = lh ? (x + W - 33*s) : (x + 33*s);   // the plate, on the wall
-    const bx = lh ? (x + 10*s)     : (x + W - 10*s); // the far end of the bar
+    const bx = lh ? (px - bar)     : (px + bar);   // the far end of the bar
     // The bar first and the plate over it, so the tube runs into the plate
     // rather than stopping at its edge.
     d.polygon(roundPoly([[px, cy - tube],[bx, cy - tube],
@@ -9686,9 +9734,11 @@ function drawAdjoiningLowWallsOnElevation(d, wall, ox, oy, wL, Hm, s){
     // against — which is that wall's, not this one's.
     withWallFinish(L.wall, ()=> withLowWallFinish(L, ()=>
       drawSplashbackBand(d, x, bodyY, w, floorY - bodyY)));
+    // The capping is a slab of the same top, so it is drawn the same way — and
+    // goes empty with it when the stone does.
     if(capT > 0){
-      d.rect(x, yTop, w, capT*s, benchDefOf(state.bench.material).color || '#EDEAE3',
-        COL.ink, LW.thin);
+      benchHatch(d, x, yTop, w, capT*s, state.bench.material);
+      d.rect(x, yTop, w, capT*s, null, COL.ink, LW.thin);
     }
     d.rect(x, yTop, w, floorY - yTop, null, COL.ink, LW.thin);
     d.text(x + w/2, yTop - 4, 'LOW WALL', { align:'center', size:3.2, color:COL.muted, italic:true });
@@ -9705,8 +9755,8 @@ function drawLowWallOnElevation(d, wall, ox, oy, Hm, s){
   d.rect(x, bodyY, w, oy + Hm*s - bodyY, '#F3F5F5', null, 0);
   withLowWallFinish(L, ()=> drawSplashbackBand(d, x, bodyY, w, oy + Hm*s - bodyY));
   if(capT > 0){
-    d.rect(x, yTop, w, capT*s, benchDefOf(state.bench.material).color || '#EDEAE3',
-      COL.ink, LW.thin);
+    benchHatch(d, x, yTop, w, capT*s, state.bench.material);
+    d.rect(x, yTop, w, capT*s, null, COL.ink, LW.thin);
   }
   d.rect(x, yTop, w, oy + Hm*s - yTop, null, COL.ink, LW.thin);
   d.text(x + w/2, yTop - 4, `LOW WALL ${Math.round(L.height)} H · ${Math.round(L.t)} THK`,
@@ -9742,8 +9792,9 @@ function drawAccessoryOnPlan(d, wallId, u0, cab, plan){
     // the bar running along the wall from there. The bar is the length of it,
     // and it is what a roll would sit on.
     const lh = (c.hand === 'left');
+    const bar = rollBarLen(cab);
     const pu = lh ? (u0 + W - 33) : (u0 + 33);
-    const be = lh ? (u0 + 10) : (u0 + W - 10);
+    const be = lh ? (pu - bar) : (pu + bar);
     const t = 10, e = lh ? -1 : 1;
     // The elbow and the bar are one bent tube, drawn as one outline with the
     // corner radiused. Two rectangles butted together read as a joint where
@@ -15425,10 +15476,11 @@ function renderEditPanel(){
       if(toiletGeom(cab).wallHung) num('Pan height off floor', 'panH', 100, 600, 5);
       pick('Trap', 'trap', [['p-trap','P-trap'],['s-trap','S-trap']]);
       num('Set-out (wall to pan centre)', 'setOut', 60, 400, 5);
-      // The module is the clearance zone; this is where the pan sits inside it.
-      // Positive shifts it towards the far end of the wall. It cannot leave the
-      // module, so the widest it will ever move is half the air either side.
-      num('Shift along the wall', 'panShiftU', -600, 600, 5);
+      // The module is the clearance zone; this is where the pan sits within it.
+      // Positive shifts it towards the far end of the wall. It may leave the
+      // module — that is how a pan gets tucked into a corner — and is held only
+      // by the wall it is standing on.
+      num('Shift along the wall', 'panShiftU', -1200, 1200, 5);
       num('Pan width', 'panW', 250, 600, 5);
       num('Pan projection', 'panD', 400, 900, 5);
       num('Seat height', 'seatH', 320, 520, 5);
@@ -15551,7 +15603,9 @@ function renderEditPanel(){
     } else if(cab.type === 'toilet-roll'){
       num('Height above floor', 'cabBottomY', 300, 1400, 10);
       num('Bar length', 'bar', 120, 320, 5);
-      pick('Hand', 'hand', [['right','Bar to the right'],['left','Bar to the left']]);
+      // Mirrored, so the same holder suits either side of the pan.
+      pick('Mirror — which way the bar runs', 'hand',
+        [['right','Bar to the right'],['left','Bar to the left']]);
     } else if(cab.type === 'hand-towel'){
       num('Height above floor', 'cabBottomY', 300, 2000, 10);
       pick('Type', 'style', [['ring','Ring'],['bar','Short bar']]);
@@ -17751,7 +17805,10 @@ document.getElementById('benchColorReset').addEventListener('click', ()=>{
 });
 // Both hatch pickers are built from BENCH_HATCHES so the list can't drift.
 (function(){
-  const entries = [['', '(material default)']].concat(Object.entries(BENCH_HATCHES));
+  // Stone is left empty unless a pattern is asked for by name, so the first
+  // entry says so rather than promising the material's own.
+  const entries = [['', '(default — stone empty, otherwise the material’s own)']]
+    .concat(Object.entries(BENCH_HATCHES));
   const fill = (id, get, set)=>{
     const sel = document.getElementById(id);
     if(!sel) return;
