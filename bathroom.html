@@ -1787,7 +1787,7 @@ const CATALOG = {
   // finished wall face behind it. It is carried on the fixture rather than
   // derived, because it is the number the drawing exists to communicate.
   'toilet':      { label:'Toilet suite',            defaultW:450, H:830,  D:700, row:'base', hasShelves:false,
-    defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, plateH:1015, panH:0, labelText:'' } },
+    defaultConfig:{ style:'back-to-wall', trap:'p-trap', setOut:140, panW:360, panD:640, seatH:400, cisternH:830, cisternD:200, plateH:1015, panH:0, panShiftU:0, labelText:'' } },
   'basin-fs':    { label:'Basin — wall hung / pedestal', defaultW:550, H:850, D:450, row:'base', hasShelves:false,
     defaultConfig:{ style:'wall-hung', rimH:850, bowlW:450, bowlD:340, bowlShape:'oval', tapMode:'deck', wallTap:'plate-165', tapAbove:230, trapL:145, labelText:'' } },
   'bath':        { label:'Bath',                    defaultW:1700, H:600, D:750, row:'base', hasShelves:false,
@@ -3151,7 +3151,11 @@ const state = {
   // northDeg: site north, clockwise from up the sheet. 0 = north is up, which
   // is what every drawing assumed before the site measure could say otherwise.
   project: { name:'Holland Park residence — bathroom', client:'Mr & Mrs Carter', drawn:'Mike J · Joinery Studio', northDeg:0 },
-  room:    { W:2400, L:2700, H:2700, wallT:90, wallMaterial:'plaster', wallColorOverride:null, wallHatchOverride:null,
+  // Walls read as an outline unless you ask for a poché. A solid near-black
+  // band is right for a structural drawing and heavy-handed on a bathroom
+  // sheet, where the walls are the least interesting thing on it — so the
+  // pattern starts blank and every material's own poché is one pick away.
+  room:    { W:2400, L:2700, H:2700, wallT:90, wallMaterial:'plaster', wallColorOverride:null, wallHatchOverride:'blank',
              layerHatch: false,
              lights: [], internalWalls: [],
              floorWastes: [],
@@ -7169,9 +7173,25 @@ function toiletPanUV(cu, v0, v1, w){
   for(let i = N; i >= 0; i--){ const t = i/N; pts.push([cu - half(t), v0 + L*t]); }
   return pts;
 }
+// Where the pan sits across its own module. Centred unless it is shifted, and
+// never allowed out of the module.
+//
+// The module is the clearance zone, not the fixture: a 900 toilet is a 360 pan
+// with 270 of air either side of it. So a pan whose module is hard against the
+// wall still stands 450 off it, and there was no way to move it — the module
+// could not go any further and the pan would not move within it. This is that
+// way: shift it along and the clearance goes lopsided, which is what happens on
+// site when a pan has to tuck in beside something.
+function toiletCentreU(cab){
+  const g = toiletGeom(cab);
+  const half = (g.panW || 360) / 2;
+  const shift = (cab.config && +cab.config.panShiftU) || 0;
+  const lo = Math.min(half, cab.W / 2), hi = Math.max(cab.W - half, cab.W / 2);
+  return Math.max(lo, Math.min(hi, cab.W / 2 + shift));
+}
 function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
   const g = toiletGeom(cab);
-  const cu = cab.W/2;
+  const cu = toiletCentreU(cab);
   const P = (pts)=> mapUV(wallId, uOff, pts, plan);
   // The cistern: a vessel against the wall, or one buried in it.
   if(g.concealed){
@@ -7233,7 +7253,7 @@ function drawToiletOnPlan(d, wallId, uOff, cab, plan, line, lw){
 }
 function drawToiletOnElevation(d, cab, X, Y, s, stroke, lw){
   const g = toiletGeom(cab), c = cab.config || {};
-  const cu = cab.W/2;
+  const cu = toiletCentreU(cab);
   const poly = (pts, fill, st, w)=> d.polygon(pts.map(p=>[X(p[0]), Y(p[1])]), fill, st, w);
   const hline = (u0, u1, h, col, w)=> d.line(X(u0), Y(h), X(u1), Y(h), col, w);
   const hw = g.panW/2;
@@ -15405,6 +15425,10 @@ function renderEditPanel(){
       if(toiletGeom(cab).wallHung) num('Pan height off floor', 'panH', 100, 600, 5);
       pick('Trap', 'trap', [['p-trap','P-trap'],['s-trap','S-trap']]);
       num('Set-out (wall to pan centre)', 'setOut', 60, 400, 5);
+      // The module is the clearance zone; this is where the pan sits inside it.
+      // Positive shifts it towards the far end of the wall. It cannot leave the
+      // module, so the widest it will ever move is half the air either side.
+      num('Shift along the wall', 'panShiftU', -600, 600, 5);
       num('Pan width', 'panW', 250, 600, 5);
       num('Pan projection', 'panD', 400, 900, 5);
       num('Seat height', 'seatH', 320, 520, 5);
