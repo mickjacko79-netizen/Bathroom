@@ -347,6 +347,54 @@ header .project-label .dot.dirty{background:#F7C04A}
 .chat-tool{color:var(--muted);font-size:11px;font-style:italic;margin:0 0 8px}
 .chat-note{color:var(--muted);font-size:11.5px;line-height:1.5;margin:0 0 12px}
 .chat-err{color:#B4453A;font-size:11.5px;line-height:1.5;margin:0 0 12px}
+/* ---- Design wizard ---------------------------------------------------------
+   A way into the drawing for someone who has not used it before: answer five
+   questions and the room is laid out. Its own overlay rather than a panel, so
+   nothing else is competing for attention while it is open. */
+.wiz-bg{position:fixed;inset:0;background:rgba(24,22,18,.55);z-index:80;display:none;
+  align-items:center;justify-content:center;padding:20px}
+.wiz-bg.on{display:flex}
+.wiz{background:var(--paper,#fff);border:1px solid var(--border);border-radius:8px;
+  width:640px;max-width:100%;max-height:92vh;display:flex;flex-direction:column;
+  box-shadow:0 18px 50px rgba(0,0,0,.30)}
+.wiz-head{padding:14px 18px 10px;border-bottom:1px solid var(--border)}
+.wiz-head h2{margin:0;font-size:15px;letter-spacing:.01em}
+.wiz-head p{margin:3px 0 0;font-size:12px;color:var(--muted)}
+.wiz-steps{display:flex;gap:4px;padding:10px 18px 0}
+.wiz-steps i{flex:1;height:3px;border-radius:2px;background:var(--border);font-style:normal}
+.wiz-steps i.done{background:var(--brand)}
+.wiz-body{padding:14px 18px;overflow:auto;flex:1;min-height:220px}
+.wiz-body h3{margin:0 0 3px;font-size:13px}
+.wiz-body .hint{font-size:11.5px;color:var(--muted);margin:0 0 12px}
+.wiz-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.wiz-f{display:flex;flex-direction:column;gap:3px}
+.wiz-f label{font-size:11px;color:var(--muted)}
+.wiz-f input[type=number],.wiz-f select{width:120px;padding:5px 7px;font:inherit;font-size:12.5px;
+  border:1px solid var(--border);border-radius:4px;background:#fff}
+.wiz-pick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.wiz-pick button{border:1px solid var(--border);background:#fff;border-radius:4px;padding:5px 10px;
+  font:inherit;font-size:12px;cursor:pointer}
+.wiz-pick button.on{border-color:var(--brand);background:#EEF3FA;color:var(--brand);font-weight:600}
+.wiz-opt{display:flex;align-items:center;gap:9px;padding:7px 9px;border:1px solid var(--border);
+  border-radius:5px;margin-bottom:6px;cursor:pointer;background:#fff}
+.wiz-opt.on{border-color:var(--brand);background:#F6F9FD}
+.wiz-opt input{margin:0}
+.wiz-opt .t{flex:1;font-size:12.5px}
+.wiz-opt .t small{display:block;color:var(--muted);font-size:11px}
+.wiz-opt select{width:118px;padding:3px 5px;font:inherit;font-size:12px;
+  border:1px solid var(--border);border-radius:4px;background:#fff}
+.wiz-plan{display:flex;gap:14px;align-items:flex-start}
+.wiz-plan svg{border:1px solid var(--border);border-radius:5px;background:#FBFAF7;flex:0 0 auto}
+.wiz-list{flex:1;font-size:12px}
+.wiz-list div{padding:3px 0;border-bottom:1px dashed var(--border)}
+.wiz-list b{font-weight:600}
+.wiz-warn{color:#A8332B;font-size:11.5px;margin-top:8px}
+.wiz-foot{padding:11px 18px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.wiz-foot .sp{flex:1}
+.wiz-foot button{border:1px solid var(--border);background:#fff;border-radius:4px;padding:6px 14px;
+  font:inherit;font-size:12.5px;cursor:pointer}
+.wiz-foot button.go{border-color:var(--brand);background:var(--brand);color:#fff;font-weight:600}
+.wiz-foot button[disabled]{opacity:.45;cursor:default}
 .chat-ask{border-top:1px solid var(--border);padding:10px 12px 12px}
 .chat-ask textarea{width:100%;box-sizing:border-box;resize:none;min-height:56px;
   border:1px solid var(--border);border-radius:4px;padding:8px;font:inherit;font-size:12.5px;background:#fff}
@@ -386,6 +434,7 @@ header .project-label .dot.dirty{background:#F7C04A}
     <!-- Only ever shown in the desktop app: it needs a Claude Code to talk to,
          and a browser has no way to reach one. -->
     <button class="header-btn" id="btnChat" title="Ask Claude about this drawing" style="display:none">Ask Claude</button>
+    <button class="header-btn" id="btnWizard" title="Answer five questions and have the room laid out for you">✨ Design wizard</button>
     <div class="meta">AS 1100 · Metric · 1:50</div>
   </header>
 
@@ -21538,7 +21587,29 @@ function _restoreHistory(idx){
   updateUndoButtons();
   return true;
 }
-function undo(){ return _restoreHistory(_histIdx - 1); }
+function undo(){
+  // The live design is normally one step ahead of the stack. Every edit calls
+  // pushHistory() with the state it is ABOUT to change, and the change itself
+  // is never recorded — so stepping straight back would land on the state
+  // before the one we want.
+  //
+  // It mattered most on the first edit after opening a job: pushHistory() skips
+  // a snapshot identical to the top of the stack, so that first edit recorded
+  // nothing at all and Ctrl+Z did nothing. Capture where we actually are, then
+  // step back from there.
+  if(!_restoring){
+    try {
+      const now = JSON.stringify(snapshotDesign());
+      if(_histIdx < 0 || _history[_histIdx] !== now){
+        _history = _history.slice(0, _histIdx + 1);
+        _history.push(now);
+        if(_history.length > HISTORY_LIMIT) _history.shift();
+        _histIdx = _history.length - 1;
+      }
+    } catch(_){}
+  }
+  return _restoreHistory(_histIdx - 1);
+}
 function redo(){ return _restoreHistory(_histIdx + 1); }
 function canUndo(){ return _histIdx > 0; }
 function canRedo(){ return _histIdx < _history.length - 1; }
@@ -22445,6 +22516,335 @@ try {
 } catch(err){
   console.error('[Bathroom init]', err);
 }
+</script>
+
+<!-- ======================================================== DESIGN WIZARD ===
+     Five questions and the room is laid out. It is for the first ten minutes:
+     someone who has the room measured and knows what is going in it, but not
+     where any of it should go or what this app calls things.
+
+     It builds a plan in memory and shows it before it touches the drawing —
+     nothing is written until Finish, and Finish is one undo step. -->
+<div class="wiz-bg" id="wizBg">
+  <div class="wiz" role="dialog" aria-modal="true" aria-labelledby="wizTitle">
+    <div class="wiz-head">
+      <h2 id="wizTitle">Design wizard</h2>
+      <p id="wizSub">The room</p>
+    </div>
+    <div class="wiz-steps" id="wizSteps"></div>
+    <div class="wiz-body" id="wizBody"></div>
+    <div class="wiz-foot">
+      <button id="wizCancel">Cancel</button>
+      <div class="sp"></div>
+      <button id="wizBack">Back</button>
+      <button id="wizNext" class="go">Next</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const bg = document.getElementById('wizBg');
+  const btn = document.getElementById('btnWizard');
+  if(!bg || !btn) return;
+
+  // ---- what the answers are -------------------------------------------------
+  const W = {
+    step: 0,
+    room:  { W: 2400, L: 2700, H: 2700 },
+    door:  { wall: 'D', width: 820 },
+    want:  { shower:true, bath:false, toilet:true, vanity:true, basin:false,
+             mirror:true, rail:true, roll:true },
+    size:  { shower: 1000, bath: 1700, vanity: 900, toilet: 900, basin: 550 },
+    plan:  [],
+  };
+  const STEPS = ['The room', 'The door', 'What goes in', 'Where it goes'];
+
+  // ---- the layout ------------------------------------------------------------
+  // Which wall is which, going round: A B C D. Walls A and C run the room's
+  // width, B and D its length.
+  const ORDER = ['A','B','C','D'];
+  const OPPOSITE = { A:'C', B:'D', C:'A', D:'B' };
+  const lenOf = id => (id === 'A' || id === 'C') ? W.room.W : W.room.L;
+
+  // How far from the door a wall is: the one it is on, the two beside it, then
+  // the one facing it. A bathroom reads best with the wet end furthest from the
+  // door and the basin near it, which is the whole of the rule below.
+  const fromDoor = id => id === W.door.wall ? 0 : (id === OPPOSITE[W.door.wall] ? 2 : 1);
+
+  // Each fitting: what it is, how wide, and where it would rather be.
+  // `want` is the distance-from-door it prefers; ties break on the wall with
+  // the most room left.
+  function wishlist(){
+    const out = [];
+    const w = W.want, s = W.size;
+    if(w.bath)   out.push({ type:'bath',    label:'Bath',              W:s.bath,   want:2 });
+    if(w.shower) out.push({ type:'shower',  label:'Shower',            W:s.shower, want:2 });
+    if(w.toilet) out.push({ type:'toilet',  label:'Toilet',            W:s.toilet, want:1 });
+    // A vanity is a sink base — joinery with a basin in the top. There is no
+    // "vanity" in the catalogue and there should not be; it is a cabinet.
+    if(w.vanity) out.push({ type:'sink-base', label:'Vanity',        W:s.vanity, want:0 });
+    else if(w.basin) out.push({ type:'basin-fs', label:'Basin',        W:s.basin,  want:0 });
+    return out;
+  }
+  // The accessories, hung on the wall rather than standing on the floor. They
+  // follow the thing they serve rather than being placed in their own right.
+  function accessories(placed){
+    const out = [];
+    const at = t => placed.find(p => p.type === t);
+    const basin = at('sink-base') || at('basin-fs');
+    const wc = at('toilet');
+    if(W.want.mirror && basin) out.push({ type:'mirror', label:'Mirror', W: Math.min(1200, basin.W), wall: basin.wall, u: basin.u });
+    if(W.want.roll && wc)      out.push({ type:'toilet-roll', label:'Toilet roll holder', W:230, wall: wc.wall, u: Math.max(0, wc.u - 300) });
+    if(W.want.rail)            out.push({ type:'towel-rail', label:'Towel rail', W:600, wall:null, u:null });
+    return out;
+  }
+
+  function buildPlan(){
+    const free = {};                       // how much of each wall is spoken for
+    ORDER.forEach(id => free[id] = 0);
+    const placed = [];
+    const notes = [];
+    wishlist().forEach(item => {
+      // Walls that can still take it, best preference first, then most room.
+      const options = ORDER
+        .map(id => ({ id, left: lenOf(id) - free[id], d: fromDoor(id) }))
+        .filter(o => o.left >= item.W)
+        // Keep the door clear: the wall the door is on loses its width.
+        .filter(o => !(o.id === W.door.wall && o.left < item.W + W.door.width))
+        .sort((a, b) =>
+          Math.abs(a.d - item.want) - Math.abs(b.d - item.want) || b.left - a.left);
+      if(!options.length){
+        notes.push(item.label + ' (' + item.W + ') will not fit on any wall with room left');
+        return;
+      }
+      const pick = options[0];
+      const u = free[pick.id] + (pick.id === W.door.wall ? W.door.width : 0);
+      placed.push({ ...item, wall: pick.id, u });
+      free[pick.id] = u + item.W;
+    });
+    W.plan = placed;
+    W.extras = accessories(placed);
+    W.notes = notes;
+  }
+
+  // ---- the little plan drawing ----------------------------------------------
+  const COLOURS = { bath:'#CFE0EF', shower:'#CBE7DC', toilet:'#E8E4DA',
+                    'sink-base':'#E4D9C6', 'basin-fs':'#E4D9C6' };
+  function planSvg(){
+    const pad = 16, w = 210, h = 180;
+    const sx = (w - pad*2) / W.room.W, sy = (h - pad*2) / W.room.L;
+    const s = Math.min(sx, sy);
+    const rw = W.room.W * s, rh = W.room.L * s;
+    const x0 = (w - rw)/2, y0 = (h - rh)/2;
+    // Where a run along each wall lands, in page terms.
+    const seg = (wall, u, len) => {
+      if(wall === 'A') return [x0 + u*s, y0, len*s, 9];
+      if(wall === 'C') return [x0 + rw - (u+len)*s, y0 + rh - 9, len*s, 9];
+      if(wall === 'B') return [x0 + rw - 9, y0 + u*s, 9, len*s];
+      return [x0, y0 + rh - (u+len)*s, 9, len*s];
+    };
+    let g = '<rect x="'+x0+'" y="'+y0+'" width="'+rw+'" height="'+rh+
+            '" fill="#fff" stroke="#8A8578" stroke-width="1.5"/>';
+    W.plan.forEach(p => {
+      const [x, y, ww, hh] = seg(p.wall, p.u, p.W);
+      g += '<rect x="'+x+'" y="'+y+'" width="'+ww+'" height="'+hh+'" fill="'+
+           (COLOURS[p.type]||'#DDD')+'" stroke="#6E6A60" stroke-width="0.6"/>';
+    });
+    // The door, as a gap with a swing.
+    const [dx, dy, dw, dh] = seg(W.door.wall, 0, W.door.width);
+    g += '<rect x="'+dx+'" y="'+dy+'" width="'+dw+'" height="'+dh+'" fill="#fff" stroke="none"/>';
+    g += '<rect x="'+dx+'" y="'+dy+'" width="'+dw+'" height="'+dh+
+         '" fill="none" stroke="#B8863B" stroke-width="1.4"/>';
+    ORDER.forEach(id => {
+      const [lx, ly] = { A:[x0+rw/2, y0-4], C:[x0+rw/2, y0+rh+9],
+                         B:[x0+rw+5, y0+rh/2], D:[x0-8, y0+rh/2] }[id];
+      g += '<text x="'+lx+'" y="'+ly+'" font-size="7" fill="#8A8578" text-anchor="middle">'+id+'</text>';
+    });
+    return '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">'+g+'</svg>';
+  }
+
+  // ---- the steps -------------------------------------------------------------
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const num = (label, key, obj, min, max) =>
+    '<div class="wiz-f"><label>' + label + '</label>' +
+    '<input type="number" data-k="' + key + '" value="' + obj[key] + '" min="' + min + '" max="' + max + '" step="10"></div>';
+
+  function drawStep(){
+    const b = document.getElementById('wizBody');
+    document.getElementById('wizSub').textContent = STEPS[W.step];
+    document.getElementById('wizSteps').innerHTML =
+      STEPS.map((_, i) => '<i class="' + (i <= W.step ? 'done' : '') + '"></i>').join('');
+
+    if(W.step === 0){
+      b.innerHTML =
+        '<h3>How big is the room?</h3>' +
+        '<p class="hint">Inside face to inside face. If you have traced it in the site measure, ' +
+        'these will already be right.</p>' +
+        '<div class="wiz-pick" id="wizPresets">' +
+          ['1700 x 2100 · powder room','1800 x 2400 · ensuite','2400 x 2700 · main bathroom','3000 x 3000 · large']
+            .map((t,i) => '<button data-i="' + i + '">' + t + '</button>').join('') +
+        '</div>' +
+        '<div class="wiz-row">' + num('Width (mm)','W',W.room,900,6000) +
+          num('Length (mm)','L',W.room,900,6000) + num('Floor to ceiling','H',W.room,2100,4000) + '</div>' +
+        '<p class="hint">Walls A and C run the width; B and D run the length.</p>';
+      b.querySelectorAll('#wizPresets button').forEach(x => x.onclick = () => {
+        const p = [[1700,2100],[1800,2400],[2400,2700],[3000,3000]][+x.dataset.i];
+        W.room.W = p[0]; W.room.L = p[1]; drawStep();
+      });
+    }
+
+    if(W.step === 1){
+      b.innerHTML =
+        '<h3>Where is the door?</h3>' +
+        '<p class="hint">It decides the layout: the shower and bath go to the far end, the basin ' +
+        'goes near the door, and the toilet is kept off the wall you face walking in.</p>' +
+        '<div class="wiz-pick" id="wizDoorWall">' +
+          ORDER.map(id => '<button data-w="' + id + '"' + (W.door.wall === id ? ' class="on"' : '') +
+            '>Wall ' + id + ' &middot; ' + lenOf(id) + '</button>').join('') +
+        '</div>' +
+        '<div class="wiz-row">' + num('Door width (mm)','width',W.door,600,1200) + '</div>';
+      b.querySelectorAll('#wizDoorWall button').forEach(x => x.onclick = () => {
+        W.door.wall = x.dataset.w; drawStep();
+      });
+    }
+
+    if(W.step === 2){
+      const opt = (key, label, note, sizeKey, sizes) =>
+        '<label class="wiz-opt' + (W.want[key] ? ' on' : '') + '">' +
+          '<input type="checkbox" data-want="' + key + '"' + (W.want[key] ? ' checked' : '') + '>' +
+          '<span class="t">' + label + '<small>' + note + '</small></span>' +
+          (sizeKey ? '<select data-size="' + sizeKey + '">' + sizes.map(v =>
+            '<option value="' + v + '"' + (W.size[sizeKey] === v ? ' selected' : '') + '>' + v + ' mm</option>').join('') + '</select>' : '') +
+        '</label>';
+      b.innerHTML =
+        '<h3>What is going in?</h3>' +
+        '<p class="hint">Turn off anything you do not want. Sizes can be changed later on the drawing.</p>' +
+        opt('shower','Shower','Against the far wall from the door','shower',[900,1000,1200,1500]) +
+        opt('bath','Bath','Adds a bath as well as the shower','bath',[1500,1700,1800]) +
+        opt('vanity','Vanity','Joinery, with a benchtop','vanity',[600,750,900,1200,1500]) +
+        opt('basin','Basin only','Wall hung or pedestal, no joinery','basin',[450,550,600]) +
+        opt('toilet','Toilet','','toilet',[800,900,1000]) +
+        '<div style="height:8px"></div>' +
+        opt('mirror','Mirror','Over the basin') +
+        opt('rail','Towel rail','') +
+        opt('roll','Toilet roll holder','Beside the pan');
+      b.querySelectorAll('[data-want]').forEach(x => x.onchange = () => {
+        W.want[x.dataset.want] = x.checked;
+        // A vanity and a basin-only are the same job; picking one drops the other.
+        if(x.dataset.want === 'vanity' && x.checked) W.want.basin = false;
+        if(x.dataset.want === 'basin'  && x.checked) W.want.vanity = false;
+        drawStep();
+      });
+      b.querySelectorAll('[data-size]').forEach(x => x.onchange = () => {
+        W.size[x.dataset.size] = +x.value;
+      });
+    }
+
+    if(W.step === 3){
+      buildPlan();
+      const rows = W.plan.map(p =>
+        '<div><b>' + esc(p.label) + '</b> ' + p.W + ' wide &rarr; wall ' + p.wall +
+        ', ' + Math.round(p.u) + ' from the corner</div>').join('');
+      const extra = (W.extras || []).filter(e => e.wall).map(e =>
+        '<div>' + esc(e.label) + ' &rarr; wall ' + e.wall + '</div>').join('');
+      const loose = (W.extras || []).filter(e => !e.wall).map(e =>
+        '<div>' + esc(e.label) + ' &rarr; wherever there is room</div>').join('');
+      b.innerHTML =
+        '<h3>Here is the layout</h3>' +
+        '<p class="hint">Nothing is drawn yet. Finish writes it in as one step, so Ctrl+Z takes ' +
+        'the lot back if it is not what you wanted.</p>' +
+        '<div class="wiz-plan">' + planSvg() +
+          '<div class="wiz-list">' + (rows || '<div>Nothing chosen.</div>') + extra + loose +
+          ((W.notes || []).length ? '<div class="wiz-warn">' +
+            W.notes.map(esc).join('<br>') + '</div>' : '') +
+          '</div>' +
+        '</div>';
+    }
+
+    b.querySelectorAll('input[data-k]').forEach(x => x.oninput = () => {
+      const target = (W.step === 0) ? W.room : W.door;
+      const v = parseInt(x.value, 10);
+      if(!isNaN(v)) target[x.dataset.k] = v;
+    });
+    document.getElementById('wizBack').disabled = W.step === 0;
+    document.getElementById('wizNext').textContent = W.step === STEPS.length - 1 ? 'Finish' : 'Next';
+  }
+
+  // ---- writing it in ---------------------------------------------------------
+  function apply(){
+    pushHistory();
+    state.room.W = W.room.W; state.room.L = W.room.L; state.room.H = W.room.H;
+    // A room that has never had a door recorded gets one, rather than the
+    // answer being quietly dropped.
+    if(!state.room.door) state.room.door = { type:'door', position:600, swing:'L', headH:2100 };
+    state.room.door.wall = W.door.wall;
+    state.room.door.width = W.door.width;
+    // Clear whatever is on the walls first — the wizard lays a room out, it does
+    // not add to one. Anything already there was either a demo or a false start.
+    (state.walls || []).forEach(w => { w.baseRow = []; w.wallRow = []; });
+
+    const put = (wallId, type, width, u) => {
+      const wall = (state.walls || []).find(x => x.id === wallId);
+      if(!wall || !CATALOG[type]) return null;
+      const isWallRow = CATALOG[type].row === 'wall';
+      const arr = isWallRow ? wall.wallRow : wall.baseRow;
+      const cab = makeCab(type, width ? { W: width } : {});
+      arr.push(cab);
+      if(u != null){
+        moveCabToU(cab, arr, runStartOffset(wall, isWallRow ? 'wall' : 'base'),
+                   wallLength(wall.id), u, false, null, isWallRow);
+      }
+      return cab;
+    };
+
+    W.plan.forEach(p => put(p.wall, p.type, p.W, p.u));
+    (W.extras || []).forEach(e => {
+      // A towel rail with nowhere named goes on the emptiest wall.
+      let wallId = e.wall;
+      if(!wallId){
+        wallId = ORDER.slice().sort((a, b) =>
+          ((state.walls.find(w => w.id === a) || {}).baseRow || []).length -
+          ((state.walls.find(w => w.id === b) || {}).baseRow || []).length)[0];
+      }
+      put(wallId, e.type, e.W, e.u);
+    });
+
+    try { renderCabinetList(); } catch(_){}
+    try { renderEditPanel(); } catch(_){}
+    try { renderActive(); } catch(_){}
+    try { scheduleAutosave(); } catch(_){}
+  }
+
+  // ---- the buttons -----------------------------------------------------------
+  function open(){
+    W.step = 0;
+    // Start from the room as it is, so the wizard is usable on a job in progress.
+    if(state && state.room){
+      W.room.W = state.room.W; W.room.L = state.room.L; W.room.H = state.room.H;
+      if(state.room.door){ W.door.wall = state.room.door.wall || 'D';
+                           W.door.width = state.room.door.width || 820; }
+    }
+    bg.classList.add('on');
+    drawStep();
+  }
+  function close(){ bg.classList.remove('on'); }
+
+  btn.addEventListener('click', open);
+  document.getElementById('wizCancel').addEventListener('click', close);
+  document.getElementById('wizBack').addEventListener('click', () => {
+    if(W.step > 0){ W.step--; drawStep(); }
+  });
+  document.getElementById('wizNext').addEventListener('click', () => {
+    if(W.step < STEPS.length - 1){ W.step++; drawStep(); return; }
+    apply();
+    close();
+    try { showView('plan'); renderActive(); } catch(_){}
+  });
+  bg.addEventListener('click', e => { if(e.target === bg) close(); });
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && bg.classList.contains('on')) close();
+  });
+})();
 </script>
 
 <!-- ============================================================ ASK CLAUDE ===
