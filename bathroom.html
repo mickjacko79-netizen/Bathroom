@@ -10234,7 +10234,19 @@ function drawOneMeasure(d, x1, y1, x2, y2, s, live){
   const off = th*0.62 + 0.8;
   const cx = (x1+x2)/2 + (flip ? -nx : nx)*off;
   const cy = (y1+y2)/2 + (flip ? -ny : ny)*off;
-  const cA = Math.cos(ang), sA = Math.sin(ang);
+  // The figure faces the way the sheet's own dimensions face, which is what
+  // makes a tape reading sit among them rather than beside them: level on a
+  // level measurement, reading UP the page on an upright one, and along the
+  // line on anything else. That is archDimH, archDimV and archDimAlong in turn.
+  //
+  // Set along the line for everything, an upright measurement came out reading
+  // top to bottom — the opposite way round from every upright dimension on the
+  // same elevation, so a sheet with both on it had to be turned two ways.
+  const AX = 0.03;                                   // about 1.7°
+  let tAng = ang;
+  if(Math.abs(ang) < AX) tAng = 0;
+  else if(Math.abs(Math.abs(ang) - Math.PI/2) < AX) tAng = -Math.PI/2;
+  const cA = Math.cos(tAng), sA = Math.sin(tAng);
   const at = (a, b) => [cx + a*cA - b*sA, cy + a*sA + b*cA];
   const quad = [at(-tw/2,-th/2), at(tw/2,-th/2), at(tw/2,th/2), at(-tw/2,th/2)];
   // The box is drawn in the tape's own frame, so it stays with the figure at
@@ -10260,7 +10272,7 @@ function drawOneMeasure(d, x1, y1, x2, y2, s, live){
   }
   d.text(cx - sA*(size*0.36), cy + cA*(size*0.36), label,
     { align:'center', baseline:'alphabetic', size,
-      color: (ms.fill === 'solid') ? '#FFFFFF' : col, angle:ang });
+      color: (ms.fill === 'solid') ? '#FFFFFF' : col, angle:tAng });
   const xs = quad.map(p=>p[0]), ys = quad.map(p=>p[1]);
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
