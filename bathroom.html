@@ -477,7 +477,7 @@ header .project-label .dot.dirty{background:#F7C04A}
           <button id="measureToggle" class="btn small" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Start measuring</button>
           <button id="measureClear" class="btn small" style="padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Clear</button>
         </div>
-        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:4px" id="measureHint">Click two points on the plan or any elevation. It catches on the corners and faces of anything on the sheet, and squares itself up when it is nearly square. <b>Esc</b> drops a half-made one. Click a figure to keep or delete that measurement.</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:4px" id="measureHint">Click two points on the plan or any elevation. It catches on the corners and faces of anything on the sheet, and squares itself up when it is nearly square. <b>Esc</b> drops a half-made one. Drag either end of a measurement to correct it, or its line to move the whole thing; click its figure to keep or delete it.</div>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:-2px" id="measureCount"></div>
         <div class="row2">
           <div class="ctrl"><label>Line weight <span class="val"><input class="valInp" id="measureScaleVal" type="number" min="0.01" max="3" step="0.01" value="0.34"></span></label><input id="measureScale" type="range" min="1" max="300" step="1" value="34"></div>
@@ -1642,6 +1642,10 @@ header .project-label .dot.dirty{background:#F7C04A}
               on the sheet it was taken on. <kbd>Esc</kbd> drops a half-made one and again puts the tape
               away; clicking a figure asks whether to keep that measurement or delete it, <b>Clear</b>
               removes them all from the sheet, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes any of it back.</p>
+            <p>A measurement already on the sheet is dragged rather than retaken. Take hold of either
+              end to correct it — the end catches and squares up as it would if it were being placed for
+              the first time — or take hold of the line to move the whole thing off whatever it is
+              sitting over. The cursor says which it will be. The whole drag is one undo step.</p>
             <p>The tape's colour, line weight and figure size are set in the same panel, along with the
               box behind the figure — its shape (rectangle, rounded, pill, ellipse, or no outline) and
               what is behind it (opaque white, opaque colour with the figure reversed out, or clear).
@@ -3254,7 +3258,7 @@ const state = {
         // Openings are dragged too — doors and windows move along their wall.
         selectedFitId:null, placeMode:null, fitDrag:null, cropDrag:null, opDrag:null,
         // The tape: the point taken so far, and the point under the cursor.
-        measureMode:false, measureP1:null, measureHover:null, measureHi:null,
+        measureMode:false, measureP1:null, measureHover:null, measureHi:null, mDrag:null,
         drag:{ pending:null, active:false, hoverU:0 } },
   rooms: [],
   // The site measure plan this job was traced from, in the measure's own export
@@ -10169,6 +10173,38 @@ function findMeasureAt(view, px, py){
   }
   return null;
 }
+// What is under the cursor on a measurement, and which part of it.
+//
+// A measurement is taken quickly and then corrected — an end landed on the
+// wrong face, or the whole thing wants shifting off what it is sitting over.
+// Both were retakes: delete it and click twice again.
+//
+// The ends come first. An end is what you reach for to correct a measurement,
+// and it sits inside the body's own reach, so testing the body first would
+// never let you have one.
+function distToSeg(x, y, a, b){
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const l2 = dx*dx + dy*dy;
+  if(!(l2 > 0)) return Math.hypot(x - a.x, y - a.y);
+  const t = Math.max(0, Math.min(1, ((x - a.x)*dx + (y - a.y)*dy) / l2));
+  return Math.hypot(x - (a.x + t*dx), y - (a.y + t*dy));
+}
+function measureGrabAt(view, x, y){
+  const list = (state.measurements && state.measurements[view]) || [];
+  for(let i = list.length - 1; i >= 0; i--){
+    const m = list[i];
+    if(Math.hypot(m.p1.x - x, m.p1.y - y) <= 2.6) return { i, part:'p1' };
+    if(Math.hypot(m.p2.x - x, m.p2.y - y) <= 2.6) return { i, part:'p2' };
+  }
+  // Then the figure, which is the handle on the whole measurement and the
+  // smallest target on it.
+  const mh = findMeasureAt(view, x, y);
+  if(mh) return { i: mh.i, part:'label' };
+  for(let i = list.length - 1; i >= 0; i--){
+    if(distToSeg(x, y, list[i].p1, list[i].p2) <= 1.8) return { i, part:'all' };
+  }
+  return null;
+}
 // The points a measurement catches on: every corner and edge centre of anything
 // the sheet has hit-tested — cabinets, openings, fittings. Those are the faces
 // you actually want a tape between, and picking them by eye at 1:50 is guesswork
@@ -14900,8 +14936,29 @@ function wireViewport(canvas){
       canvas.classList.add('panning'); e.preventDefault();
       return;
     }
-    // Measure mode handles clicks via the 'click' handler; suppress cab-drag start here.
-    if(state.ui.measureMode){ e.preventDefault(); return; }
+    // Measure mode places its points on the 'click' handler, so there is no
+    // cab drag to start — but a measurement already on the sheet is picked up
+    // here, the same as anything else that gets dragged.
+    if(state.ui.measureMode){
+      e.preventDefault();
+      const _mv = state.ui.view;
+      if(_mv === 'cover') return;
+      const _mp = clientToPageMM(canvas, e.clientX, e.clientY);
+      flushRender();
+      const g = measureGrabAt(_mv, _mp.x, _mp.y);
+      // Written every time, not only when something is caught. The flag is what
+      // stops the same gesture also starting a new measurement, and the click
+      // that clears it only arrives if the button comes up over the canvas —
+      // let go off the edge of the sheet and it stayed set, and swallowed the
+      // next click instead of its own.
+      state.ui._mGesture = !!g;
+      if(g){
+        state.ui.mDrag = { view:_mv, i:g.i, part:g.part, fromLabel:(g.part === 'label'),
+                           ox:_mp.x, oy:_mp.y, moved:false };
+        canvas.style.cursor = 'grabbing';
+      }
+      return;
+    }
     const _view = state.ui.view;
     // FITTINGS come first: they sit on top of the joinery, and a GPO drawn over
     // a cabinet front must be grabbable rather than starting a cabinet drag.
@@ -14975,6 +15032,9 @@ function wireViewport(canvas){
       // An opening, picked up where it is drawn. It comes after the joinery on
       // purpose — openings sit behind it, so a cabinet standing in front of one
       // still wins the grab, which is the same order the click already used.
+      // Cleared on every press for the same reason the tape's is: the click
+      // that clears it only comes if the button comes up over the canvas.
+      state.ui._opGesture = false;
       if(!hit){
         const ohit = findOpeningAt(_view, p.x, p.y);
         const oh = openingFromHit(ohit);
@@ -15070,6 +15130,34 @@ function wireViewport(canvas){
       renderView();
       return;
     }
+    // A measurement is being dragged: an end on its own, or the whole of it.
+    if(state.ui.mDrag){
+      const D = state.ui.mDrag;
+      const arr = (state.measurements && state.measurements[D.view]) || [];
+      const m = arr[D.i];
+      if(!m){ state.ui.mDrag = null; return; }
+      const p = clientToPageMM(canvas, e.clientX, e.clientY);
+      if(!D.moved){
+        // A press that never travels is a click on the figure, not a drag.
+        if(Math.hypot(p.x - D.ox, p.y - D.oy) < 1.2) return;
+        pushHistory(); D.moved = true;
+      }
+      if(D.part === 'p1' || D.part === 'p2'){
+        // An end being moved catches and squares up against the other end,
+        // exactly as it would if it were being placed for the first time.
+        const other = (D.part === 'p1') ? m.p2 : m.p1;
+        const q = measurePoint(D.view, p.x, p.y, other);
+        m[D.part] = { x:q.x, y:q.y };
+        state.ui.measureHover = { view:D.view, x:q.x, y:q.y, snapped:!!q.snapped };
+      } else {
+        const dx = p.x - D.ox, dy = p.y - D.oy;
+        m.p1 = { x:m.p1.x + dx, y:m.p1.y + dy };
+        m.p2 = { x:m.p2.x + dx, y:m.p2.y + dy };
+        D.ox = p.x; D.oy = p.y;
+      }
+      renderActive();
+      return;
+    }
     // The tape follows the cursor, so the figure is there before the second
     // point is committed rather than only after it.
     if(state.ui.measureMode){
@@ -15079,7 +15167,12 @@ function wireViewport(canvas){
       const from = (state.ui.measureP1 && state.ui.measureP1.view === v) ? state.ui.measureP1 : null;
       const p = measurePoint(v, raw.x, raw.y, from);
       state.ui.measureHover = { view:v, x:p.x, y:p.y, snapped:!!p.snapped };
-      canvas.style.cursor = findMeasureAt(v, raw.x, raw.y) ? 'pointer' : 'crosshair';
+      // What the cursor says it will do: take an end, take the whole thing, ask
+      // about the figure, or start a new measurement.
+      const g = measureGrabAt(v, raw.x, raw.y);
+      canvas.style.cursor = !g ? 'crosshair'
+        : (g.part === 'label') ? 'pointer'
+        : (g.part === 'all')   ? 'move' : 'grab';
       renderActive();
       return;
     }
@@ -15186,6 +15279,20 @@ function wireViewport(canvas){
       e.preventDefault();
       return;
     }
+    // A measurement finishes where it was let go. Let go without having moved,
+    // and it was a click on the figure after all — which asks.
+    if(state.ui.mDrag){
+      const D = state.ui.mDrag;
+      state.ui.mDrag = null;
+      canvas.style.cursor = '';
+      if(D.moved){ scheduleAutosave(); syncMeasurePanel(); renderActive(); }
+      else if(D.fromLabel){
+        const rec = (measureHitRegistry[D.view] || []).find(r => r.i === D.i);
+        if(rec) showMeasureMenu(canvas, D.view, D.i, (rec.b[0]+rec.b[2])/2, rec.b[1]);
+      }
+      e.preventDefault();
+      return;
+    }
     // An opening finishes where it was let go. Moved or not, its editor comes
     // up: the gesture that picks one up is also the one that opens it.
     if(state.ui.opDrag){
@@ -15280,14 +15387,10 @@ function wireViewport(canvas){
       const view = state.ui.view;
       if(view === 'cover') return;
       flushRender();
-      // The figure is the handle on a measurement — keep it or delete it, one
-      // at a time rather than clearing the sheet, which was the only way to get
-      // rid of a stray one.
-      const mh = findMeasureAt(view, raw.x, raw.y);
-      if(mh && state.measurements && state.measurements[view]){
-        showMeasureMenu(canvas, view, mh.i, (mh.b[0]+mh.b[2])/2, mh.b[1]);
-        return;
-      }
+      // A measurement already on the sheet was taken hold of on mousedown —
+      // dragged, or clicked on its figure, which asks. Either way the same
+      // gesture must not also start a new measurement where it finished.
+      if(state.ui._mGesture){ state.ui._mGesture = false; return; }
       if(!state.measurements) state.measurements = {};
       if(!state.measurements[view]) state.measurements[view] = [];
       const from = (state.ui.measureP1 && state.ui.measureP1.view === view) ? state.ui.measureP1 : null;
