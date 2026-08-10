@@ -8,6 +8,27 @@ const SRC = path.join(__dirname, '..');
 const DEST = path.join(__dirname, 'bundled');
 const FILES = ['bathroom.html', 'jspdf.umd.min.js', 'icon.ico'];
 
+// The Legal page prints a version, and the drawing app also runs in a plain
+// browser where there is no package.json to read it from — so the number is
+// written into bathroom.html as well. Two copies of one fact drift the first
+// time someone bumps only one of them, so the build stops rather than ship a
+// Legal page claiming to be a version that was never released.
+{
+  const pkg = require('./package.json').version;
+  const html = fs.readFileSync(path.join(SRC, 'bathroom.html'), 'utf8');
+  const m = html.match(/const APP_VERSION = '([^']+)'/);
+  if (!m) {
+    console.error('bathroom.html has no APP_VERSION — the Legal page cannot say what it is.');
+    process.exit(1);
+  }
+  if (m[1] !== pkg) {
+    console.error(`VERSION MISMATCH: package.json says ${pkg}, bathroom.html says ${m[1]}.`);
+    console.error('Set APP_VERSION in bathroom.html to match, then build again.');
+    process.exit(1);
+  }
+  console.log(`version    ${pkg}  (package.json and bathroom.html agree)`);
+}
+
 fs.mkdirSync(DEST, { recursive: true });
 let missing = [];
 FILES.forEach(f => {

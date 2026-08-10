@@ -153,42 +153,42 @@ header .meta{color:#9FB4C6;font-size:11.5px;letter-spacing:.02em}
 /* The guide reads like a page, not a sheet: it scrolls, it is set in prose
    widths, and its contents list stays put while the body moves. Carried over
    from the joinery app so the two read the same way. */
-#v-manual{display:none;padding:0;overflow:hidden;background:#fff}
+#v-manual,#v-legal{display:none;padding:0;overflow:hidden;background:#fff}
 /* .viewer centres what is inside it, which is right for a sheet and wrong for
    a page: the row has to stretch, or the grid stands taller than the window
    and the guide opens half way down itself. */
-#v-manual.on{display:grid;grid-template-columns:236px 1fr;grid-template-rows:100%;
+#v-manual.on,#v-legal.on{display:grid;grid-template-columns:236px 1fr;grid-template-rows:100%;
   align-items:stretch;height:100%;border:1px solid var(--border);border-radius:6px;
   box-shadow:0 8px 30px rgba(0,0,0,.10),0 1px 3px rgba(0,0,0,.06);overflow:hidden}
-#v-manual .toc{border-right:1px solid var(--border);background:var(--panel);overflow:auto;padding:18px 0 40px}
-#v-manual .toc h4{margin:0 0 6px;padding:0 18px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
-#v-manual .toc a{display:block;padding:5px 18px;font-size:12px;color:var(--text);text-decoration:none;border-left:2px solid transparent;line-height:1.35}
-#v-manual .toc a:hover{background:#EAF1F6;border-left-color:var(--brand)}
-#v-manual .toc a.here{background:#EAF1F6;border-left-color:var(--brand);color:var(--brand);font-weight:650}
-#v-manual .toc .sep{height:1px;background:var(--border);margin:12px 18px}
-#v-manual .body{overflow:auto;padding:0 0 90px}
-#v-manual .inner{max-width:760px;margin:0 auto;padding:30px 34px 0}
-#v-manual .lede{font-size:13.5px;line-height:1.65;color:var(--muted);margin:0 0 26px}
-#v-manual h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em;color:var(--brand)}
-#v-manual .sub{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 22px}
-#v-manual section{padding-top:26px;margin-top:4px;border-top:1px solid var(--border)}
-#v-manual section:first-of-type{border-top:0}
-#v-manual h2{font-size:17px;margin:0 0 10px;color:var(--brand);letter-spacing:-.005em}
-#v-manual h3{font-size:13px;margin:20px 0 6px;color:var(--text);font-weight:700}
-#v-manual p{margin:0 0 11px;font-size:13px;line-height:1.62;color:var(--text)}
-#v-manual ul,#v-manual ol{margin:0 0 13px;padding-left:20px}
-#v-manual li{font-size:13px;line-height:1.6;margin-bottom:5px}
-#v-manual b{font-weight:650}
-#v-manual kbd{font:inherit;font-size:11.5px;font-weight:650;background:var(--soft);border:1px solid var(--border);
+#v-manual .toc,#v-legal .toc{border-right:1px solid var(--border);background:var(--panel);overflow:auto;padding:18px 0 40px}
+#v-manual .toc h4,#v-legal .toc h4{margin:0 0 6px;padding:0 18px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
+#v-manual .toc a,#v-legal .toc a{display:block;padding:5px 18px;font-size:12px;color:var(--text);text-decoration:none;border-left:2px solid transparent;line-height:1.35}
+#v-manual .toc a:hover,#v-legal .toc a:hover{background:#EAF1F6;border-left-color:var(--brand)}
+#v-manual .toc a.here,#v-legal .toc a.here{background:#EAF1F6;border-left-color:var(--brand);color:var(--brand);font-weight:650}
+#v-manual .toc .sep,#v-legal .toc .sep{height:1px;background:var(--border);margin:12px 18px}
+#v-manual .body,#v-legal .body{overflow:auto;padding:0 0 90px}
+#v-manual .inner,#v-legal .inner{max-width:760px;margin:0 auto;padding:30px 34px 0}
+#v-manual .lede,#v-legal .lede{font-size:13.5px;line-height:1.65;color:var(--muted);margin:0 0 26px}
+#v-manual h1,#v-legal h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em;color:var(--brand)}
+#v-manual .sub,#v-legal .sub{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 22px}
+#v-manual section,#v-legal section{padding-top:26px;margin-top:4px;border-top:1px solid var(--border)}
+#v-manual section:first-of-type,#v-legal section:first-of-type{border-top:0}
+#v-manual h2,#v-legal h2{font-size:17px;margin:0 0 10px;color:var(--brand);letter-spacing:-.005em}
+#v-manual h3,#v-legal h3{font-size:13px;margin:20px 0 6px;color:var(--text);font-weight:700}
+#v-manual p,#v-legal p{margin:0 0 11px;font-size:13px;line-height:1.62;color:var(--text)}
+#v-manual ul,#v-legal ul,#v-manual ol,#v-legal ol{margin:0 0 13px;padding-left:20px}
+#v-manual li,#v-legal li{font-size:13px;line-height:1.6;margin-bottom:5px}
+#v-manual b,#v-legal b{font-weight:650}
+#v-manual kbd,#v-legal kbd{font:inherit;font-size:11.5px;font-weight:650;background:var(--soft);border:1px solid var(--border);
   border-bottom-width:2px;border-radius:4px;padding:1px 6px;white-space:nowrap}
-#v-manual .ui{font-weight:650;color:var(--brand)}
-#v-manual table{border-collapse:collapse;width:100%;margin:2px 0 15px;font-size:12.5px}
-#v-manual th{text-align:left;font-weight:700;color:var(--muted);font-size:10px;letter-spacing:.1em;
+#v-manual .ui,#v-legal .ui{font-weight:650;color:var(--brand)}
+#v-manual table,#v-legal table{border-collapse:collapse;width:100%;margin:2px 0 15px;font-size:12.5px}
+#v-manual th,#v-legal th{text-align:left;font-weight:700;color:var(--muted);font-size:10px;letter-spacing:.1em;
   text-transform:uppercase;padding:0 10px 5px 0;border-bottom:1px solid var(--border)}
-#v-manual td{padding:6px 10px 6px 0;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
-#v-manual td:first-child{white-space:nowrap;font-weight:650;width:1%}
-#v-manual .note{background:var(--soft);border-left:3px solid var(--brand);padding:10px 14px;margin:0 0 14px;font-size:12.5px;line-height:1.6}
-#v-manual .note b{color:var(--brand)}
+#v-manual td,#v-legal td{padding:6px 10px 6px 0;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+#v-manual td:first-child,#v-legal td:first-child{white-space:nowrap;font-weight:650;width:1%}
+#v-manual .note,#v-legal .note{background:var(--soft);border-left:3px solid var(--brand);padding:10px 14px;margin:0 0 14px;font-size:12.5px;line-height:1.6}
+#v-manual .note b,#v-legal .note b{color:var(--brand)}
 .hint{position:absolute;left:24px;bottom:14px;color:var(--muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase}
 /* Hidden file pickers must stay hidden wherever they sit. */
 input[type=file].hidden-file{display:none !important}
@@ -1803,6 +1803,171 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><td>A setting has no effect</td><td>An override on the fixture beats the job default, so the default looks ignored until you reset it.</td></tr>
               <tr><td>One wall's tile will not change</td><td>The job-wide tile is in <span class="ui">Wall tiling</span>; one wall is <span class="ui">Tile on this wall</span> in <span class="ui">Run trim</span>, and it only affects the active wall.</td></tr>
             </table>
+          </section>
+        </div>
+      </div>
+    </div>
+    <!-- Legal. Same page furniture as the guide — it is a document, not a
+         sheet, and it should read like one. The wording is the framing app's,
+         carried across and set to what this app actually does: a bathroom is
+         waterproofing, falls, plumbing set-outs and electrical zones rather
+         than spans, bracing and tie-downs, so the disclaimer is about those. -->
+    <div class="viewer" id="v-legal">
+      <nav class="toc">
+        <h4>Legal</h4>
+        <a href="#lg-own">1 · Ownership and copyright</a>
+        <a href="#lg-lic">2 · Licence to use</a>
+        <a href="#lg-dis">3 · Building and compliance disclaimer</a>
+        <a href="#lg-data">4 · Your data and privacy</a>
+        <a href="#lg-3rd">5 · Third-party components</a>
+        <a href="#lg-std">6 · Standards referenced</a>
+        <a href="#lg-contact">7 · Contact</a>
+      </nav>
+      <div class="body">
+        <div class="inner">
+          <h1>Legal</h1>
+          <div class="sub">Bathroom Drawing Set · including the embedded SiteMeasure module</div>
+          <p class="lede">Version <span id="legalVersion">—</span></p>
+
+          <section id="lg-own">
+            <h2>1 · Ownership and copyright</h2>
+            <p><b>© 2026 Draw Spec. All rights reserved.</b></p>
+            <p>This software — including the Bathroom Drawing Set, the embedded SiteMeasure module, their
+              source code, interfaces, drawing and schedule templates, fixture and product data, sample
+              data and accompanying documentation — is the property of Draw Spec and is protected by
+              Australian and international copyright law. All rights not expressly granted below are
+              reserved by Draw Spec.</p>
+            <p>Drawings, schedules, set-outs and other output that <i>you</i> produce with the software
+              remain your own work and your own property. Draw Spec claims no ownership of your project
+              data.</p>
+          </section>
+
+          <section id="lg-lic">
+            <h2>2 · Licence to use</h2>
+            <p>The software is <b>licensed, not sold</b>. Subject to these terms and to payment of any
+              applicable fee, Draw Spec grants you a non-exclusive, non-transferable licence to install
+              and use the software for your own business or personal purposes.</p>
+            <p>You may not, without Draw Spec's prior written consent:</p>
+            <ul>
+              <li>copy, publish, distribute, sell, rent, lease or sub-licence the software;</li>
+              <li>reverse-engineer, decompile or disassemble the software, or attempt to derive its
+                source code, except to the extent that such a restriction is prohibited by law;</li>
+              <li>remove, obscure or alter any copyright, licence or ownership notice; or</li>
+              <li>share, publish or transfer a licence issued to you. A licence is issued to a named
+                licensee and is tied to that licensee.</li>
+            </ul>
+            <p>Draw Spec may suspend or revoke a licence that is used in breach of these terms.</p>
+          </section>
+
+          <section id="lg-dis">
+            <h2>3 · Building and compliance disclaimer — please read</h2>
+            <div class="note">
+              <p><b>This software is a design and documentation aid. It is not a substitute for building
+                design, engineering, certification, or the licensed trades.</b></p>
+              <p>Output produced by the software — including but not limited to floor plans, elevations,
+                fixture set-outs, waterproofing and screed notes, falls and floor waste positions, tap and
+                waste rough-in dimensions, niche and blade wall sizes, wall and floor tiling set-outs,
+                electrical and light positions, glazing, joinery details, schedules and quantities —
+                <b>must be checked and verified by the responsible building designer, engineer, licensed
+                plumber, licensed electrician, waterproofer and building surveyor before it is used for
+                construction or ordering.</b></p>
+              <p>In particular, the software does <b>not</b> determine or certify: waterproofing extent,
+                membrane selection or substrate preparation; floor falls, screed depths or drainage
+                capacity; plumbing and drainage design; electrical zoning, IP ratings or circuit design;
+                mechanical ventilation rates; structural adequacy of any wall a niche, blade, cistern,
+                wall-hung pan or grab rail is fixed to or cut into; glazing type or thickness; or
+                accessibility compliance.</p>
+              <p>Responsibility for compliance with the National Construction Code and all applicable
+                Australian Standards, together with any project-specific documentation, manufacturer's
+                installation instructions, plumbing or electrical regulations, and council or certifier
+                requirements, rests entirely with the user. Where any of those differ from the software's
+                output, <b>they prevail</b>.</p>
+              <p>Fixture sizes, product data, set-out defaults, clearances and heights built into the
+                software are provided as a starting point only, and may be edited by the user. Product
+                dimensions change without notice: <b>confirm every fixture against the manufacturer's
+                current published data before ordering, and against the item itself before rough-in.</b>
+                Draw Spec does not warrant that any default value is correct for a given fixture, room,
+                substrate or site.</p>
+            </div>
+            <p>To the maximum extent permitted by law, the software is provided <b>"as is"</b>, without
+              warranty of any kind, express or implied, including any warranty of merchantability, fitness
+              for a particular purpose or non-infringement. Draw Spec accepts no liability for any loss,
+              damage, cost, delay or rectification expense arising from use of, or reliance on, the
+              software or its output.</p>
+            <p style="font-size:12px;color:var(--muted);font-style:italic">Nothing in these terms excludes,
+              restricts or modifies any consumer guarantee, right or remedy under the Australian Consumer
+              Law that cannot lawfully be excluded.</p>
+          </section>
+
+          <section id="lg-data">
+            <h2>4 · Your data and privacy</h2>
+            <p>The software runs entirely on your own device. Projects, drawings, site measures, photos,
+              logos, colour palettes and samples are stored <b>locally</b> — in this application's own
+              storage and in the project files you save. There is no account, no server, and no usage
+              tracking or telemetry: <b>your project data is not transmitted to Draw Spec or to any third
+              party.</b></p>
+            <p>One exception, and only where you use it: the <span class="ui">Ask Claude</span> panel sends
+              what you type — and the drawing, if you hand one over — to Anthropic's Claude service through
+              the Claude Code tool installed on your own machine, under your own Anthropic account and
+              their terms. Nothing is sent unless you ask. Leave the panel alone and nothing leaves the
+              device.</p>
+            <p>Because the data is local, <b>backups are your responsibility</b>. Use
+              <span class="ui">Export</span> to write a project file out, and keep copies of anything you
+              would not want to lose. Clearing the application's storage, or uninstalling without
+              exporting, will remove saved projects.</p>
+          </section>
+
+          <section id="lg-3rd">
+            <h2>5 · Third-party components</h2>
+            <p>This software includes the following open-source components. They remain the property of
+              their respective authors and are used under their own licences, reproduced here as those
+              licences require.</p>
+            <table>
+              <tr><th>Component</th><th>Licence</th><th>Copyright</th></tr>
+              <tr><td>Electron</td><td>MIT</td><td>© GitHub Inc. and Electron contributors</td></tr>
+              <tr><td>Chromium runtime</td><td>BSD 3-Clause</td><td>© The Chromium Authors</td></tr>
+              <tr><td>Node.js</td><td>MIT</td><td>© Node.js contributors and OpenJS Foundation</td></tr>
+              <tr><td>jsPDF</td><td>MIT</td><td>© James Hall and yWorks GmbH</td></tr>
+            </table>
+            <p style="font-size:12px;color:var(--muted);font-style:italic">MIT and BSD licences permit
+              commercial use, modification and distribution provided the original copyright and permission
+              notices are retained. Full licence texts are included with the installed application.</p>
+          </section>
+
+          <section id="lg-std">
+            <h2>6 · Standards referenced</h2>
+            <p>The software names Australian Standards and the National Construction Code for
+              identification only — so a drawing can say which document a set-out is being read against.
+              Among them:</p>
+            <table>
+              <tr><th>Reference</th><th>Subject</th></tr>
+              <tr><td>NCC</td><td>National Construction Code, including its wet area and ventilation provisions</td></tr>
+              <tr><td>AS 3740</td><td>Waterproofing of domestic wet areas</td></tr>
+              <tr><td>AS 3958</td><td>Ceramic tiles — installation</td></tr>
+              <tr><td>AS/NZS 3500</td><td>Plumbing and drainage</td></tr>
+              <tr><td>AS/NZS 3000</td><td>Wiring rules, including the bathroom zones</td></tr>
+              <tr><td>AS 1288</td><td>Glass in buildings</td></tr>
+              <tr><td>AS 1428</td><td>Design for access and mobility</td></tr>
+              <tr><td>AS 1100</td><td>Technical drawing</td></tr>
+            </table>
+            <p>Draw Spec is not affiliated with, endorsed by, or licensed by Standards Australia or the
+              Australian Building Codes Board, and this software does not reproduce those standards. Users
+              must hold and consult their own current copies.</p>
+            <p>The software lists engineered stone products and raises a note where one is chosen.
+              Engineered stone benchtops, panels and slabs have been prohibited for new work in Australia
+              since 1 July 2024. That note is a convenience, not advice: <b>confirm the current position
+              with your state regulator and with Safe Work Australia before specifying any surface.</b></p>
+          </section>
+
+          <section id="lg-contact">
+            <h2>7 · Contact</h2>
+            <p><b>Draw Spec</b><br>
+              ABN 86 639 476 894<br>
+              <a href="mailto:mike@drawspec.com.au">mike@drawspec.com.au</a><br>
+              <a href="https://www.drawspec.com.au" target="_blank" rel="noopener">www.drawspec.com.au</a></p>
+            <p style="margin-top:26px;padding-top:12px;border-top:2px solid var(--border);font-size:11px;color:var(--muted)">
+              © 2026 Draw Spec. All rights reserved. · Bathroom Drawing Set
+              <span id="legalVersionFoot"></span></p>
           </section>
         </div>
       </div>
@@ -14410,6 +14575,17 @@ function drawApplianceSchedule(d, area){
 // SHEET SIZING + VIEWPORT (pan/zoom)
 // ============================================================
 const PAGE_W = 420, PAGE_H = 297;
+// What the Legal page says it is. The drawing app also runs in a plain browser,
+// where there is no package.json to read and no shell to ask, so the number
+// lives here — and sync-bundle.js refuses to build if it and package.json have
+// drifted apart, which is the only way a version in two places stays in one.
+const APP_VERSION = '1.30.0';
+function syncLegalVersion(){
+  const a = document.getElementById('legalVersion');
+  const b = document.getElementById('legalVersionFoot');
+  if(a) a.textContent = APP_VERSION;
+  if(b) b.textContent = 'v' + APP_VERSION;
+}
 
 function getViewport(view){
   if(!state.viewports[view]) state.viewports[view] = { zoom:1, panX:0, panY:0 };
@@ -14500,6 +14676,7 @@ const SHEETS_TAIL = [
   { view:'appliances',  title:'SANITARYWARE SCHEDULE',                canvas:'cAppliances', indexTitle:'Sanitaryware schedule' },
   // Not a sheet — a working tab, like Draw. Out of the index and the PDF.
   { view:'manual',      title:'USER GUIDE',                        canvas:null,          indexTitle:'User guide', noSheet:true },
+  { view:'legal',       title:'LEGAL',                             canvas:null,          indexTitle:'Legal', noSheet:true },
 ];
 // Kept for anything that still reads the old flat list.
 const FIXED_SHEETS = SHEETS_HEAD.concat(SHEETS_ELEV, SHEETS_TAIL);
@@ -17888,10 +18065,13 @@ function showView(v){
   if(v !== 'draw' && document.body.classList.contains('sm-full')){
     try { setSiteMeasureFull(false); } catch(_){}
   }
-  if(v === 'manual'){
+  if(v === 'manual' || v === 'legal'){
     // A document. There is no canvas behind it and nothing to render.
-    hint.textContent = 'User guide · how the app is meant to be driven';
-    const _mp = document.getElementById('v-manual');
+    hint.textContent = (v === 'legal')
+      ? 'Legal · ownership, licence, disclaimer and third-party notices'
+      : 'User guide · how the app is meant to be driven';
+    if(v === 'legal'){ try { syncLegalVersion(); } catch(_){} }
+    const _mp = document.getElementById('v-' + v);
     // Measured while the page is hidden every rect is zero and the last link
     // wins, so the marking waits until the tab is actually open.
     if(_mp && _mp.__markToc) setTimeout(_mp.__markToc, 0);
@@ -18268,9 +18448,12 @@ document.getElementById('thickBar').addEventListener('click', e=>{
   state.back.T = state.carcass.T;
   renderActive();
 });
-// The guide's contents list: click to jump, and it follows you down the page.
-(function(){
-  const page = document.getElementById('v-manual');
+// The contents list on a document page: click to jump, and it follows you down
+// the page. Both documents get it — the guide and the legal page are the same
+// piece of furniture, and a bare href on either would move the whole window,
+// which in a fixed layout means the header scrolls away and cannot be got back.
+['v-manual', 'v-legal'].forEach(function(pageId){
+  const page = document.getElementById(pageId);
   if(!page) return;
   const body = page.querySelector('.body');
   const links = Array.from(page.querySelectorAll('.toc a'));
@@ -18286,8 +18469,6 @@ document.getElementById('thickBar').addEventListener('click', e=>{
     });
     links.forEach(a => a.classList.toggle('here', a === at));
   };
-  // A bare href would move the whole window, which in a fixed layout means the
-  // header scrolls away and cannot be got back.
   links.forEach(a=>{
     a.addEventListener('click', e=>{
       e.preventDefault();
@@ -18298,7 +18479,7 @@ document.getElementById('thickBar').addEventListener('click', e=>{
   });
   body.addEventListener('scroll', mark, { passive:true });
   page.__markToc = mark;
-})();
+});
 document.getElementById('finishBar').addEventListener('click', e=>{
   const t = e.target.closest('.sw'); if(!t) return;
   document.querySelectorAll('#finishBar .sw').forEach(s=>s.classList.remove('on'));
