@@ -3466,7 +3466,7 @@ const state = {
   bench:   { material:'stone-white', overhang:20, splashback:1250, height:850, colorOverride:null, hatchOverride:null,
              brand:'dekton', product:'', finish:'matt', edge:'square' },
   splashback: { type:'tile', brand:null, product:'', finish:null, colorOverride:null, hatchOverride:null,
-                tileW:300, tileH:600, bond:0.5, fullWalls:true,
+                tileW:300, tileH:600, tileSized:false, bond:0.5, fullWalls:true,
                 // datum: where the tiling is set out from, mm above finished
                 // floor level. gauge: which end of the wall carries the part
                 // course when the height does not divide by the tile.
@@ -9897,6 +9897,19 @@ function withPlanVOff(off, fn){
 // Wall tiling is where it is made. Nulling it here meant that control did
 // nothing at all on any wall, blade or low wall carrying its own finish — which
 // after the wizard has set a finish per wall is every wall in the room.
+// And what size to lend with it.
+//
+// A size that came off the tile list belongs to that list entry: lend it on and
+// every wall gets the first tile's module whatever tile it is actually using.
+// A size typed into the panel belongs to the job, and is meant to apply. The
+// two are told apart by a flag that typing sets and picking a tile clears -
+// without it there is no way to know which of the two a number is, and the
+// safe-looking choice was to drop both, which is what made the width and
+// height fields dead on every wall the wizard had given a finish to.
+function lentSize(own, jobVal, jobTyped){
+  if(own > 0) return own;
+  return (jobTyped && jobVal > 0) ? jobVal : null;
+}
 function lentBond(rec, jobBond){
   const b = rec && rec.bond;
   return (b === undefined || b === null) ? jobBond : b;
@@ -9908,12 +9921,13 @@ function withWallFinish(wall, fn){
   const sp = state.splashback || {};
   const W = wall && wall.splashback;
   if(!W || !W.tile) return fn();
-  const keys = ['type','tile','tileW','tileH','bond','colorOverride','jointColorOverride'];
+  const keys = ['type','tile','tileW','tileH','tileSized','bond','colorOverride','jointColorOverride'];
   const saved = {};
   keys.forEach(k => saved[k] = sp[k]);
   const t = WALL_TILE_TYPES[W.tile];
   sp.type = 'tile'; sp.tile = W.tile;
-  sp.tileW = null; sp.tileH = null;
+  sp.tileW = lentSize(W.tileW, saved.tileW, saved.tileSized);
+  sp.tileH = lentSize(W.tileH, saved.tileH, saved.tileSized);
   sp.bond = lentBond(W, saved.bond);
   sp.colorOverride      = W.color || (t ? t.color : null);
   sp.jointColorOverride = W.grout || (t ? t.line  : null);
@@ -9924,12 +9938,13 @@ function withBladeFinish(cab, fn){
   const c = (cab && cab.config) || {};
   const sp = state.splashback || {};
   if(!c.tile) return fn();
-  const keys = ['type','tile','tileW','tileH','bond','colorOverride','jointColorOverride'];
+  const keys = ['type','tile','tileW','tileH','tileSized','bond','colorOverride','jointColorOverride'];
   const saved = {};
   keys.forEach(k => saved[k] = sp[k]);
   const t = WALL_TILE_TYPES[c.tile];
   sp.type = 'tile'; sp.tile = c.tile;
-  sp.tileW = null; sp.tileH = null;
+  sp.tileW = lentSize(c.tileW, saved.tileW, saved.tileSized);
+  sp.tileH = lentSize(c.tileH, saved.tileH, saved.tileSized);
   sp.bond = lentBond(c, saved.bond);
   sp.colorOverride      = c.color || (t ? t.color : null);
   sp.jointColorOverride = c.grout || (t ? t.line  : null);
@@ -9944,12 +9959,13 @@ function bladeNote(cab){
 function withLowWallFinish(L, fn){
   const sp = state.splashback || {};
   if(!L || !L.tile) return fn();
-  const keys = ['type','tile','tileW','tileH','bond','colorOverride','jointColorOverride'];
+  const keys = ['type','tile','tileW','tileH','tileSized','bond','colorOverride','jointColorOverride'];
   const saved = {};
   keys.forEach(k => saved[k] = sp[k]);
   const t = WALL_TILE_TYPES[L.tile];
   sp.type = 'tile'; sp.tile = L.tile;
-  sp.tileW = null; sp.tileH = null;
+  sp.tileW = lentSize(L.tileW, saved.tileW, saved.tileSized);
+  sp.tileH = lentSize(L.tileH, saved.tileH, saved.tileSized);
   sp.bond = lentBond(L, saved.bond);
   sp.colorOverride      = L.color || (t ? t.color : null);
   sp.jointColorOverride = L.grout || (t ? t.line  : null);
@@ -14615,7 +14631,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.32.2';
+const APP_VERSION = '1.32.3';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -18214,6 +18230,10 @@ bindText('splashProduct', v=> state.splashback.product = v);
     const v = parseInt(el.value, 10);
     if(!isFinite(v) || v < 20) return;
     state.splashback[id === 'tileW' ? 'tileW' : 'tileH'] = v;
+    // Typed by hand, so it is the job's size and follows the tile onto any wall
+    // carrying its own. A size that came off the list is that entry's own and
+    // does not travel.
+    state.splashback.tileSized = true;
     renderActive();
   });
 });
@@ -19290,7 +19310,7 @@ function renderSurfacePanel(){
       sp.tile = v || null;
       const t = WALL_TILE_TYPES[v];
       if(t){
-        sp.tileW = null; sp.tileH = null; sp.bond = null;
+        sp.tileW = null; sp.tileH = null; sp.bond = null; sp.tileSized = false;
         sp.colorOverride = t.color;
         sp.jointColorOverride = t.line;
       }
