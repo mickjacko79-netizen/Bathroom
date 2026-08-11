@@ -14607,7 +14607,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.31.0';
+const APP_VERSION = '1.31.1';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -24527,6 +24527,100 @@ try {
     hint.textContent = on ? 'Working — the drawing will change as it goes.' : NORMAL_HINT;
   }
 
+  // Straightening out what the recogniser hands back.
+  //
+  // Windows' desktop recogniser is a command-and-control engine being used for
+  // free dictation, and it makes the same handful of mistakes over and over on
+  // the words this app is about. It writes figures as words, it has never heard
+  // of a niche or a spout, and it turns millimetres into "mil". None of that is
+  // fixable in the engine, and all of it is fixable here.
+  //
+  // Only whole words are touched, and only ones that are wrong far more often
+  // than they are right. A wrong correction is worse than a wrong word, because
+  // a wrong word at least looks wrong.
+  const DICT_UNITS = { 'mil':'mm', 'mils':'mm', 'mill':'mm', 'millimetre':'mm', 'millimetres':'mm',
+    'millimeter':'mm', 'millimeters':'mm' };
+  const DICT_WORDS = {
+    'van a tea':'vanity', 'vanity unit':'vanity',
+    'nitch':'niche', 'nietzsche':'niche', 'nicha':'niche',
+    'shower head':'showerhead',
+    'sprout':'spout', 'scout':'spout',
+    'mix are':'mixer', 'mixa':'mixer', 'mixer tap':'mixer',
+    'toilet role':'toilet roll', 'toilet rolls':'toilet roll',
+    'floor waist':'floor waste', 'floorwaste':'floor waste',
+    'setout':'set-out', 'set out':'set-out',
+    'shaving cupboard':'shaving cabinet',
+    'towel real':'towel rail', 'towel rale':'towel rail',
+    'grab real':'grab rail',
+    'hobb':'hob',
+    'wall hung':'wall-hung', 'back to wall':'back-to-wall', 'close coupled':'close-coupled',
+    'pea trap':'P-trap', 'p trap':'P-trap', 'es trap':'S-trap', 's trap':'S-trap',
+    'f f l':'FFL', 'ffl':'FFL',
+  };
+  const DICT_ONES = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8,
+    nine:9, ten:10, eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16,
+    seventeen:17, eighteen:18, nineteen:19 };
+  const DICT_TENS = { twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90 };
+  // "twelve hundred" to 1200, "two thousand four hundred" to 2400, "eight fifty"
+  // to 850. Figures are what a set-out is made of, and handing them back as
+  // words is the one thing that makes a dictated instruction useless.
+  const DICT_CUE = /^(mm|mil|mils|mill|millimetres?|millimeters?|wide|high|tall|long|deep|thick|across|apart|centres|centers|by)$/;
+  function dictNumbers(s){
+    const val = w => (DICT_ONES[w] != null) ? DICT_ONES[w]
+                   : (DICT_TENS[w] != null) ? DICT_TENS[w] : null;
+    const parts = String(s).split(/(\s+)/);
+    const word = k => (parts[k] == null) ? null : parts[k].toLowerCase().replace(/[^a-z]/g, '');
+    const out = [];
+    let i = 0;
+    while(i < parts.length){
+      const w = word(i);
+      if(w == null || val(w) == null){ out.push(parts[i++]); continue; }
+      let total = 0, cur = val(w), last = i, said = 1;
+      let j = i + 2;                                   // step over the space
+      for(;;){
+        let nx = word(j);
+        // "one hundred and fifty" — that "and" is part of the figure, not prose.
+        if(nx === 'and' && val(word(j + 2)) != null){ j += 2; nx = word(j); }
+        if(nx === 'hundred'){ cur = (cur || 1) * 100; last = j; said++; j += 2; continue; }
+        if(nx === 'thousand'){ total += (cur || 1) * 1000; cur = 0; last = j; said++; j += 2; continue; }
+        const m = (nx == null) ? null : val(nx);
+        if(m == null) break;
+        if(cur === 0){ cur = m; last = j; said++; j += 2; continue; }          // straight after a thousand
+        if(cur >= 100 && cur % 100 === 0 && m < 100){ cur += m; last = j; said++; j += 2; continue; }
+        if(DICT_TENS[w] != null && m < 10 && DICT_TENS[nx] == null){ cur += m; last = j; said++; j += 2; continue; }
+        if(cur >= 1 && cur <= 19 && DICT_TENS[nx] != null){ cur = cur * 100 + m; last = j; said++; j += 2; continue; }
+        break;
+      }
+      const n = total + cur;
+      // A bare small number is usually prose — "the one on the left" is not a 1.
+      // It is a figure if it took more than one word to say, if it is big, or if
+      // what follows it is a unit or a dimension.
+      if(!(said > 1 || n >= 20 || DICT_CUE.test(word(last + 2) || ''))){ out.push(parts[i++]); continue; }
+      const tail = (parts[last].match(/[^A-Za-z]*$/) || [''])[0];
+      out.push(String(n) + tail);
+      i = last + 1;
+    }
+    return out.join('');
+  }
+  function tidyDictation(text){
+    let s = String(text == null ? '' : text).trim();
+    if(!s) return s;
+    s = dictNumbers(s);
+    // The longer phrases first, so "floor waist" is not fixed a word at a time.
+    Object.keys(DICT_WORDS).sort((a, b) => b.length - a.length).forEach(k=>{
+      s = s.replace(new RegExp('\\b' + k + '\\b', 'gi'), DICT_WORDS[k]);
+    });
+    Object.keys(DICT_UNITS).forEach(k=>{
+      s = s.replace(new RegExp('\\b' + k + '\\b', 'gi'), DICT_UNITS[k]);
+    });
+    // A figure and its unit, spaced the way the rest of the app writes them.
+    s = s.replace(/(\d)\s*mm\b/gi, '$1 mm');
+    // A wall is said as a letter and written as one: "wall be" is wall B.
+    s = s.replace(/\bwall\s+(be|bee|see|sea|dee|day|ay|eh)\b/gi, function(m, w){
+      return 'wall ' + ({ be:'B', bee:'B', see:'C', sea:'C', dee:'D', day:'D', ay:'A', eh:'A' })[w.toLowerCase()];
+    });
+    return s.replace(/\s{2,}/g, ' ').trim();
+  }
   // Text arrives in pieces; they belong in one paragraph rather than one each.
   bridge.onEvent(evt => {
     // A turn can start from the site measure's panel rather than this one, and
@@ -24550,7 +24644,7 @@ try {
     // Dictation. The words land in the box, not in the conversation — they are
     // a draft to correct, not something already said.
     if(evt.type === 'dictate-text'){
-      input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + evt.text;
+      input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + tidyDictation(evt.text);
       input.scrollTop = input.scrollHeight;
       noiseRun = 0; sawPartial = false;
       heard('listening — say something');
@@ -24625,10 +24719,38 @@ try {
     if(!busy) hint.textContent = on ? '● starting…' : NORMAL_HINT;
   }
 
+  // Which recogniser is listening. There are usually two installed, en-GB and
+  // en-US, and which of them suits a voice is not something anyone can be told
+  // in advance — it is worth trying the other one when the first is hopeless.
+  // Remembered, because whichever turns out to be better is better every time.
+  const DICT_LANG_KEY = 'bathroom.dictate.lang';
+  function dictLang(){ try { return localStorage.getItem(DICT_LANG_KEY) || 'en-GB'; } catch(_){ return 'en-GB'; } }
+  function setDictLang(v){ try { localStorage.setItem(DICT_LANG_KEY, v); } catch(_){}
+    if(langBtn) langBtn.textContent = v.replace('en-', '').toUpperCase();
+    if(langBtn) langBtn.title = 'Listening in ' + v + '. Click for the other one — if a voice is being '
+      + 'misheard consistently, the other recogniser is worth a try.';
+  }
+  const langBtn = document.createElement('button');
+  langBtn.className = 'mic';
+  langBtn.style.cssText = 'min-width:0;padding:4px 8px;font-size:11px;letter-spacing:.06em';
+  if(mic.parentNode) mic.parentNode.insertBefore(langBtn, mic.nextSibling);
+  setDictLang(dictLang());
+  langBtn.addEventListener('click', async () => {
+    const next = dictLang() === 'en-GB' ? 'en-US' : 'en-GB';
+    setDictLang(next);
+    if(listening){
+      // Swap under it rather than making anyone stop and start again.
+      await bridge.dictateStop();
+      const r = await bridge.dictateStart(next);
+      if(r && r.error){ add('chat-err', r.error); setListening(false); return; }
+    }
+    heard('listening in ' + next);
+  });
+
   mic.addEventListener('click', async () => {
     if(listening){ await bridge.dictateStop(); setListening(false); return; }
     setListening(true);
-    const r = await bridge.dictateStart();
+    const r = await bridge.dictateStart(dictLang());
     if(r && r.error){ add('chat-err', r.error); setListening(false); }
   });
 
