@@ -194,7 +194,7 @@ function Start-Modern {
   if ($r -like 'ok:*') { return @{ ok = $true; lang = $r.Substring(3); available = $have } }
   if ($r -like 'privacy:*') {
     return @{ why = 'privacy'; lang = $tag; available = $have; message =
-      'Windows has a better speech engine than the one being used, with this country''s own English, but it needs its privacy policy accepted once: Settings, Privacy and security, Speech, and turn on Online speech recognition. Windows may then use its online service to do the recognising. Until that is on, the older engine is used and nothing leaves the machine.' }
+      'Dictation is on the older Windows engine, which has no Australian English - only British and American. The modern engine has en-AU and is much the better recogniser, but Windows will not start it until its speech privacy policy is accepted. Windows may then use its online service to do the recognising; until it is on, nothing leaves this machine.' }
   }
   return @{ why = 'unavailable'; message = ($r -replace '^unavailable:', '') }
 }

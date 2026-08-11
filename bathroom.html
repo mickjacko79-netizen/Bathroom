@@ -14615,7 +14615,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.32.0';
+const APP_VERSION = '1.32.1';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -24667,8 +24667,27 @@ try {
       heard('listening — say something');
       return;
     }
-    // The better engine could not run. Said once, with what it would take.
-    if(evt.type === 'dictate-engine'){ add('chat-note', evt.message); return; }
+    // The better engine could not run. A line in the log scrolls away and the
+    // path through Settings is four steps to remember, so this is a note that
+    // stays put with the page itself one click away.
+    if(evt.type === 'dictate-engine'){
+      const note = add('chat-note', evt.message + ' ');
+      if(evt.why === 'privacy' && bridge.openSpeechSettings){
+        const b2 = document.createElement('button');
+        b2.textContent = 'Open Windows speech settings';
+        b2.style.cssText = 'margin-top:6px;display:block;padding:4px 10px;font:inherit;font-size:11px;'
+          + 'border:1px solid var(--brand);border-radius:4px;background:#fff;color:var(--brand);cursor:pointer';
+        b2.addEventListener('click', async ()=>{
+          const r = await bridge.openSpeechSettings();
+          b2.textContent = (r && r.ok)
+            ? 'Opened. Turn on Online speech recognition, then start dictation again.'
+            : 'Could not open it. Settings, Privacy and security, Speech.';
+          b2.disabled = true; b2.style.cursor = 'default';
+        });
+        note.appendChild(b2);
+      }
+      return;
+    }
     // What it is hearing, while it hears it. Without this there is no way to
     // tell a microphone that is working from one that is not until the end.
     if(evt.type === 'dictate-partial'){ noiseRun = 0; heard(evt.text, true); return; }
@@ -24886,7 +24905,8 @@ try {
   // appears — which is the same rule this whole panel follows.
   (function(){
     const RELAYED = ['status','ask','stop','reset','loginStart','loginCode',
-                     'loginCancel','dictateStart','dictateStop','attachPlan'];
+                     'loginCancel','dictateStart','dictateStop','attachPlan',
+                     'openSpeechSettings'];
     const frames = new Set();
 
     window.addEventListener('message', async ev => {

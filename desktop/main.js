@@ -215,7 +215,16 @@ ipcMain.handle('chat:reset',  () => chatFor().reset());
 ipcMain.handle('chat:loginStart',  () => chatFor().loginStart());
 ipcMain.handle('chat:loginCode',   (_e, code) => chatFor().loginCode(code));
 ipcMain.handle('chat:loginCancel', () => chatFor().loginCancel());
-ipcMain.handle('chat:dictateStart', (_e, lang) => chatFor().dictateStart(lang));
+ipcMain.handle('chat:dictateStart', (_e, lang, engine) => chatFor().dictateStart(lang, engine));
+// The better speech engine will not start until Windows' speech privacy policy
+// has been accepted, and telling someone the path through Settings is not the
+// same as taking them there. This opens the page itself. It only opens it - what
+// it says and whether to agree is the reader's business, not the app's.
+ipcMain.handle('chat:openSpeechSettings', async () => {
+  if (process.platform !== 'win32') return { ok: false, error: 'Not Windows.' };
+  try { await shell.openExternal('ms-settings:privacy-speech'); return { ok: true }; }
+  catch (err) { return { ok: false, error: String(err && err.message || err) }; }
+});
 ipcMain.handle('chat:dictateStop',  () => chatFor().dictateStop());
 // The picker belongs to the shell, not the page — the page never sees a path it
 // did not get handed back.

@@ -34,7 +34,10 @@ contextBridge.exposeInMainWorld('bathroomChat', {
   loginCancel: () => ipcRenderer.invoke('chat:loginCancel'),
 
   // Speaking instead of typing. Windows does the recognising, on this machine.
-  dictateStart: (lang) => ipcRenderer.invoke('chat:dictateStart', lang || null),
+  dictateStart: (lang, engine) => ipcRenderer.invoke('chat:dictateStart', lang || null, engine || null),
+
+  // Opens the Windows page where the speech privacy policy is accepted.
+  openSpeechSettings: () => ipcRenderer.invoke('chat:openSpeechSettings'),
   dictateStop:  () => ipcRenderer.invoke('chat:dictateStop'),
 
   // Hand a floor plan over for Claude to read.
