@@ -742,8 +742,8 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl"><label>Tiling height <span class="val"><input class="valInp" id="spVal" type="number" min="0" max="3300" step="10" value="1250"> mm</span></label><input id="sp" type="range" min="0" max="3300" step="10" value="1250"></div>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin:-4px 0 8px">Measured up from the vanity top. Set it past the ceiling height for full-height tiling.</div>
         <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileFullWalls" checked> <span>Tile every wall, not just above the vanity</span></label>
-        <div class="ctrl"><label>Tile datum <span class="val"><input class="valInp" id="tileDatum" type="number" min="-50" max="1200" step="5" value="0"> mm</span></label>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">Height above finished floor the tiling is set out from — 0 is FFL. Raise it for a hob, a screed or a set-down.</div>
+        <div class="ctrl"><label>Start tile height <span class="val"><input class="valInp" id="tileDatum" type="number" min="-200" max="1200" step="5" value="0"> mm</span></label>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Where the bottom course starts, relative to finished floor level — 0 is FFL. Raise it for a hob or a set-down. <b>Go negative</b> for a floor laid to falls: the tiling has to start off the lowest point of it, or the bottom course runs out of tile where the floor drops away.</div>
         </div>
         <div class="ctrl"><label>Part course goes</label>
           <div class="pillbar" id="tileGaugeBar">
@@ -753,7 +753,7 @@ header .project-label .dot.dirty{background:#F7C04A}
           </div>
         </div>
         <div class="ctrl" id="tileGaugeReadout" style="font-size:11px;color:var(--muted);margin-top:-4px"></div>
-        <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileShowDatum" checked> <span>Show the datum mark on elevations</span></label>
+        <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileShowDatum" checked> <span>Show the tile start mark on elevations</span></label>
         <div class="ctrl"><label>Type</label><select id="splashType"></select></div>
         <div class="ctrl" id="splashBrandRow"><label>Brand</label><select id="splashBrand"></select></div>
         <div class="ctrl" id="splashProductRow"><label>Product / colour name</label><input id="splashProduct" type="text" placeholder="e.g. Dulux Natural White, 300×100 subway"></div>
@@ -1658,7 +1658,7 @@ header .project-label .dot.dirty{background:#F7C04A}
               <tr><td>Finish (fronts)</td><td>Colour and door style for every front on the job — slab, shaker, V-groove, fluted, glass in a frame, mirror in a frame. One cabinet can differ in its own panel.</td></tr>
               <tr><td>Carcass</td><td>Board thickness, kick height, filler depth.</td></tr>
               <tr><td>Vanity top</td><td>Material, height, front overhang, top thickness, edge profile, brand and product name, surface finish, and the hatch it is drawn in. Engineered stone, porcelain and sintered stone, natural stone, terrazzo, solid surface, timber, laminate, concrete and a tiled top, each at the thickness it is made in — and a thickness of your own where the same material comes more than one way. Choosing an engineered stone raises a note in the panel: it has been banned in Australia for new benchtops since 1 July 2024 and is legal for documenting or repairing an existing installation.</td></tr>
-              <tr><td>Wall tiling</td><td>The job's tile: type, brand, product, size, bond and laying pattern, tiling height, the datum a part course is set out from and which end it goes. Mosaics through subway and squares to 1200 × 2400 slab.</td></tr>
+              <tr><td>Wall tiling</td><td>The job's tile: type, brand, product, size, bond and laying pattern, tiling height, the height the tiling starts at — which may be below FFL, so a floor laid to falls is set out off its lowest point — and which end the part course goes. Mosaics through subway and squares to 1200 × 2400 slab.</td></tr>
               <tr><td>Tile on this wall</td><td>In <span class="ui">Run trim</span>: one wall's tile, colour and grout. Leave it on the job's tile and the wall follows the project; set it and only that wall changes.</td></tr>
               <tr><td>Floor</td><td>Material and laying pattern — boards, herringbone, chevron, parquet, planks, tiles from 100 × 100 to slab — the size, the angle it is laid at, and where the set-out starts, nudged across and along until the cuts fall where you want them.</td></tr>
               <tr><td>Finishes board</td><td>Materials, colours and photographs of samples, kept in the job and printed with it. Photographs are scaled down on the way in, so a phone photo does not make the job file unusable.</td></tr>
@@ -2744,8 +2744,13 @@ function drawWallTiling(d, ox, oy, wL, Hm, s){
     const t = 2.2;
     d.polygon([[ox - 4, dy - t], [ox - 4 + t*1.7, dy], [ox - 4, dy + t]], COL.accent, COL.accent, LW.hairline);
     d.line(ox - 12, dy, ox - 4, dy, COL.accent, LW.thin);
+    // Said in words below FFL. "TILE DATUM -30" is a minus sign that can be
+    // missed or taken for a dash on a printed sheet, and a course started
+    // 30 under the floor rather than 30 over it is not a small difference.
     d.text(ox - 13, dy - 1.2,
-      `TILE DATUM ${bottom === 0 ? 'FFL' : (bottom > 0 ? '+' : '') + Math.round(bottom)}`,
+      'TILE START ' + (bottom === 0 ? 'FFL'
+        : bottom > 0 ? 'FFL +' + Math.round(bottom)
+        : Math.round(-bottom) + ' BELOW FFL'),
       { size:4.2, color:COL.accent, align:'right' });
     d.text(ox - 13, dy + 4,
       `${g.full} × ${g.module.h} ${g.cut > 0.5 ? '+ ' + g.cut + ' cut ' + (g.mode === 'both' ? 'each end' : 'at ' + (g.mode === 'top' ? 'floor' : 'top')) : '· gauges full'}`,
@@ -5833,10 +5838,12 @@ function tileModule(){
 // tiling setout is measured from here, so moving it moves every course.
 function tileDatumY(){
   const sp = state.splashback || {};
-  // Down to 50 below finished floor level. A floor laid to falls has no single
+  // Down to 200 below finished floor level. A floor laid to falls has no single
   // FFL: the lowest point of it is what the wall tiling has to start off, or
-  // the bottom course runs out of tile where the floor drops away from it.
-  return Math.max(-50, sp.datum || 0);
+  // the bottom course runs out of tile where the floor drops away from it. Fifty
+  // covered a fall and nothing else — a set-down shower floor is more than that
+  // on its own, before the grade across it.
+  return Math.max(-200, Math.min(1200, sp.datum || 0));
 }
 // How a wall gauges out: the courses that fit between the datum and the tile
 // line, and the part course left over.
@@ -13962,7 +13969,7 @@ function drawCover(d, area){
     '3. Set out from Wall A back-of-wall datum. Heights above FFL.',
     '4. Waterproofing to AS 3740. Joinery to AS/NZS 4386.1.',
     '5. Falls to waste 1:80 min; shower area graded to the drain shown.',
-    '6. Tiling setout from the datum shown; confirm cuts before fixing.',
+    '6. Tiling setout from the tile start mark shown; confirm cuts before fixing.',
     '7. Fixture set-outs confirm with plumber before wall linings.',
     '8. Wall cabinets and internal shelves shown dashed.',
     '9. Provide noggings for all wall-hung fixtures and grab rails.',
@@ -14600,7 +14607,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.30.1';
+const APP_VERSION = '1.31.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -18210,8 +18217,12 @@ bindText('splashProduct', v=> state.splashback.product = v);
   const dt = document.getElementById('tileDatum');
   if(dt) dt.addEventListener('input', ()=>{
     const v = parseFloat(dt.value);
-    if(!isFinite(v) || v < 0) return;
-    state.splashback.datum = v; renderActive(); renderSurfacePanel();
+    // Below FFL is the whole point of the figure on a floor laid to falls, and
+    // this threw every negative away — so the field's own minus, and the clamp
+    // behind it, had never once been reachable.
+    if(!isFinite(v)) return;
+    state.splashback.datum = Math.max(-200, Math.min(1200, v));
+    renderActive(); renderSurfacePanel();
   });
   const gb = document.getElementById('tileGaugeBar');
   if(gb) gb.addEventListener('click', e=>{
@@ -19300,7 +19311,7 @@ function renderSurfacePanel(){
   const gr = document.getElementById('tileGaugeReadout');
   if(gr){
     const g = tileGauge();
-    gr.textContent = g.run <= 0 ? 'Nothing to tile — the tile line is at or below the datum.'
+    gr.textContent = g.run <= 0 ? 'Nothing to tile — the tile line is at or below where the tiling starts.'
       : g.cut <= 0.5
         ? `${g.full} full courses of ${g.module.h} — gauges out exactly over ${Math.round(g.run)} mm.`
         : `${g.full} full courses of ${g.module.h} over ${Math.round(g.run)} mm, leaving a ${g.cut} mm cut` +
