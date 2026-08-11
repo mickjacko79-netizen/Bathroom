@@ -1912,6 +1912,14 @@ header .project-label .dot.dirty{background:#F7C04A}
               the Claude Code tool installed on your own machine, under your own Anthropic account and
               their terms. Nothing is sent unless you ask. Leave the panel alone and nothing leaves the
               device.</p>
+            <p>Dictation is the other one, and it depends which of Windows' two speech engines is
+              running. The older desktop engine recognises entirely on this machine and no audio leaves
+              it. The modern engine — the one behind Win+H, and much the better of the two — requires
+              Windows' speech privacy policy to be accepted, and Windows may then use
+              <b>its own online service</b> to do the recognising, which means audio can be sent to
+              Microsoft under their terms rather than ours. The panel says which engine it is using. If
+              you have not turned that setting on in Windows, the older engine is what runs and nothing
+              is sent anywhere.</p>
             <p>Because the data is local, <b>backups are your responsibility</b>. Use
               <span class="ui">Export</span> to write a project file out, and keep copies of anything you
               would not want to lose. Clearing the application's storage, or uninstalling without
@@ -14607,7 +14615,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.31.1';
+const APP_VERSION = '1.32.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -24652,7 +24660,15 @@ try {
     }
     if(evt.type === 'dictate-done'){ setListening(false); input.focus(); return; }
     if(evt.type === 'dictate-error'){ add('chat-err', evt.message); setListening(false); return; }
-    if(evt.type === 'dictate-ready'){ heard('listening — say something'); return; }
+    if(evt.type === 'dictate-ready'){
+      dictEngine = evt.engine || 'desktop';
+      dictHave = (evt.available && evt.available.length) ? evt.available : null;
+      setDictLang(dictLang(), true);
+      heard('listening — say something');
+      return;
+    }
+    // The better engine could not run. Said once, with what it would take.
+    if(evt.type === 'dictate-engine'){ add('chat-note', evt.message); return; }
     // What it is hearing, while it hears it. Without this there is no way to
     // tell a microphone that is working from one that is not until the end.
     if(evt.type === 'dictate-partial'){ noiseRun = 0; heard(evt.text, true); return; }
@@ -24719,24 +24735,35 @@ try {
     if(!busy) hint.textContent = on ? '● starting…' : NORMAL_HINT;
   }
 
-  // Which recogniser is listening. There are usually two installed, en-GB and
-  // en-US, and which of them suits a voice is not something anyone can be told
-  // in advance — it is worth trying the other one when the first is hopeless.
-  // Remembered, because whichever turns out to be better is better every time.
+  // Which recogniser is listening, and in what English.
+  //
+  // The modern engine has this country's own English; the old one has never
+  // heard of it and offers British or American. So the button is filled from
+  // whatever the engine that actually started says it has, rather than from a
+  // guess made before it started.
+  let dictEngine = 'desktop', dictHave = null;
   const DICT_LANG_KEY = 'bathroom.dictate.lang';
-  function dictLang(){ try { return localStorage.getItem(DICT_LANG_KEY) || 'en-GB'; } catch(_){ return 'en-GB'; } }
-  function setDictLang(v){ try { localStorage.setItem(DICT_LANG_KEY, v); } catch(_){}
-    if(langBtn) langBtn.textContent = v.replace('en-', '').toUpperCase();
-    if(langBtn) langBtn.title = 'Listening in ' + v + '. Click for the other one — if a voice is being '
-      + 'misheard consistently, the other recogniser is worth a try.';
+  function dictLang(){ try { return localStorage.getItem(DICT_LANG_KEY) || ''; } catch(_){ return ''; } }
+  function dictChoices(){ return dictHave && dictHave.length ? dictHave : ['en-GB', 'en-US']; }
+  function setDictLang(v, quiet){
+    const have = dictChoices();
+    if(!v || have.indexOf(v) < 0) v = have[0];
+    try { localStorage.setItem(DICT_LANG_KEY, v); } catch(_){}
+    if(!langBtn) return v;
+    langBtn.textContent = v.replace(/^en-/, '');
+    langBtn.title = 'Listening in ' + v + ' on the ' + (dictEngine === 'modern' ? 'modern' : 'older')
+      + ' Windows engine. Click for the next one' + (have.length > 1 ? ' of ' + have.join(', ') : '')
+      + '. If a voice is being misheard consistently, another is worth a try.';
+    return v;
   }
   const langBtn = document.createElement('button');
   langBtn.className = 'mic';
   langBtn.style.cssText = 'min-width:0;padding:4px 8px;font-size:11px;letter-spacing:.06em';
   if(mic.parentNode) mic.parentNode.insertBefore(langBtn, mic.nextSibling);
-  setDictLang(dictLang());
+  setDictLang(dictLang(), true);
   langBtn.addEventListener('click', async () => {
-    const next = dictLang() === 'en-GB' ? 'en-US' : 'en-GB';
+    const have = dictChoices();
+    const next = have[(Math.max(0, have.indexOf(dictLang())) + 1) % have.length];
     setDictLang(next);
     if(listening){
       // Swap under it rather than making anyone stop and start again.
@@ -24746,7 +24773,6 @@ try {
     }
     heard('listening in ' + next);
   });
-
   mic.addEventListener('click', async () => {
     if(listening){ await bridge.dictateStop(); setListening(false); return; }
     setListening(true);
@@ -24889,7 +24915,7 @@ try {
         switch(m.method){
           case 'ask':       value = await bridge.ask(a.text); break;
           case 'loginCode': value = await bridge.loginCode(a.code); break;
-          case 'dictateStart': value = await bridge.dictateStart(a.lang || null); break;
+          case 'dictateStart': value = await bridge.dictateStart(a.lang || null, a.engine || null); break;
           default:          value = await bridge[m.method](); break;
         }
         answer({ ok:true, value: value === undefined ? null : value });

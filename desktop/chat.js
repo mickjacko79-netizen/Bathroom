@@ -511,7 +511,7 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, cliPath, send }) {
   // one runs on the machine: no key, no account, no audio going anywhere.
   let dictateProc = null;
 
-  function dictateStart(lang) {
+  function dictateStart(lang, engine) {
     if (process.platform !== 'win32') {
       return { error: 'Dictation here uses the Windows speech engine, and this is not Windows.' };
     }
@@ -538,7 +538,8 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, cliPath, send }) {
             // and who to follow. Killing this process leaves the child holding
             // the microphone open otherwise.
             { BATHROOM_DICTATE_PARENT: String(process.pid) },
-            lang ? { BATHROOM_DICTATE_LANG: String(lang) } : {}) });
+            lang ? { BATHROOM_DICTATE_LANG: String(lang) } : {},
+            engine ? { BATHROOM_DICTATE_ENGINE: String(engine) } : {}) });
     } catch (err) {
       return { error: 'Could not start dictation: ' + err.message };
     }
@@ -555,7 +556,12 @@ function createChat({ userDataDir, bridgeUrl, siteMeasureUrl, cliPath, send }) {
         if (!line) continue;
         let msg; try { msg = JSON.parse(line); } catch (_) { continue; }
         if (msg.error) { emit('dictate-error', { message: msg.error }); return; }
-        if (msg.ready) { emit('dictate-ready', { culture: msg.culture, available: msg.available }); continue; }
+        if (msg.ready) { emit('dictate-ready', { culture: msg.culture, available: msg.available,
+                                                  engine: msg.engine }); continue; }
+        // The better engine could not run. Which one is listening, and what it
+        // would take to get the other, is worth saying once rather than leaving
+        // someone to wonder why it is as bad as it is.
+        if (msg.engineNote) { emit('dictate-engine', { why: msg.why, message: msg.message }); continue; }
         // Everything between starting and a finished sentence, so the panel can
         // show that it is listening rather than leaving it to be guessed at.
         if (msg.partial) { emit('dictate-partial', { text: msg.partial }); continue; }
