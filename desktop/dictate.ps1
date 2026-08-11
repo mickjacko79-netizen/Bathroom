@@ -59,6 +59,7 @@ public static class WinRtSpeech {
   public static ConcurrentQueue<string> Q = new ConcurrentQueue<string>();
   static object rec, session;
   static Type SR, SESS;
+  public static volatile bool Stopping = false;
 
   static Type T(string n){ return Type.GetType(n + ", Windows, ContentType=WindowsRuntime"); }
   static object Get(Type t, string p, object o){ return t.GetProperty(p).GetValue(o, null); }
@@ -168,7 +169,15 @@ public static class WinRtSpeech {
       return "unavailable:" + (m == null ? ex.GetType().Name : m.Trim());
     }
   }
+  // The continuous session can finish on its own - a long silence, or the
+  // engine deciding it has had enough. Left alone the script would go on
+  // looking like it was listening while nothing was being heard at all, which
+  // is the worst of the states it could be in. So it goes again.
+  public static bool Restart(){
+    try { AwaitAct(Call(SESS, "StartAsync", session)); return true; } catch { return false; }
+  }
   public static void Stop(){
+    Stopping = true;
     try { if(session != null) AwaitAct(Call(SESS, "StopAsync", session)); } catch {}
     try { if(rec != null) Call(SR, "Dispose", rec); } catch {}
     rec = null; session = null;
@@ -209,6 +218,13 @@ if ($modern -and $modern.ok) {
       if (ParentGone) { break }
       $line = $null
       if ([WinRtSpeech]::Q.TryDequeue([ref]$line)) {
+        # A session that ended by itself is started again, quietly. Anyone
+        # dictating did not ask for it to stop and should not have to notice.
+        if ($line -like '*"ended"*' -and -not [WinRtSpeech]::Stopping) {
+          if ([WinRtSpeech]::Restart()) { continue }
+          Emit @{ error = 'Dictation stopped and would not start again.' }
+          break
+        }
         [Console]::Out.WriteLine($line); [Console]::Out.Flush()
         $lastAt = [DateTime]::UtcNow
         $warned = $true          # something is coming through; no need to warn
