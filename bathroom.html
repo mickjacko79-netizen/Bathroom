@@ -745,12 +745,26 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl"><label>Start tile height <span class="val"><input class="valInp" id="tileDatum" type="number" min="-200" max="1200" step="5" value="0"> mm</span></label>
           <div style="font-size:11px;color:var(--muted);margin-top:2px">Where the bottom course starts, relative to finished floor level — 0 is FFL. Raise it for a hob or a set-down. <b>Go negative</b> for a floor laid to falls: the tiling has to start off the lowest point of it, or the bottom course runs out of tile where the floor drops away.</div>
         </div>
-        <div class="ctrl"><label>Part course goes</label>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin:2px 0 4px">
+          A wall rarely divides by the tile. Say which end keeps the full tile and
+          which one takes the cut &mdash; or split it so both ends match.
+        </div>
+        <div class="ctrl"><label>Up the wall <span style="font-weight:400;color:var(--muted);font-size:10.5px">&mdash; floor to ceiling</span></label>
           <div class="pillbar" id="tileGaugeBar">
             <div class="pill on" data-v="bottom">Full at bottom</div>
             <div class="pill" data-v="top">Full at top</div>
             <div class="pill" data-v="both">Split both ends</div>
           </div>
+        </div>
+        <div class="ctrl"><label>Across the wall <span style="font-weight:400;color:var(--muted);font-size:10.5px">&mdash; left to right as drawn</span></label>
+          <div class="pillbar" id="tileGaugeXBar">
+            <div class="pill on" data-v="start">Full at left</div>
+            <div class="pill" data-v="end">Full at right</div>
+            <div class="pill" data-v="both">Split both ends</div>
+          </div>
+        </div>
+        <div class="ctrl"><label>Nudge across <span class="val"><input class="valInp" id="tileOffsetX" type="number" step="5" value="0"> mm</span></label>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Moves the whole grid along the wall, for setting the joints out off something rather than off the corner.</div>
         </div>
         <div class="ctrl" id="tileGaugeReadout" style="font-size:11px;color:var(--muted);margin-top:-4px"></div>
         <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileShowDatum" checked> <span>Show the tile start mark on elevations</span></label>
@@ -3467,6 +3481,7 @@ const state = {
              brand:'dekton', product:'', finish:'matt', edge:'square' },
   splashback: { type:'tile', brand:null, product:'', finish:null, colorOverride:null, hatchOverride:null,
                 tileW:300, tileH:600, tileSized:false, bond:0.5, fullWalls:true,
+                gaugeX:'start', offsetX:0,
                 // datum: where the tiling is set out from, mm above finished
                 // floor level. gauge: which end of the wall carries the part
                 // course when the height does not divide by the tile.
@@ -5872,6 +5887,28 @@ function tileGauge(){
   }
   return { module: t, bottom, top, run, full, cut, mode, shift };
 }
+// How a wall gauges out ACROSS its width. The courses already had this and the
+// perpends did not: the grid simply started full at the left-hand end and put
+// whatever was left over on the right, whatever the wall was. A room rarely
+// divides by the tile, and which end keeps the full tile is a decision someone
+// makes on site - the same decision the floor has had in both directions all
+// along, and the same maths.
+function tileGaugeX(runMm){
+  const t = tileModule();
+  const sp = state.splashback || {};
+  const run = Math.max(0, runMm || 0);
+  const full = Math.floor(run / t.w + 1e-6);
+  const cut = Math.round((run - full * t.w) * 10) / 10;
+  const mode = sp.gaugeX || 'start';
+  // shift moves the column grid along the wall, so a negative shift takes the
+  // part tile off the left-hand end and puts it on the right.
+  let shift = +sp.offsetX || 0;
+  if(cut > 0.5){
+    if(mode === 'end')       shift -= cut;
+    else if(mode === 'both') shift -= cut / 2;
+  }
+  return { module: t, run, full, cut, mode, shift };
+}
 // Axis-aligned tile grid, drawn upwards from the datum and clipped to the band.
 // Kept separate from bondGrid because the tiling is the one pattern whose
 // origin has to be a real height in the room rather than the corner of a box.
@@ -5879,6 +5916,8 @@ function tileGrid(d, x, y, w, h, s, color, lw){
   const g = tileGauge();
   const tw = g.module.w * s, th = g.module.h * s;
   if(!(tw > 0) || !(th > 0) || !(w > 0) || !(h > 0)) return;
+  // Across the wall, from whichever end keeps the full tile.
+  const gx = tileGaugeX(w / s).shift * s;
   const yBottom = y + h;                                  // the datum, on the page
   const y0 = yBottom - g.shift * s;                       // first course line
   const rows = Math.ceil((h + Math.abs(g.shift * s)) / th) + 2;
@@ -5891,10 +5930,10 @@ function tileGrid(d, x, y, w, h, s, color, lw){
     const off = ((i % 2) ? g.module.bond : 0) * tw;
     const top = Math.max(y, cy - th), bot = Math.min(yBottom, cy);
     if(bot <= top) continue;
-    const cols = Math.ceil(w / tw) + 2;
+    const cols = Math.ceil(w / tw) + 4;
     if(cols > 400) continue;
-    for(let k = -1; k <= cols; k++){
-      const cx = x + off + k * tw;
+    for(let k = -2; k <= cols; k++){
+      const cx = x + gx + off + k * tw;
       if(cx < x || cx > x + w) continue;
       d.line(cx, top, cx, bot, color, lw);
     }
@@ -14631,7 +14670,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.32.3';
+const APP_VERSION = '1.33.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -18242,6 +18281,13 @@ bindText('splashProduct', v=> state.splashback.product = v);
   if(fw) fw.addEventListener('change', ()=>{ state.splashback.fullWalls = fw.checked; renderActive(); });
   const sd = document.getElementById('tileShowDatum');
   if(sd) sd.addEventListener('change', ()=>{ state.splashback.showDatum = sd.checked; renderActive(); });
+  const ox = document.getElementById('tileOffsetX');
+  if(ox) ox.addEventListener('input', ()=>{
+    const v = parseFloat(ox.value);
+    if(!isFinite(v)) return;
+    state.splashback.offsetX = Math.max(-2000, Math.min(2000, v));
+    renderActive(); renderSurfacePanel();
+  });
   const dt = document.getElementById('tileDatum');
   if(dt) dt.addEventListener('input', ()=>{
     const v = parseFloat(dt.value);
@@ -18258,6 +18304,15 @@ bindText('splashProduct', v=> state.splashback.product = v);
     gb.querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));
     t.classList.add('on');
     state.splashback.gauge = t.dataset.v;
+    renderActive(); renderSurfacePanel();
+  });
+  // The same across the wall.
+  const gx = document.getElementById('tileGaugeXBar');
+  if(gx) gx.addEventListener('click', e=>{
+    const t = e.target.closest('.pill'); if(!t) return;
+    gx.querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));
+    t.classList.add('on');
+    state.splashback.gaugeX = t.dataset.v;
     renderActive(); renderSurfacePanel();
   });
 })();
@@ -19336,15 +19391,37 @@ function renderSurfacePanel(){
   const gb = document.getElementById('tileGaugeBar');
   if(gb) gb.querySelectorAll('.pill').forEach(p =>
     p.classList.toggle('on', p.dataset.v === (sp.gauge || 'bottom')));
+  const gxb = document.getElementById('tileGaugeXBar');
+  if(gxb) gxb.querySelectorAll('.pill').forEach(p =>
+    p.classList.toggle('on', p.dataset.v === (sp.gaugeX || 'start')));
+  setFieldValue('tileOffsetX', sp.offsetX || 0);
   const gr = document.getElementById('tileGaugeReadout');
   if(gr){
     const g = tileGauge();
-    gr.textContent = g.run <= 0 ? 'Nothing to tile — the tile line is at or below where the tiling starts.'
+    // Across needs a wall to measure, and the active one is the wall on screen.
+    let across = '';
+    try {
+      const wl = wallLength(state.ui.activeWall || 'A');
+      if(wl > 0){
+        const gxg = tileGaugeX(wl);
+        const endName = { start:'the left', end:'the right', both:'both ends' }[gxg.mode] || 'the left';
+        across = (gxg.cut <= 0.5)
+          ? ('Across wall ' + wallLetter(null, state.ui.activeWall || 'A') + ': ' + gxg.full
+             + ' full tiles of ' + gxg.module.w + ' - gauges out exactly over ' + Math.round(gxg.run) + ' mm.')
+          : ('Across wall ' + wallLetter(null, state.ui.activeWall || 'A') + ': ' + gxg.full
+             + ' full tiles of ' + gxg.module.w + ' over ' + Math.round(gxg.run) + ' mm, leaving a '
+             + gxg.cut + ' mm cut'
+             + (gxg.mode === 'both' ? (' split as ' + Math.round(gxg.cut / 2 * 10) / 10 + ' mm at each end.')
+                                    : (' at ' + (gxg.mode === 'end' ? 'the left.' : 'the right.'))));
+      }
+    } catch(_){}
+    const up = g.run <= 0 ? 'Nothing to tile - the tile line is at or below where the tiling starts.'
       : g.cut <= 0.5
-        ? `${g.full} full courses of ${g.module.h} — gauges out exactly over ${Math.round(g.run)} mm.`
-        : `${g.full} full courses of ${g.module.h} over ${Math.round(g.run)} mm, leaving a ${g.cut} mm cut` +
-          (g.mode === 'both' ? ` split as ${Math.round(g.cut / 2 * 10) / 10} mm at each end.`
-                             : ` at the ${g.mode === 'top' ? 'floor' : 'top'}.`);
+        ? (g.full + ' full courses of ' + g.module.h + ' - gauges out exactly over ' + Math.round(g.run) + ' mm.')
+        : (g.full + ' full courses of ' + g.module.h + ' over ' + Math.round(g.run) + ' mm, leaving a ' + g.cut + ' mm cut'
+           + (g.mode === 'both' ? (' split as ' + Math.round(g.cut / 2 * 10) / 10 + ' mm at each end.')
+                                : (' at the ' + (g.mode === 'top' ? 'floor.' : 'top.'))));
+    gr.innerHTML = up + (across ? '<br>' + across : '');
   }
   // Show the module that is actually being drawn, whether it came off the list
   // or was typed in — the fields read as the answer to "what size is the tile",
