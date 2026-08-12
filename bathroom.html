@@ -768,6 +768,7 @@ header .project-label .dot.dirty{background:#F7C04A}
         </div>
         <div class="ctrl" id="tileGaugeReadout" style="font-size:11px;color:var(--muted);margin-top:-4px"></div>
         <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileShowDatum" checked> <span>Show the tile start mark on elevations</span></label>
+        <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileShowPlan" checked> <span>Show the tiling on the floor plans</span></label>
         <div class="ctrl"><label>Type</label><select id="splashType"></select></div>
         <div class="ctrl" id="splashBrandRow"><label>Brand</label><select id="splashBrand"></select></div>
         <div class="ctrl" id="splashProductRow"><label>Product / colour name</label><input id="splashProduct" type="text" placeholder="e.g. Dulux Natural White, 300×100 subway"></div>
@@ -1716,6 +1717,13 @@ header .project-label .dot.dirty{background:#F7C04A}
               of measurements in four colours reads as a mess rather than as a key. The colour is
               deliberately not the drawing's own ink, so a measurement is never mistaken for something
               the sheet is asserting. The settings are saved with the job.</p>
+            <p>The tiling shows on the floor plans as well: a band on each wall face with the perpends
+              ticked across it, running the same set-out the elevations do and stopping either side of
+              every door and window. It is a notation rather than a measured layer &mdash; ten millimetres
+              of tile and bed is finer than a hairline at 1:50, so the band is drawn at its real thickness
+              where that reads and at a fixed depth on the page where it does not. The joints are the
+              point of it. Turn it off in <span class="ui">Wall tiling</span> where the plan is busy
+              enough already.</p>
             <p>Underneath is every measurement in the job, listed under the sheet it was taken on, with
               its figure. Pointing at a row lights that measurement up on the drawing; clicking one goes
               to its sheet; the cross on the row deletes that one. Which is the way to pick three
@@ -3481,7 +3489,7 @@ const state = {
              brand:'dekton', product:'', finish:'matt', edge:'square' },
   splashback: { type:'tile', brand:null, product:'', finish:null, colorOverride:null, hatchOverride:null,
                 tileW:300, tileH:600, tileSized:false, bond:0.5, fullWalls:true,
-                gaugeX:'start', offsetX:0,
+                gaugeX:'start', offsetX:0, showOnPlan:true,
                 // datum: where the tiling is set out from, mm above finished
                 // floor level. gauge: which end of the wall carries the part
                 // course when the height does not divide by the tile.
@@ -10174,6 +10182,67 @@ function drawLowWallOnElevation(d, wall, ox, oy, Hm, s){
   d.text(x + w/2, yTop - 4, `LOW WALL ${Math.round(L.height)} H · ${Math.round(L.t)} THK`,
     { align:'center', size:3.6, color:COL.muted, italic:true });
 }
+// The wall tiling seen from above.
+//
+// A plan is where a set-out is read - it is the sheet with the room on it and
+// the fixtures in it - and the tiling only existed on the elevations, so which
+// end the perpends started from could not be checked against anything the plan
+// showed. Now it can: the finished face stands off the wall by the thickness of
+// the tile, and the joints are ticked across it at the module.
+//
+// Nothing is tiled across an opening, so the runs stop either side of every
+// door and window rather than being drawn through them.
+// Ten millimetres of tile and bed is under a hairline at 1:50 - drawn to scale
+// it is invisible, which is no use to anyone. So the band is drawn at its real
+// thickness where that reads and at a fixed depth on the page where it does
+// not: true on a large-scale plan, deliberately fattened on a small one. A
+// plan shows a finish as a notation rather than as a measured layer, and this
+// is that notation - the joints are the point of it, not the thickness.
+const TILE_PLAN_T = 10;       // real millimetres: tile and its bed
+const TILE_PLAN_MIN = 1.6;    // page millimetres: what it takes to read
+function drawWallTilingOnPlan(d, plan, walls, roomObj){
+  const job = state.splashback || {};
+  if(job.showOnPlan === false) return;
+  if(job.fullWalls === false) return;
+  (walls || []).forEach(wall => {
+    withWallFinish(wall, function(){
+      const sp = state.splashback || {};
+      if(!sp.type || sp.type === 'none' || sp.type === 'matched') return;
+      const seg = wallSegOf(wall.id, roomObj || null);
+      const len = seg ? seg.len : 0;
+      if(!(len > 0)) return;
+      const t = tileModule();
+      if(!(t.w > 0)) return;
+      const g = tileGaugeX(len);
+      const col = sp.jointColorOverride || COL.ink3;
+      // The stretches that are actually tiled: the wall, less its openings.
+      const gaps = (wall.openings || []).map(op => [op.position, op.position + op.width])
+        .sort((a, b) => a[0] - b[0]);
+      const runs = [];
+      let at = 0;
+      gaps.forEach(([a, b]) => { if(a > at) runs.push([at, Math.min(a, len)]); at = Math.max(at, b); });
+      if(at < len) runs.push([at, len]);
+      const depth = Math.max(TILE_PLAN_T, TILE_PLAN_MIN / (plan.s || 1));
+      const P = (u, v) => planMap(wall.id, u, v, plan);
+      runs.forEach(([a, b]) => {
+        if(b - a < 1) return;
+        // The face of the tiling, standing off the wall.
+        const f1 = P(a, depth), f2 = P(b, depth);
+        d.line(f1[0], f1[1], f2[0], f2[1], col, LW.hairline);
+        // A joint every module, set out the way the elevation sets it out.
+        const first = Math.ceil((a - g.shift) / t.w);
+        const last  = Math.floor((b - g.shift) / t.w);
+        if(last - first > 400) return;
+        for(let k = first; k <= last; k++){
+          const u = g.shift + k * t.w;
+          if(u <= a + 0.5 || u >= b - 0.5) continue;
+          const j1 = P(u, 0), j2 = P(u, depth);
+          d.line(j1[0], j1[1], j2[0], j2[1], col, LW.hairline);
+        }
+      });
+    });
+  });
+}
 function planMap(wallId, u, v, plan){
   // A plan may carry its own wall-local frame — that is how an opening gets
   // drawn on an internal partition, which is not one of the loop's walls and so
@@ -10953,6 +11022,11 @@ function drawExtraRoomOnPlan(d, kox, koy, s, view, p){
     strokeWallRect(d, p.x - wt, p.y - wt, p.x + p.W + wt, p.y + p.L + wt,
       allBands, kox, koy, s, COL.ink, LW.thin);
 
+    // The tiling on this room's own walls. withRoom has swapped the room out,
+    // so state.walls is this room's and its segments are its own.
+    try { drawWallTilingOnPlan(d, plan, state.walls, null); }
+    catch(e){ console.warn('[Bathroom] room plan tiling failed', e.message); }
+
     // Openings, including the doorway. Not the mirrored ones — the kitchen draws
     // its own side of a shared wall onto this same strip of paper.
     state.walls.forEach(w=>{
@@ -11117,6 +11191,11 @@ function drawPlan(d, area, view, opts){
     drawOutlineRoom(d, ox, oy, s, null, wmat);
     drawInternalWalls(d, ox, oy, s, null, wmat);
   }
+
+  // WALL TILING — on the wall faces, before the openings so a doorway reveal is
+  // drawn over the top of it rather than under.
+  try { drawWallTilingOnPlan(d, plan, state.walls, null); }
+  catch(e){ console.warn('[Bathroom] plan tiling failed', e.message); }
 
   // OPENINGS — doors + windows cut into the walls (after floor so the swing
   // arc and leaf are visible inside the room)
@@ -14670,7 +14749,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.33.0';
+const APP_VERSION = '1.34.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -18281,6 +18360,8 @@ bindText('splashProduct', v=> state.splashback.product = v);
   if(fw) fw.addEventListener('change', ()=>{ state.splashback.fullWalls = fw.checked; renderActive(); });
   const sd = document.getElementById('tileShowDatum');
   if(sd) sd.addEventListener('change', ()=>{ state.splashback.showDatum = sd.checked; renderActive(); });
+  const spn = document.getElementById('tileShowPlan');
+  if(spn) spn.addEventListener('change', ()=>{ state.splashback.showOnPlan = spn.checked; renderActive(); });
   const ox = document.getElementById('tileOffsetX');
   if(ox) ox.addEventListener('input', ()=>{
     const v = parseFloat(ox.value);
@@ -19387,6 +19468,8 @@ function renderSurfacePanel(){
   if(fw) fw.checked = sp.fullWalls !== false;
   const sd = document.getElementById('tileShowDatum');
   if(sd) sd.checked = sp.showDatum !== false;
+  const spn = document.getElementById('tileShowPlan');
+  if(spn) spn.checked = sp.showOnPlan !== false;
   setFieldValue('tileDatum', sp.datum || 0);
   const gb = document.getElementById('tileGaugeBar');
   if(gb) gb.querySelectorAll('.pill').forEach(p =>
