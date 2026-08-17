@@ -677,7 +677,7 @@ header .project-label .dot.dirty{background:#F7C04A}
       <div class="group">
         <h2>Sanitaryware &amp; tapware</h2>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin-bottom:8px">Project defaults. Each fixture can override brand, model and set-out in its own editor.</div>
-        <div class="ctrl"><label>Default brand</label><select id="appBrand"></select></div>
+        <div class="ctrl"><label>Default appliance brand <span style="font-weight:400;color:var(--muted);font-size:10.5px">&mdash; laundry, heating, ventilation</span></label><select id="appBrand"></select></div>
         <div class="ctrl"><label>Default basin / sanitaryware brand</label><select id="appSinkBrand"></select></div>
         <div class="ctrl"><label>Default tapware brand</label><select id="appTapBrand"></select></div>
         <div class="ctrl"><label>Supply</label><select id="appSupplyBy"></select></div>
@@ -2921,8 +2921,11 @@ const SINK_BRANDS = [
     ['highgrove','Highgrove'], ['bathroom-butler','Bathroom Butler'], ['thermogroup','Thermogroup'],
     ['ixl','IXL'], ['radiant','Radiant Heating'],
   ]],
-  ['Laundry & kitchen', [
-    ['oliveri','Oliveri'], ['franke','Franke'], ['abey','Abey'], ['everhard','Everhard'],
+  // A bathroom app has a laundry in it often enough - a washer, a dryer, a tub -
+  // but it has no kitchen in it, and this group was named for both and stocked
+  // for the kitchen. Franke makes kitchen sinks; the rest make laundry tubs.
+  ['Laundry tubs', [
+    ['everhard','Everhard'], ['oliveri','Oliveri'], ['abey','Abey'], ['clark','Clark'],
   ]],
   ['Other', [ ['other','Other / TBC'] ]],
 ];
@@ -2939,23 +2942,26 @@ const TAP_BRANDS = [
   ]],
   ['Imported', [
     ['grohe','Grohe'], ['hansgrohe','Hansgrohe'], ['kohler','Kohler'],
-    ['gessi','Gessi'], ['vola','Vola'], ['franke','Franke'], ['abey','Abey'],
-  ]],
-  ['Filtered & boiling water', [
-    ['zip','Zip'], ['billi','Billi'], ['puretec','Puretec'], ['aquaport','Aquaport'],
+    ['gessi','Gessi'], ['vola','Vola'], ['abey','Abey'],
   ]],
   ['Other', [ ['other','Other / TBC'] ]],
 ];
+// Brands that used to be offered and are not any more - the kitchen ones. A job
+// that already names one still has to read as that name rather than as a blank,
+// so they stay known here without being on any list to choose from again.
+const RETIRED_BRANDS = {
+  franke:'Franke', zip:'Zip', billi:'Billi', puretec:'Puretec', aquaport:'Aquaport',
+};
 function brandLabel(key){
   let out = null;
   APPLIANCE_BRANDS.concat(SINK_BRANDS, TAP_BRANDS).forEach(([, list]) =>
     list.forEach(([k, l]) => { if(k === key) out = l; }));
-  return out;
+  return out || RETIRED_BRANDS[key] || null;
 }
 
 // Standard nominal cut-outs by appliance kind, in mm.
 const APPLIANCE_KINDS = {
-  'sink':       { label:'Basin / sink',cutW:500, cutH:0,   cutD:400, brands:SINK_BRANDS },
+  'sink':       { label:'Basin / laundry tub', cutW:500, cutH:0, cutD:400, brands:SINK_BRANDS },
   'tap':        { label:'Tap',        cutW:35,  cutH:0,   cutD:0,   brands:TAP_BRANDS },
   // ---- Sanitaryware. The "cut-out" for these is the set-out the fixture is
   // built around: the pan footprint, the bath rebate, the shower tray.
@@ -14837,7 +14843,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.36.1';
+const APP_VERSION = '1.37.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
