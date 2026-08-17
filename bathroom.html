@@ -1197,6 +1197,7 @@ header .project-label .dot.dirty{background:#F7C04A}
         <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="showHeightDims" checked> <span>Show height dim chain on elevation</span></label>
         <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="showOverheadDims" checked> <span>Show overhead dim chain (right side)</span></label>
         <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="showWallCabsOnPlan" checked> <span>Show wall cupboards on plan</span></label>
+        <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="showAdjoining" checked> <span>Show the returning fixtures on elevations</span></label>
         <div class="ctrl"><label>Kick dim note</label><input id="vNoteKick" type="text" placeholder="e.g. to top of plinth"></div>
         <div class="ctrl"><label>Cab face dim note</label><input id="vNoteFace" type="text" placeholder="e.g. base cabinet"></div>
         <div class="ctrl"><label>Bench thickness dim note</label><input id="vNoteBench" type="text" placeholder="e.g. 20mm stone"></div>
@@ -1717,6 +1718,14 @@ header .project-label .dot.dirty{background:#F7C04A}
               of measurements in four colours reads as a mess rather than as a key. The colour is
               deliberately not the drawing's own ink, so a measurement is never mistaken for something
               the sheet is asserting. The settings are saved with the job.</p>
+            <p>An elevation shows what returns into it from the walls either side. A bath on wall B is
+              right there at the end of the view when you look at wall A, so it is drawn there: seen end
+              on, as wide as it is deep, dashed because it is beyond the plane of the elevation rather
+              than on it. This wall's own joinery goes down after it and stands in front, which is the
+              truth of what you would see. Only what reaches the shared corner is drawn &mdash;
+              everything in the room projects onto an elevation if you are strict about it, and an
+              elevation drawn strictly that way is a stack of outlines nobody can read. Turn it off under
+              <span class="ui">Drawing style</span>.</p>
             <p>The tiling shows on the floor plans as well: a band on each wall face with the perpends
               ticked across it, running the same set-out the elevations do and stopping either side of
               every door and window. It is a notation rather than a measured layer &mdash; ten millimetres
@@ -3563,7 +3572,7 @@ const state = {
   viewports: {}, // per-view: {zoom, panX, panY}
   lastElev: {},  // per-view elevation transform, for dragging fittings
   library: { projects: [], currentProjectId: null, currentJobId: null, dirty: false },
-  drawStyle: { snapTol: 50, lineScale: 0.05, lineColor: '#111111', dimScale: 0.05, dimColor: '#3C3C3C', dimTextSize: 6, showPerCabDims: true, showOverallDims: true, showCabDoorSwings: true, cabDoorSwingAngle: 40, showDrawerLines: true, showHiddenCarcass: true, showHeightDims: true, showOverheadDims: true, showWallCabsOnPlan: true },
+  drawStyle: { snapTol: 50, lineScale: 0.05, lineColor: '#111111', dimScale: 0.05, dimColor: '#3C3C3C', dimTextSize: 6, showPerCabDims: true, showOverallDims: true, showCabDoorSwings: true, cabDoorSwingAngle: 40, showDrawerLines: true, showHiddenCarcass: true, showHeightDims: true, showOverheadDims: true, showWallCabsOnPlan: true, showAdjoining: true },
   island: { enabled: false, x: 2100, y: 1500, length: 1800, depth: 600, angle: 0, mirror: false, barBack: true, overhang: 300, bench: { material: null, colorOverride: null, hatchOverride: null, thickness: null }, leftEnd: { enabled: false, thickness: 18, waterfall: false, mitre: true }, rightEnd: { enabled: false, thickness: 18, waterfall: false, mitre: true }, baseRow: [] },
 };
 // ============================================================
@@ -10141,6 +10150,71 @@ function adjoiningLowWalls(wall){
 // Drawn as what you see: the return face of it, its own thickness wide, in its
 // own finish. It stands in front of this wall, so it goes down after the wall's
 // tiling and before the joinery, same as the wall's own low wall.
+// What returns into this elevation from the walls either side.
+//
+// An elevation is not just the wall it names. Standing in the room looking at
+// wall A, the bath on wall B comes towards you and is right there at the end of
+// the view - and the sheet showed nothing of it, so the one drawing that says
+// how much room is left beside the bath did not have the bath on it.
+//
+// Seen end on, a fixture is as wide as it is deep. That is what is drawn: the
+// block it occupies, dashed, because it is beyond the plane of this elevation
+// rather than on it. The wall's own joinery goes down after it and stands in
+// front of it, which is the truth of what you would see.
+//
+// Only what reaches the shared corner. Everything in the room projects onto an
+// elevation if you are strict about it, and an elevation drawn strictly that
+// way is a stack of overlapping outlines nobody can read.
+const ADJ_CORNER_TOL = 200;   // mm: near enough to the corner to read as a return
+function adjoiningFixtures(wall){
+  const out = [];
+  if(!wall) return out;
+  const take = (other, at) => {
+    if(!other) return;
+    const len = wallLength(other.id);
+    ['baseRow', 'wallRow'].forEach(rowName => {
+      const arr = other[rowName] || [];
+      const s0 = runStartOffset(other, rowName === 'wallRow' ? 'wall' : 'base');
+      const pos = rowPositions(arr, s0);
+      arr.forEach((cab, i) => {
+        const a = pos[i], b = a + cab.W;
+        // Reaching the corner this elevation shares with that wall.
+        const near = (at === 'start') ? (len - b) : a;
+        if(near > ADJ_CORNER_TOL) return;
+        out.push({ cab, at, row: rowName });
+      });
+    });
+  };
+  take(getWall(_PREV_WALL[wall.id]), 'start');
+  take(getWall(_NEXT_WALL[wall.id]), 'end');
+  return out;
+}
+function drawAdjoiningFixturesOnElevation(d, wall, ox, oy, wL, Hm, s){
+  if(state.drawStyle && state.drawStyle.showAdjoining === false) return;
+  const floorY = oy + Hm*s;
+  adjoiningFixtures(wall).forEach(({ cab, at, row })=>{
+    const dep = Math.max(60, cab.D || 0);
+    const w = dep * s;
+    const x = (at === 'start') ? ox : (ox + wL*s - w);
+    // Where it sits up the wall: on the floor, or hung at its own height.
+    const bottom = (row === 'wallRow')
+      ? ((cab.config && +cab.config.cabBottomY) || 1000)
+      : ((cab.config && +cab.config.panH > 0 && cab.type === 'toilet') ? 0 : 0);
+    const top = bottom + Math.max(60, cab.H || 0);
+    const yTop = oy + (Hm - Math.min(Hm, top))*s;
+    const yBot = oy + (Hm - Math.max(0, bottom))*s;
+    if(yBot - yTop < 0.5 || w < 0.5) return;
+    d.dashed(true);
+    d.rect(x, yTop, w, yBot - yTop, null, COL.ink3, LW.hairline);
+    d.dashed(false);
+    const def = CATALOG[cab.type];
+    const label = (def && def.label) ? def.label.toUpperCase() : cab.type.toUpperCase();
+    // Along the return, so a long name fits in a narrow block.
+    d.text(x + w/2, (yTop + yBot)/2, label,
+      { align:'center', baseline:'middle', size:3.4, color:COL.muted, italic:true,
+        angle:-Math.PI/2 });
+  });
+}
 function drawAdjoiningLowWallsOnElevation(d, wall, ox, oy, wL, Hm, s){
   adjoiningLowWalls(wall).forEach(({ L, at })=>{
     const w = L.t*s;
@@ -12547,6 +12621,9 @@ function drawElevation(d, area, wallId, opts){
   // And the ones returning into this elevation from the walls either side.
   try { drawAdjoiningLowWallsOnElevation(d, wall, ox, oy, wL, Hm, s); }
   catch(e){ console.warn('[Bathroom] adjoining low wall failed', e.message); }
+  // And the fixtures on those walls, seen end on.
+  try { drawAdjoiningFixturesOnElevation(d, wall, ox, oy, wL, Hm, s); }
+  catch(e){ console.warn('[Bathroom] adjoining fixtures failed', e.message); }
 
   // OPENINGS on this wall — rendered on the wall surface, behind cabinets. A
   // wall shared with an adjoining room shows that room's openings too.
@@ -14749,7 +14826,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.34.0';
+const APP_VERSION = '1.35.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -19181,6 +19258,7 @@ function _resyncDimToggles(){
     ['showHeightDims','showHeightDims'],
     ['showOverheadDims','showOverheadDims'],
     ['showWallCabsOnPlan','showWallCabsOnPlan'],
+    ['showAdjoining','showAdjoining'],
   ];
   pairs.forEach(([id, key]) => {
     const cb = document.getElementById(id);
@@ -19215,6 +19293,7 @@ _wireDimToggle('showHiddenCarcass',  'showHiddenCarcass');
 _wireDimToggle('showHeightDims',     'showHeightDims');
 _wireDimToggle('showOverheadDims',   'showOverheadDims');
 _wireDimToggle('showWallCabsOnPlan', 'showWallCabsOnPlan');
+_wireDimToggle('showAdjoining',      'showAdjoining');
 
 // Vertical dim notes — text fields that append to each dim label.
 function _wireVDimNote(id, key){
