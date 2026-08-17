@@ -740,7 +740,7 @@ header .project-label .dot.dirty{background:#F7C04A}
       <div class="group">
         <h2>Wall tiling</h2>
         <div class="ctrl"><label>Tiling height <span class="val"><input class="valInp" id="spVal" type="number" min="0" max="3300" step="10" value="1250"> mm</span></label><input id="sp" type="range" min="0" max="3300" step="10" value="1250"></div>
-        <div class="ctrl" style="font-size:11px;color:var(--muted);margin:-4px 0 8px">Measured up from the vanity top. Set it past the ceiling height for full-height tiling.</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin:-4px 0 8px">Height above finished floor level, the way a tiling height is always given &mdash; 0 is FFL. Set it past the ceiling height for full-height tiling.</div>
         <label class="toggle" style="margin:2px 0 8px"><input type="checkbox" id="tileFullWalls" checked> <span>Tile every wall, not just above the vanity</span></label>
         <div class="ctrl"><label>Start tile height <span class="val"><input class="valInp" id="tileDatum" type="number" min="-200" max="1200" step="5" value="0"> mm</span></label>
           <div style="font-size:11px;color:var(--muted);margin-top:2px">Where the bottom course starts, relative to finished floor level — 0 is FFL. Raise it for a hob or a set-down. <b>Go negative</b> for a floor laid to falls: the tiling has to start off the lowest point of it, or the bottom course runs out of tile where the floor drops away.</div>
@@ -2753,7 +2753,18 @@ function splashbackSpecLabel(){
 // material, in which case it gets its own fill and hatch.
 // Where the tiling stops, in millimetres above the floor. Measured up from the
 // vanity top so the existing Tiling height control still means what it says.
+// How high the wall is tiled, in millimetres above finished floor level.
+//
+// It used to be measured up from the vanity top, which is a kitchen habit - a
+// splashback is the gap between a bench and the overheads, so bench-relative is
+// what it is. Tiling is not that. Tiling height is given above FFL by everyone
+// who sets it out or prices it, and measuring it off the bench meant the figure
+// on the panel was not the figure anybody says out loud, and could not go below
+// the bench at all.
 function tileLineY(){
+  const h = (state.splashback || {}).height;
+  if(typeof h === 'number' && h >= 0) return h;
+  // A job from before this had its own figure: the height it was drawing at.
   return Math.max(0, (state.bench.height || 850) + (state.bench.splashback || 0));
 }
 // The whole-wall tiling on one elevation. Returns silently when the job has
@@ -3497,7 +3508,7 @@ const state = {
   bench:   { material:'stone-white', overhang:20, splashback:1250, height:850, colorOverride:null, hatchOverride:null,
              brand:'dekton', product:'', finish:'matt', edge:'square' },
   splashback: { type:'tile', brand:null, product:'', finish:null, colorOverride:null, hatchOverride:null,
-                tileW:300, tileH:600, tileSized:false, bond:0.5, fullWalls:true,
+                height:2100, tileW:300, tileH:600, tileSized:false, bond:0.5, fullWalls:true,
                 gaugeX:'start', offsetX:0, showOnPlan:true,
                 // datum: where the tiling is set out from, mm above finished
                 // floor level. gauge: which end of the wall carries the part
@@ -14826,7 +14837,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.35.0';
+const APP_VERSION = '1.36.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -18396,7 +18407,13 @@ bindRange('roomL', v=> state.room.L = v, 'roomLVal');
 bindRange('roomH', v=> state.room.H = v, 'roomHVal');
 bindRange('wallT', v=> state.room.wallT = v, 'wallTVal');
 bindRange('o', v=> state.bench.overhang = v, 'oVal');
-bindRange('sp', v=> state.bench.splashback = v, 'spVal');
+bindRange('sp', function(v){
+  state.splashback.height = Math.max(0, v);
+  // Everything measured off the bench - the strip above a vanity, where a wall
+  // cupboard hangs, the electrical defaults - follows it, so one figure still
+  // moves the lot. Below the bench it is nought: the tiling stops under it.
+  state.bench.splashback = Math.max(0, state.splashback.height - (state.bench.height || 850));
+}, 'spVal');
 // projName → library project (folder) name
 document.getElementById('projName').addEventListener('input', e=>{
   const proj = getCurrentProject();
@@ -22875,6 +22892,14 @@ function loadDesign(snap){
   if(snap.hardware)      state.hardware      = deepClone(snap.hardware);
   if(snap.appliances)    state.appliances    = deepClone(snap.appliances);
   if(snap.splashback)    state.splashback    = deepClone(snap.splashback);
+  // The tiling height used to be measured up from the bench. A job saved then
+  // carries no figure of its own, so it is given the height it was drawing at -
+  // the drawing does not move, and from here on the figure means what it says.
+  if(state.splashback && typeof state.splashback.height !== 'number'){
+    const b0 = (snap.bench && snap.bench.height) || (state.bench && state.bench.height) || 850;
+    const sp0 = (snap.bench && snap.bench.splashback) || 0;
+    state.splashback.height = Math.max(0, b0 + sp0);
+  }
   if(snap.electrical)    state.electrical    = deepClone(snap.electrical);
   if(snap.composites)    state.composites    = deepClone(snap.composites);
   if(snap.rooms)         state.rooms         = deepClone(snap.rooms);
@@ -23866,7 +23891,7 @@ function syncSidebarFromState(){
   setVal('wallT', state.room.wallT); setVal('wallTVal', state.room.wallT);
   setVal('wallMaterial', state.room.wallMaterial || 'plaster');
   setVal('o', state.bench.overhang); setVal('oVal', state.bench.overhang);
-  setVal('sp', state.bench.splashback); setVal('spVal', state.bench.splashback);
+  setVal('sp', tileLineY()); setVal('spVal', tileLineY());
   fillBenchMaterialSelects();
   setVal('bench', state.bench.material);
   syncBenchThickFields();
