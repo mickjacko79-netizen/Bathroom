@@ -14837,7 +14837,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.36.0';
+const APP_VERSION = '1.36.1';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -18323,6 +18323,9 @@ function showView(v){
   state.ui.view = v;
   try { syncMeasurePanel(); } catch(_){}
   try { syncCalloutPanel(); } catch(_){}
+  // The tiling readout describes the wall on the sheet, so it has to be redrawn
+  // when the sheet changes.
+  try { renderSurfacePanel(); } catch(_){}
   if(syncActiveWallToView(v)){
     try { syncSidebarFromState(); } catch(_){}
     try { renderCabinetList(); } catch(_){}
@@ -19576,31 +19579,44 @@ function renderSurfacePanel(){
   setFieldValue('tileOffsetX', sp.offsetX || 0);
   const gr = document.getElementById('tileGaugeReadout');
   if(gr){
-    const g = tileGauge();
-    // Across needs a wall to measure, and the active one is the wall on screen.
-    let across = '';
-    try {
-      const wl = wallLength(state.ui.activeWall || 'A');
+    // The wall the SHEET is showing, not whichever wall the sidebar happens to
+    // have selected. Reading off the active wall meant that standing on
+    // elevation B the figures underneath described wall A - a different length,
+    // a different cut - which is worse than saying nothing.
+    const v = state.ui.view || '';
+    let wid = state.ui.activeWall || 'A', room = null;
+    if(v.indexOf('elev-') === 0 && v !== 'elev-island') wid = v.slice(5);
+    else if(v.indexOf('room:') === 0){
+      const bits = v.split(':'); room = roomById(bits[1]) || null; wid = bits[2] || wid;
+    }
+    const walls = room ? (room.walls || []) : (state.walls || []);
+    const wall = walls.find(w => w.id === wid) || null;
+    // And through that wall's own finish, so a wall the wizard gave its own tile
+    // is described in ITS tile rather than the job's.
+    const read = () => {
+      const g = tileGauge();
+      const up = g.run <= 0 ? 'Nothing to tile - the tile line is at or below where the tiling starts.'
+        : g.cut <= 0.5
+          ? (g.full + ' full courses of ' + g.module.h + ' - gauges out exactly over ' + Math.round(g.run) + ' mm.')
+          : (g.full + ' full courses of ' + g.module.h + ' over ' + Math.round(g.run) + ' mm, leaving a ' + g.cut + ' mm cut'
+             + (g.mode === 'both' ? (' split as ' + Math.round(g.cut / 2 * 10) / 10 + ' mm at each end.')
+                                  : (' at the ' + (g.mode === 'top' ? 'floor.' : 'top.'))));
+      let across = '';
+      const wl = wall ? (function(){ const sg = wallSegOf(wall.id, room); return sg ? sg.len : 0; })() : 0;
       if(wl > 0){
-        const gxg = tileGaugeX(wl);
-        const endName = { start:'the left', end:'the right', both:'both ends' }[gxg.mode] || 'the left';
-        across = (gxg.cut <= 0.5)
-          ? ('Across wall ' + wallLetter(null, state.ui.activeWall || 'A') + ': ' + gxg.full
-             + ' full tiles of ' + gxg.module.w + ' - gauges out exactly over ' + Math.round(gxg.run) + ' mm.')
-          : ('Across wall ' + wallLetter(null, state.ui.activeWall || 'A') + ': ' + gxg.full
-             + ' full tiles of ' + gxg.module.w + ' over ' + Math.round(gxg.run) + ' mm, leaving a '
-             + gxg.cut + ' mm cut'
-             + (gxg.mode === 'both' ? (' split as ' + Math.round(gxg.cut / 2 * 10) / 10 + ' mm at each end.')
-                                    : (' at ' + (gxg.mode === 'end' ? 'the left.' : 'the right.'))));
+        const gx = tileGaugeX(wl);
+        const name = 'Across wall ' + wallLetter(room, wall.id) + ': ';
+        across = (gx.cut <= 0.5)
+          ? (name + gx.full + ' full tiles of ' + gx.module.w + ' - gauges out exactly over ' + Math.round(gx.run) + ' mm.')
+          : (name + gx.full + ' full tiles of ' + gx.module.w + ' over ' + Math.round(gx.run) + ' mm, leaving a '
+             + gx.cut + ' mm cut'
+             + (gx.mode === 'both' ? (' split as ' + Math.round(gx.cut / 2 * 10) / 10 + ' mm at each end.')
+                                   : (' at ' + (gx.mode === 'end' ? 'the left.' : 'the right.'))));
       }
-    } catch(_){}
-    const up = g.run <= 0 ? 'Nothing to tile - the tile line is at or below where the tiling starts.'
-      : g.cut <= 0.5
-        ? (g.full + ' full courses of ' + g.module.h + ' - gauges out exactly over ' + Math.round(g.run) + ' mm.')
-        : (g.full + ' full courses of ' + g.module.h + ' over ' + Math.round(g.run) + ' mm, leaving a ' + g.cut + ' mm cut'
-           + (g.mode === 'both' ? (' split as ' + Math.round(g.cut / 2 * 10) / 10 + ' mm at each end.')
-                                : (' at the ' + (g.mode === 'top' ? 'floor.' : 'top.'))));
-    gr.innerHTML = up + (across ? '<br>' + across : '');
+      return up + (across ? '<br>' + across : '');
+    };
+    try { gr.innerHTML = wall ? withWallFinish(wall, read) : read(); }
+    catch(_){ gr.textContent = ''; }
   }
   // Show the module that is actually being drawn, whether it came off the list
   // or was typed in — the fields read as the answer to "what size is the tile",
