@@ -9282,13 +9282,29 @@ function applyCaromaProduct(cab, key){
                  : w.indexOf('centre') >= 0 ? 'C'
                  : w.indexOf('end') >= 0 ? 'L' : c.wasteEnd;
     }
+  } else if(cab.type === 'basin-fs'){
+    // The rim is the top of a basin, and the tap and the trap are both set out
+    // from it. Only when the product is drawn standing on the floor: a bowl
+    // drawn on its own is 150 tall and would put the rim on the skirting.
+    // Height above floor is what carries that case, and it is set separately.
+    const top = Math.round(p.drawnH || p.H || 0);
+    if(top > 400) c.rimH = top;
   }
+
   // The schedule reads brand and model off the appliance role, so set them
-  // there rather than inventing a second place for the same fact.
-  const role = (cab.type === 'toilet') ? 'toilet' : 'bath';
+  // there rather than inventing a second place for the same fact. The role is
+  // the fixture's own first one — a basin used to be scheduled as a bath,
+  // because the role was picked with a single ternary that only knew about
+  // toilets.
+  const role = (applianceRolesFor(cab) || [])[0] || cab.type;
   if(!cab.appliance) cab.appliance = {};
   if(!cab.appliance[role]) cab.appliance[role] = {};
-  cab.appliance[role].brand = 'caroma';
+  // A product out of the shared library carries its own brand. The built-in
+  // table is all Caroma, so that stays as it was rather than being derived
+  // from a field those entries do not have.
+  cab.appliance[role].brand = p.shared
+    ? (String(p.brand || '').trim().toLowerCase().replace(/\s+/g, '-') || 'other')
+    : 'caroma';
   cab.appliance[role].model = p.code;
   cab.appliance[role].notes = p.name;
 }
