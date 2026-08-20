@@ -9033,6 +9033,50 @@ function libPlaceElev(paths, fit, planW){
   return { paths: out, w: w, h: box[3] };
 }
 
+// The colours a fitting can be drawn in, by name rather than by hex, so a
+// product saved on one machine looks the same on another and follows the sheet
+// if the palette ever moves.
+const LIB_FILLS = [
+  ['china',  'China'], ['water', 'Water'], ['metal', 'Metal'], ['glass', 'Glass'],
+  ['mirror', 'Mirror'], ['none', 'No fill'],
+];
+const LIB_STROKES = [
+  ['ink2', 'Normal'], ['ink', 'Heavy'], ['ink3', 'Light'], ['chinaLine', 'China edge'],
+  ['glassLine', 'Glass edge'], ['muted', 'Muted'],
+];
+function libColour(name, forFill){
+  if(!name || name === 'none') return null;
+  if(SAN[name]) return SAN[name];
+  if(COL[name]) return COL[name];
+  return forFill ? SAN.china : COL.ink2;
+}
+
+// What a fitting is actually drawn with: its own setting if it has one, the
+// product's otherwise. A blank override inherits rather than meaning "none",
+// so clearing a box puts it back to the product.
+function libStyleOf(cab){
+  const p = cabProduct(cab) || {};
+  const c = (cab && cab.config) || {};
+  const pick = (own, dflt) => (own === undefined || own === null || own === '') ? dflt : own;
+  return {
+    fill:   pick(c.libFill,   p.fill   || 'china'),
+    stroke: pick(c.libStroke, p.stroke || 'ink2'),
+    mountH: +pick(c.libHeight, p.mountH || 0) || 0,
+  };
+}
+
+// Where it is set out from, in the placed plan. Nobody having chosen one, the
+// middle of the wall edge is used: that is the centreline at the wall, which
+// is what most fittings are dimensioned from.
+function libAnchor(cab){
+  const p = cabProduct(cab);
+  if(!p) return null;
+  const a = p.anchor || {};
+  const sx = cab.W / (p.W || 1), sy = cab.D / (p.D || 1);
+  return a.set ? { u: (a.u || 0) * sx, v: (a.v || 0) * sy }
+               : { u: cab.W / 2, v: 0 };
+}
+
 // A library record in the shape the rest of this file expects. plan and elev
 // become paths; W, D and H come off the geometry, so the size on the schedule
 // is the size that is drawn.
@@ -9041,7 +9085,10 @@ function libToProduct(rec){
   const out = { kind, brand: rec.brand || '', code: rec.code || '',
                 name: rec.label || rec.name, range: '', shared: true,
                 W: rec.size.W || 0, D: rec.size.D || 0, H: rec.size.H || 0,
-                drawnH: rec.size.H || 0, url: rec.source || '' };
+                drawnH: rec.size.H || 0, url: rec.source || '',
+                anchor: rec.anchor || { u:0, v:0, set:false },
+                mountH: rec.mountH || 0,
+                fill: rec.fill || 'china', stroke: rec.stroke || 'ink2' };
   const plan = rec.views && rec.views.plan;
   if(plan){
     const o = libPlacePlan(libFlatten(plan.entities), plan.fit);
@@ -9195,7 +9242,11 @@ function productPaths(cab, which){
   if(!paths || !paths.length) return null;
   const sx = cab.W / (p.W || 1);
   const sy = (which === 'plan') ? (cab.D / (p.D || 1)) : (cab.H / (p.drawnH || p.H || 1));
-  return paths.map(pa => pa.map(q => [q[0] * sx, q[1] * sy]));
+  // A wall-hung pan, a basin, a mirror: what is drawn is the same, it just
+  // starts further up the wall. Only the elevation moves — a fitting does not
+  // change its footprint by being lifted.
+  const up = (which === 'plan') ? 0 : libStyleOf(cab).mountH;
+  return paths.map(pa => pa.map(q => [q[0] * sx, q[1] * sy + up]));
 }
 
 // ============================================================
@@ -9359,9 +9410,19 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   // whole point of putting it there.
   const shared = productPaths(cab, 'plan');
   if(shared){
+    const st = libStyleOf(cab);
+    const fillCol = libColour(st.fill, true);
+    // Fill first, outline over it. A supplier's plan is dozens of open curves,
+    // so there is no one closed shape to fill — the footprint is, and filling
+    // that behind the curves is what makes it read as an object rather than as
+    // a wire drawing sitting on the floor tiles.
+    if(fillCol){
+      const box = [[0,0],[cab.W,0],[cab.W,cab.D],[0,cab.D]];
+      d.polygon(P(box), fillCol, null, 0);
+    }
     for(const pa of shared){
       if(sel) d.polyline(P(pa), COL.selected, LW.medium);
-      d.polyline(P(pa), line, lw);
+      d.polyline(P(pa), libColour(st.stroke) || line, lw);
     }
     if(cab.type === 'bath') drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D);
     return;
@@ -9718,7 +9779,13 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
   // As on the plan: a toilet is built from its numbers, not traced.
   const sharedE = productPaths(cab, 'elev');
   if(sharedE){
-    for(const pa of sharedE) d.polyline(pa.map(q => [X(q[0]), Y(q[1])]), stroke, lw);
+    const stE = libStyleOf(cab);
+    const fillE = libColour(stE.fill, true);
+    if(fillE){
+      const y0 = stE.mountH, y1 = stE.mountH + cab.H;
+      d.polygon([[X(0),Y(y0)],[X(cab.W),Y(y0)],[X(cab.W),Y(y1)],[X(0),Y(y1)]], fillE, null, 0);
+    }
+    for(const pa of sharedE) d.polyline(pa.map(q => [X(q[0]), Y(q[1])]), libColour(stE.stroke) || stroke, lw);
     if(cab.type === 'bath' && bathWallMixer(cab)){
       drawWallMixerOnElevation(d, X(bathTapU(cab)), Y(c.tapH || 1050), s, bathWallMixer(cab));
     }
@@ -17048,6 +17115,113 @@ function renderEditPanel(){
         const hint = el('div', { class:'sub' },
           `Drawn ${Math.round(pr.W)} along the wall × ${Math.round(pr.D)} into the room.`);
         editor.appendChild(hint);
+
+        // ── set out from ──────────────────────────────────────────────────
+        // The point a plumber measures to. It belongs to the product, because
+        // it is a fact about the fitting rather than about this drawing.
+        const A = pr.anchor || { u:0, v:0, set:false };
+        const saveProduct = (patch)=>{
+          const lib = sharedLibrary();
+          if(!lib) return;
+          lib.put(Object.assign({ id: id }, patch)).then(()=>{
+            _libGeom.clear();
+            return libRefresh();
+          }).then(()=>{ renderActive(); renderEditPanel(); scheduleAutosave(); });
+        };
+
+        const soRow = el('div', { class:'ctrl' });
+        soRow.appendChild(el('label', {}, 'Set out from'));
+        const soSel = el('select');
+        [['centre','Centreline'],['left','Left edge'],['right','Right edge'],['custom','Along wall…']]
+          .forEach(([v, lab])=>{
+            const o = el('option', { value:v }, lab);
+            const cur = !A.set ? 'centre'
+              : (Math.abs(A.u) < 1 ? 'left'
+              : Math.abs(A.u - pr.W) < 1 ? 'right'
+              : Math.abs(A.u - pr.W/2) < 1 ? 'centre' : 'custom');
+            if(cur === v) o.selected = true;
+            soSel.appendChild(o);
+          });
+        soSel.addEventListener('change', ()=>{
+          const u = soSel.value === 'left' ? 0
+                  : soSel.value === 'right' ? pr.W
+                  : soSel.value === 'custom' ? (A.u || pr.W/2)
+                  : pr.W/2;
+          saveProduct({ anchor: { u, v: A.v || 0, set: true } });
+        });
+        soRow.appendChild(soSel);
+        editor.appendChild(soRow);
+
+        const svRow = el('div', { class:'ctrl' });
+        svRow.appendChild(el('label', {}, '…out from wall'));
+        const svInp = el('input', { type:'number', step:'1',
+          value: String(Math.round(A.set ? (A.v || 0) : 0)) });
+        svInp.addEventListener('change', ()=>{
+          saveProduct({ anchor: { u: A.set ? A.u : pr.W/2, v: +svInp.value || 0, set: true } });
+        });
+        svRow.appendChild(svInp);
+        editor.appendChild(svRow);
+
+        // ── height above floor ────────────────────────────────────────────
+        // On the product as a default — a wall-hung basin is 850 on every job —
+        // and overridable here when one drawing wants it different. Empty means
+        // inherit, which is why it is a text box rather than a number spinner:
+        // a spinner has no way to say "nothing".
+        const hRow = el('div', { class:'ctrl' });
+        hRow.appendChild(el('label', {}, 'Height above floor'));
+        const hInp = el('input', { type:'text',
+          value: (c.libHeight === undefined || c.libHeight === null || c.libHeight === '')
+            ? '' : String(c.libHeight),
+          placeholder: String(Math.round(pr.mountH || 0)) + ' (product)' });
+        hInp.addEventListener('change', ()=>{
+          const v = hInp.value.trim();
+          if(v === '') delete c.libHeight; else c.libHeight = +v || 0;
+          renderActive(); renderEditPanel(); scheduleAutosave();
+        });
+        hRow.appendChild(hInp);
+        editor.appendChild(hRow);
+
+        const hSet = el('div', { class:'ctrl' });
+        hSet.appendChild(el('label', {}, '…as the default'));
+        const hBtn = el('button', { class:'pill' }, 'Save to product');
+        hBtn.addEventListener('click', ()=>{
+          saveProduct({ mountH: +libStyleOf(cab).mountH || 0 });
+          delete c.libHeight;
+        });
+        hSet.appendChild(hBtn);
+        editor.appendChild(hSet);
+
+        // ── fill and outline ──────────────────────────────────────────────
+        const styleRow = (label, key, list, dflt)=>{
+          const row = el('div', { class:'ctrl' });
+          row.appendChild(el('label', {}, label));
+          const sel2 = el('select');
+          sel2.appendChild(el('option', { value:'' }, 'From product — ' + dflt));
+          list.forEach(([v, lab])=>{
+            const o = el('option', { value:v }, lab);
+            if(c[key] === v) o.selected = true;
+            sel2.appendChild(o);
+          });
+          sel2.addEventListener('change', ()=>{
+            if(sel2.value === '') delete c[key]; else c[key] = sel2.value;
+            renderActive(); renderEditPanel(); scheduleAutosave();
+          });
+          row.appendChild(sel2);
+          editor.appendChild(row);
+        };
+        styleRow('Fill', 'libFill', LIB_FILLS, pr.fill || 'china');
+        styleRow('Outline', 'libStroke', LIB_STROKES, pr.stroke || 'ink2');
+
+        const styleSet = el('div', { class:'ctrl' });
+        styleSet.appendChild(el('label', {}, '…as the default'));
+        const sBtn = el('button', { class:'pill' }, 'Save to product');
+        sBtn.addEventListener('click', ()=>{
+          const st = libStyleOf(cab);
+          saveProduct({ fill: st.fill, stroke: st.stroke });
+          delete c.libFill; delete c.libStroke;
+        });
+        styleSet.appendChild(sBtn);
+        editor.appendChild(styleSet);
       }
 
       if(pr){
