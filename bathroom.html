@@ -9125,7 +9125,14 @@ function libLoops(paths){
         used[j] = true; grew = true; break;
       }
     }
-    if(loop.length > 2 && near(loop[0], loop[loop.length-1])) loops.push(loop);
+    // A run that never closes on itself is not a failure. A pan is drawn open
+    // at the bottom because the FLOOR closes it, and the same shape in plan is
+    // open at the back because the WALL does. Closing it with a straight
+    // segment between its own two ends is what the draughtsman left implied,
+    // and it is why the pan came out unfilled while the cistern above it did
+    // not. Anything closed this way that is not really a shape falls out at
+    // the area test below.
+    if(loop.length > 2) loops.push(loop);
   }
 
   // Biggest first, and only the ones with real area in them: a fitting is a
