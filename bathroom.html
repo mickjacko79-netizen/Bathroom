@@ -8982,14 +8982,14 @@ function libFlatten(entities){
   return paths;
 }
 
-// Turn the view the way it will be placed, then sit it at (0,0). A supplier
-// draws a plan whichever way round suited their sheet — Caroma's toilet plan
-// runs depth along x — and a bathroom plan wants width along the wall.
-function libOrient(paths, fit){
-  const rot = ((fit && +fit.rot) || 0 + 360) % 360;
+// Turn the view the way it will be placed. A supplier draws it whichever way
+// round suited their sheet — Caroma's toilet plan runs depth along x — and a
+// bathroom plan wants width along the wall.
+function libTurn(paths, fit){
+  const rot = (((fit && +fit.rot) || 0) + 360) % 360;
   const fx = !!(fit && fit.flipX), fy = !!(fit && fit.flipY);
   const turn = (q) => {
-    let [x, y] = q;
+    let x = q[0], y = q[1];
     if(fx) x = -x;
     if(fy) y = -y;
     if(rot === 90)  return [-y, x];
@@ -8997,16 +8997,40 @@ function libOrient(paths, fit){
     if(rot === 270) return [y, -x];
     return [x, y];
   };
-  const out = paths.map(pa => pa.map(turn));
-  let x1 = Infinity, y1 = Infinity;
-  for(const pa of out) for(const q of pa){ if(q[0] < x1) x1 = q[0]; if(q[1] < y1) y1 = q[1]; }
-  if(!isFinite(x1)) return { paths: out, w: 0, h: 0 };
-  let x2 = -Infinity, y2 = -Infinity;
-  for(const pa of out) for(const q of pa){
-    q[0] -= x1; q[1] -= y1;
-    if(q[0] > x2) x2 = q[0]; if(q[1] > y2) y2 = q[1];
+  return paths.map(pa => pa.map(turn));
+}
+
+function libSpan(paths){
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for(const pa of paths) for(const q of pa){
+    if(q[0] < x1) x1 = q[0]; if(q[0] > x2) x2 = q[0];
+    if(q[1] < y1) y1 = q[1]; if(q[1] > y2) y2 = q[1];
   }
-  return { paths: out, w: x2, h: y2 };
+  return isFinite(x1) ? [x1, y1, x2, y2] : [0, 0, 0, 0];
+}
+
+// The plan, placed. It slides along the wall so the footprint starts at U = 0,
+// and it does NOT move across: V = 0 is where the supplier put the wall face,
+// and moving it to the bounding box corner is what put the pan back to front —
+// it left the wall on the far side of the fixture from the room.
+function libPlacePlan(paths, fit){
+  const out = libTurn(paths, fit);
+  const box = libSpan(out);
+  for(const pa of out) for(const q of pa) q[0] -= box[0];
+  return { paths: out, w: box[2] - box[0], d: box[3] };
+}
+
+// The elevation, placed. Height is the supplier's own — 0 is the floor, which
+// is why a set-out mark below it stays below it instead of lifting the toilet
+// off the ground — and it is centred on the same centreline as the plan, which
+// is the only thing that makes the two views agree when one of them carries
+// 900 mm of set-out marks and the other does not.
+function libPlaceElev(paths, fit, planW){
+  const out = libTurn(paths, fit);
+  const box = libSpan(out);
+  const w = planW || (box[2] - box[0]);
+  for(const pa of out) for(const q of pa) q[0] += w / 2;
+  return { paths: out, w: w, h: box[3] };
 }
 
 // A library record in the shape the rest of this file expects. plan and elev
@@ -9020,16 +9044,32 @@ function libToProduct(rec){
                 drawnH: rec.size.H || 0, url: rec.source || '' };
   const plan = rec.views && rec.views.plan;
   if(plan){
-    const o = libOrient(libFlatten(plan.entities), plan.fit);
-    out.planPaths = o.paths; out.W = Math.round(o.w * 10)/10; out.D = Math.round(o.h * 10)/10;
+    const o = libPlacePlan(libFlatten(plan.entities), plan.fit);
+    out.planPaths = o.paths; out.W = Math.round(o.w * 10)/10; out.D = Math.round(o.d * 10)/10;
     out.planRot = (plan.fit && plan.fit.rot) || 0;
+    out.planFlipX = !!(plan.fit && plan.fit.flipX);
   }
   // Front first: an elevation on a bathroom sheet is the fixture seen from the
   // room, which is the front. The side is kept for when there is no front.
   const elev = (rec.views && rec.views.front) || (rec.views && rec.views.side);
   if(elev){
-    const o = libOrient(libFlatten(elev.entities), elev.fit);
+    const o = libPlaceElev(libFlatten(elev.entities), elev.fit, plan ? out.W : 0);
+    // A supplier's elevation carries set-out marks well clear of the product —
+    // Caroma put one 900 mm to the left of a 373 wide toilet — and on a
+    // bathroom elevation that draws a stray circle across whatever is next to
+    // it. Anything lying wholly off the fixture is left out of the drawing.
+    // The library still holds it: this is what is drawn, not what is kept.
+    if(plan && out.W > 0){
+      const lo = -0.2 * out.W, hi = 1.2 * out.W;
+      const keep = o.paths.filter(pa => pa.some(q => q[0] >= lo && q[0] <= hi));
+      if(keep.length !== o.paths.length && !out._trimmed){
+        out._trimmed = o.paths.length - keep.length;
+      }
+      o.paths = keep;
+    }
     out.elevPaths = o.paths;
+    // Height above the floor, not the span of the drawing: a set-out mark
+    // below the floor is not part of how tall the fixture is.
     out.H = Math.round(o.h * 10)/10; out.drawnH = out.H;
     if(!plan) out.W = Math.round(o.w * 10)/10;
   }
