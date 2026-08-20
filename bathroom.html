@@ -9046,9 +9046,23 @@ const LIB_STROKES = [
 ];
 function libColour(name, forFill){
   if(!name || name === 'none') return null;
+  // A hex is a colour someone matched off the drawing with the dropper. It is
+  // stored as it was picked rather than snapped to the nearest palette entry —
+  // the whole point of matching a colour is that it is not one of the six.
+  if(/^#[0-9a-f]{3,8}$/i.test(name)) return name;
   if(SAN[name]) return SAN[name];
   if(COL[name]) return COL[name];
   return forFill ? SAN.china : COL.ink2;
+}
+
+// Chromium's own screen colour picker. It samples anywhere on screen, which is
+// the useful part: a colour can be matched off the tile behind the fitting, or
+// off a supplier's photograph open beside it, not just off this canvas.
+function libPickColour(){
+  if(typeof EyeDropper !== 'function'){
+    return Promise.reject(new Error('This build has no colour picker.'));
+  }
+  return new EyeDropper().open().then(r => r && r.sRGBHex);
 }
 
 // What a fitting is actually drawn with: its own setting if it has one, the
@@ -9077,6 +9091,60 @@ function libAnchor(cab){
                : { u: cab.W / 2, v: 0 };
 }
 
+// Stitch open runs into the closed loops they came from.
+//
+// Ends that meet are ends that were meant to meet: a manufacturer's outline is
+// tidy to a fraction of a millimetre, and the tolerance below is far larger
+// than the rounding in a DXF and far smaller than any real gap in a drawing.
+// Matching by distance rather than by a rounded key, because two points 0.4
+// apart can land either side of a key boundary and never be joined.
+const LIB_STITCH_TOL = 0.6;
+
+function libLoops(paths){
+  const near = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1]) <= LIB_STITCH_TOL;
+  const runs = paths.filter(pa => pa.length > 1).map(pa => pa.slice());
+  const used = new Array(runs.length).fill(false);
+  const loops = [];
+
+  for(let i = 0; i < runs.length; i++){
+    if(used[i]) continue;
+    used[i] = true;
+    let loop = runs[i].slice();
+    let grew = true;
+    while(grew && !near(loop[0], loop[loop.length-1])){
+      grew = false;
+      for(let j = 0; j < runs.length; j++){
+        if(used[j]) continue;
+        const r = runs[j], a = r[0], b = r[r.length-1];
+        const head = loop[0], tail = loop[loop.length-1];
+        if(near(tail, a)){ loop = loop.concat(r.slice(1)); }
+        else if(near(tail, b)){ loop = loop.concat(r.slice(0,-1).reverse()); }
+        else if(near(head, b)){ loop = r.slice(0,-1).concat(loop); }
+        else if(near(head, a)){ loop = r.slice(1).reverse().concat(loop); }
+        else continue;
+        used[j] = true; grew = true; break;
+      }
+    }
+    if(loop.length > 2 && near(loop[0], loop[loop.length-1])) loops.push(loop);
+  }
+
+  // Biggest first, and only the ones with real area in them: a fitting is a
+  // body or two — a cistern and a pan — and the rest is detail drawn on top.
+  // Filling a seat line or a flush button would punch a hole in the china.
+  const area = (l) => {
+    let a = 0;
+    for(let i = 0, n = l.length; i < n; i++){
+      const q = l[i], r = l[(i+1) % n];
+      a += q[0]*r[1] - r[0]*q[1];
+    }
+    return Math.abs(a) / 2;
+  };
+  const withArea = loops.map(l => ({ l, a: area(l) })).sort((x, y) => y.a - x.a);
+  if(!withArea.length) return [];
+  const biggest = withArea[0].a;
+  return withArea.filter(x => x.a >= biggest * 0.05).map(x => x.l);
+}
+
 // A library record in the shape the rest of this file expects. plan and elev
 // become paths; W, D and H come off the geometry, so the size on the schedule
 // is the size that is drawn.
@@ -9092,7 +9160,8 @@ function libToProduct(rec){
   const plan = rec.views && rec.views.plan;
   if(plan){
     const o = libPlacePlan(libFlatten(plan.entities), plan.fit);
-    out.planPaths = o.paths; out.W = Math.round(o.w * 10)/10; out.D = Math.round(o.d * 10)/10;
+    out.planPaths = o.paths; out.planLoops = libLoops(o.paths);
+    out.W = Math.round(o.w * 10)/10; out.D = Math.round(o.d * 10)/10;
     out.planRot = (plan.fit && plan.fit.rot) || 0;
     out.planFlipX = !!(plan.fit && plan.fit.flipX);
   }
@@ -9115,6 +9184,7 @@ function libToProduct(rec){
       o.paths = keep;
     }
     out.elevPaths = o.paths;
+    out.elevLoops = libLoops(o.paths);
     // Height above the floor, not the span of the drawing: a set-out mark
     // below the floor is not part of how tall the fixture is.
     out.H = Math.round(o.h * 10)/10; out.drawnH = out.H;
@@ -9230,6 +9300,18 @@ function productOutline(cab, which){
   const sx = cab.W / (p.W || 1);
   const sy = (which === 'plan') ? (cab.D / (p.D || 1)) : (cab.H / (p.drawnH || p.H || 1));
   return poly.map(q => [q[0] * sx, q[1] * sy]);
+}
+
+// The shapes to fill: the closed loops, placed exactly as the outline is.
+function productFills(cab, which){
+  const p = cabProduct(cab);
+  if(!p) return null;
+  const loops = (which === 'plan') ? p.planLoops : p.elevLoops;
+  if(!loops || !loops.length) return null;
+  const sx = cab.W / (p.W || 1);
+  const sy = (which === 'plan') ? (cab.D / (p.D || 1)) : (cab.H / (p.drawnH || p.H || 1));
+  const up = (which === 'plan') ? 0 : libStyleOf(cab).mountH;
+  return loops.map(l => l.map(q => [q[0] * sx, q[1] * sy + up]));
 }
 
 // The same thing for a product out of the shared library, which carries the
@@ -9417,8 +9499,11 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
     // that behind the curves is what makes it read as an object rather than as
     // a wire drawing sitting on the floor tiles.
     if(fillCol){
-      const box = [[0,0],[cab.W,0],[cab.W,cab.D],[0,cab.D]];
-      d.polygon(P(box), fillCol, null, 0);
+      const shapes = productFills(cab, 'plan');
+      // No loop closed — a drawing too broken to stitch — is drawn unfilled
+      // rather than filled with a rectangle. An outline is honest; a white box
+      // over the tiles is not.
+      if(shapes) for(const sh of shapes) d.polygon(P(sh), fillCol, null, 0);
     }
     for(const pa of shared){
       if(sel) d.polyline(P(pa), COL.selected, LW.medium);
@@ -9782,8 +9867,8 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
     const stE = libStyleOf(cab);
     const fillE = libColour(stE.fill, true);
     if(fillE){
-      const y0 = stE.mountH, y1 = stE.mountH + cab.H;
-      d.polygon([[X(0),Y(y0)],[X(cab.W),Y(y0)],[X(cab.W),Y(y1)],[X(0),Y(y1)]], fillE, null, 0);
+      const shapes = productFills(cab, 'elev');
+      if(shapes) for(const sh of shapes) d.polygon(sh.map(q => [X(q[0]), Y(q[1])]), fillE, null, 0);
     }
     for(const pa of sharedE) d.polyline(pa.map(q => [X(q[0]), Y(q[1])]), libColour(stE.stroke) || stroke, lw);
     if(cab.type === 'bath' && bathWallMixer(cab)){
@@ -17202,11 +17287,35 @@ function renderEditPanel(){
             if(c[key] === v) o.selected = true;
             sel2.appendChild(o);
           });
+          // A colour picked with the dropper is not in the list, so it is added
+          // to it — otherwise the select would show something other than what
+          // is on the drawing.
+          const cur = c[key];
+          if(cur && /^#/.test(cur)){
+            const o = el('option', { value:cur }, 'Matched ' + cur.toUpperCase());
+            o.selected = true;
+            sel2.appendChild(o);
+          }
           sel2.addEventListener('change', ()=>{
             if(sel2.value === '') delete c[key]; else c[key] = sel2.value;
             renderActive(); renderEditPanel(); scheduleAutosave();
           });
           row.appendChild(sel2);
+
+          const drop = el('button', { class:'pill', title:'Match a colour from anywhere on screen' }, '⚲');
+          drop.addEventListener('click', ()=>{
+            libPickColour().then(hex => {
+              if(!hex) return;
+              c[key] = hex;
+              renderActive(); renderEditPanel(); scheduleAutosave();
+            }).catch(err => {
+              // Cancelling is not a failure: Escape rejects the same as a
+              // browser without the picker, and saying so would be noise.
+              if(err && /abort/i.test(err.name || '')) return;
+              console.warn('Could not match a colour:', err);
+            });
+          });
+          row.appendChild(drop);
           editor.appendChild(row);
         };
         styleRow('Fill', 'libFill', LIB_FILLS, pr.fill || 'china');
