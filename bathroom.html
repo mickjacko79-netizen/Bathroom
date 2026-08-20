@@ -5271,6 +5271,13 @@ function CanvasDraw(canvas, scalePx){
       if(fill){ ctx.fillStyle=fill; ctx.fill(); }
       if(stroke){ ctx.strokeStyle=stroke; ctx.lineWidth=_lw(lw); ctx.stroke(); }
     },
+    // The same run of points, left open.
+    polyline(pts, stroke, lw){
+      if(!pts || pts.length < 2) return;
+      ctx.beginPath();
+      pts.forEach((p,i)=>{ const X=this.mm(p[0]), Y=this.mm(p[1]); if(i===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y); });
+      ctx.strokeStyle=stroke||COL.ink; ctx.lineWidth=_lw(lw); ctx.stroke();
+    },
     circle(cx,cy,r, fill, stroke, lw){
       ctx.beginPath(); ctx.arc(this.mm(cx), this.mm(cy), this.mm(r), 0, Math.PI*2);
       if(fill){ ctx.fillStyle=fill; ctx.fill(); }
@@ -5328,6 +5335,14 @@ function PdfDraw(doc){
       const segs = pts.slice(1).map((p,i)=>[ p[0]-pts[i][0], p[1]-pts[i][1] ]);
       segs.push([ pts[0][0]-pts[pts.length-1][0], pts[0][1]-pts[pts.length-1][1] ]);
       doc.lines(segs, pts[0][0], pts[0][1], [1,1], fill&&stroke?'FD':(fill?'F':'S'), true);
+    },
+    polyline(pts, stroke, lw){
+      if(!pts || pts.length < 2) return;
+      doc.setDrawColor(...hexToRGB(stroke || '#000000'));
+      doc.setLineWidth(_lw(lw||0.2));
+      // No closing segment and no close flag: the last point is the end of it.
+      const segs = pts.slice(1).map((p,i)=>[ p[0]-pts[i][0], p[1]-pts[i][1] ]);
+      doc.lines(segs, pts[0][0], pts[0][1], [1,1], 'S', false);
     },
     circle(cx,cy,r, fill, stroke, lw){
       if(fill) doc.setFillColor(...hexToRGB(fill));
@@ -8908,6 +8923,147 @@ function drawWallMaterialHatch(d, x, y, w, h, kind){
 // Confirm against the current specification sheet before ordering or setting
 // out — Caroma revise products, and this is a copy taken on 3 August 2026.
 // ============================================================
+// ============================================================
+// THE SHARED LIBRARY
+// Products imported from supplier CAD, kept by the DrawSpec shell so Web CAD
+// and this app see one catalogue. They arrive as primitives — lines, arcs,
+// polylines, in millimetres — and are flattened here into the same [[x,y], …]
+// outlines CAROMA_PRODUCTS already carries, so everything downstream is
+// unchanged.
+//
+// The difference from the hand-traced table above: a product can carry SEVERAL
+// paths. A supplier's plan is a hundred separate curves, not one closed
+// outline, and picking one of them to be "the" outline would throw away the
+// cistern, the seat and the set-out marks.
+// ============================================================
+let LIB_PRODUCTS = {};           // "lib:<id>" -> product in the CAROMA shape
+const _libGeom = new Map();      // id -> full record, once fetched
+
+const sharedLibrary = () => (window.drawspec && window.drawspec.library) || null;
+
+// Straight segments for anything curved. The step is chosen from the radius so
+// a 15 mm bolt hole and a 700 mm pan get the same smoothness on paper.
+function libFlatten(entities){
+  const paths = [];
+  const arcSteps = (r, sweep) => Math.max(6, Math.min(64, Math.ceil(Math.abs(sweep) * Math.max(2, Math.sqrt(r)) / 0.5)));
+  for(const e of entities || []){
+    switch(e.type){
+      case 'line': paths.push([[e.x1, e.y1], [e.x2, e.y2]]); break;
+      case 'rect': paths.push([[e.x1,e.y1],[e.x2,e.y1],[e.x2,e.y2],[e.x1,e.y2],[e.x1,e.y1]]); break;
+      case 'polyline': {
+        const pts = (e.points || []).map(q => [q[0], q[1]]);
+        if(pts.length > 1){ if(e.closed) pts.push([pts[0][0], pts[0][1]]); paths.push(pts); }
+        break;
+      }
+      case 'circle': {
+        const n = arcSteps(e.r, Math.PI*2), out = [];
+        for(let i = 0; i <= n; i++){ const a = i/n*Math.PI*2;
+          out.push([e.cx + e.r*Math.cos(a), e.cy + e.r*Math.sin(a)]); }
+        paths.push(out); break;
+      }
+      case 'arc': {
+        let a1 = e.a1 || 0, a2 = e.a2 || 0;
+        if(a2 <= a1) a2 += Math.PI*2;      // counterclockwise, as the file means it
+        const n = arcSteps(e.r, a2 - a1), out = [];
+        for(let i = 0; i <= n; i++){ const a = a1 + (a2-a1)*i/n;
+          out.push([e.cx + e.r*Math.cos(a), e.cy + e.r*Math.sin(a)]); }
+        paths.push(out); break;
+      }
+      case 'ellipse': {
+        const n = 48, out = [], co = Math.cos(e.rot||0), si = Math.sin(e.rot||0);
+        for(let i = 0; i <= n; i++){ const a = i/n*Math.PI*2;
+          const lx = (e.rx||0)*Math.cos(a), ly = (e.ry||0)*Math.sin(a);
+          out.push([e.cx + lx*co - ly*si, e.cy + lx*si + ly*co]); }
+        paths.push(out); break;
+      }
+      default: break;   // text, hatch, points: not outline
+    }
+  }
+  return paths;
+}
+
+// Turn the view the way it will be placed, then sit it at (0,0). A supplier
+// draws a plan whichever way round suited their sheet — Caroma's toilet plan
+// runs depth along x — and a bathroom plan wants width along the wall.
+function libOrient(paths, fit){
+  const rot = ((fit && +fit.rot) || 0 + 360) % 360;
+  const fx = !!(fit && fit.flipX), fy = !!(fit && fit.flipY);
+  const turn = (q) => {
+    let [x, y] = q;
+    if(fx) x = -x;
+    if(fy) y = -y;
+    if(rot === 90)  return [-y, x];
+    if(rot === 180) return [-x, -y];
+    if(rot === 270) return [y, -x];
+    return [x, y];
+  };
+  const out = paths.map(pa => pa.map(turn));
+  let x1 = Infinity, y1 = Infinity;
+  for(const pa of out) for(const q of pa){ if(q[0] < x1) x1 = q[0]; if(q[1] < y1) y1 = q[1]; }
+  if(!isFinite(x1)) return { paths: out, w: 0, h: 0 };
+  let x2 = -Infinity, y2 = -Infinity;
+  for(const pa of out) for(const q of pa){
+    q[0] -= x1; q[1] -= y1;
+    if(q[0] > x2) x2 = q[0]; if(q[1] > y2) y2 = q[1];
+  }
+  return { paths: out, w: x2, h: y2 };
+}
+
+// A library record in the shape the rest of this file expects. plan and elev
+// become paths; W, D and H come off the geometry, so the size on the schedule
+// is the size that is drawn.
+function libToProduct(rec){
+  const kind = rec.fixture || 'other';
+  const out = { kind, brand: rec.brand || '', code: rec.code || '',
+                name: rec.label || rec.name, range: '', shared: true,
+                W: rec.size.W || 0, D: rec.size.D || 0, H: rec.size.H || 0,
+                drawnH: rec.size.H || 0, url: rec.source || '' };
+  const plan = rec.views && rec.views.plan;
+  if(plan){
+    const o = libOrient(libFlatten(plan.entities), plan.fit);
+    out.planPaths = o.paths; out.W = Math.round(o.w * 10)/10; out.D = Math.round(o.h * 10)/10;
+    out.planRot = (plan.fit && plan.fit.rot) || 0;
+  }
+  // Front first: an elevation on a bathroom sheet is the fixture seen from the
+  // room, which is the front. The side is kept for when there is no front.
+  const elev = (rec.views && rec.views.front) || (rec.views && rec.views.side);
+  if(elev){
+    const o = libOrient(libFlatten(elev.entities), elev.fit);
+    out.elevPaths = o.paths;
+    out.H = Math.round(o.h * 10)/10; out.drawnH = out.H;
+    if(!plan) out.W = Math.round(o.w * 10)/10;
+  }
+  return out;
+}
+
+function libRefresh(){
+  const lib = sharedLibrary();
+  if(!lib) return Promise.resolve();
+  return lib.list().then(items => {
+    const wanted = (items || []).filter(it => it.fixture);
+    // The listing has no geometry, so each product's is fetched once and kept.
+    return Promise.all(wanted.map(it => {
+      if(_libGeom.has(it.id)) return _libGeom.get(it.id);
+      return lib.get(it.id).then(full => { if(full) _libGeom.set(it.id, full); return full; })
+                           .catch(() => null);
+    })).then(full => {
+      const next = {};
+      for(const rec of full){ if(rec) next['lib:' + rec.id] = libToProduct(rec); }
+      LIB_PRODUCTS = next;
+    });
+  }).catch(() => {});
+}
+
+if(sharedLibrary()){
+  libRefresh().then(() => { try { renderActive(); renderEditPanel(); } catch(_){} });
+  try {
+    sharedLibrary().onChange(() => {
+      _libGeom.clear();
+      libRefresh().then(() => { try { renderActive(); renderEditPanel(); } catch(_){} });
+    });
+  } catch(_){}
+}
+
 const CAROMA_PRODUCTS = {
   "caroma-urbane2-compact-invisi": {"kind":"toilet","brand":"Caroma","code":"741520W","name":"Urbane II Cleanflush Compact Invisi Series II Wall Faced Suite","range":"Urbane II","style":"concealed","W":349.8,"D":499.6,"H":986.7,"drawnH":490,"url":"https://www.caroma.com/au/product/caroma-urbane-ii-cleanflush-compact-invisi-series-ii-wall-faced-toilet-suite-white-119469/","trap":"P Trap","inlet":"Back Entry","panHeight":435,"panProjection":500,"material":"Vitreous China","elev":[[0,431.9],[20.1,120.7],[35,24.6],[45,0],[304.8,0],[314.8,24.6],[346.4,302.2],[347.6,475],[0,472.4],[0,470.4]]},
   "caroma-contura2-wfcc": {"kind":"toilet","brand":"Caroma","code":"848801W","name":"Contura II Cleanflush Wall Faced Close Coupled BE Suite","range":"Contura II","style":"close-coupled","W":357.7,"D":654.4,"H":865.4,"drawnH":865.4,"url":"https://www.caroma.com/au/product/caroma-contura-ii-cleanflush-wall-faced-close-coupled-suite-white-118609/","trap":"Universal","inlet":"Back Entry","panHeight":440,"panProjection":655,"material":"Vitreous China"},
@@ -8919,12 +9075,24 @@ const CAROMA_PRODUCTS = {
   "caroma-newbury-1675-island": {"kind":"bath","brand":"Caroma","code":"NW7W","name":"Newbury 1675 Island Bath","range":"Newbury Island","style":"inset","W":1667.2,"D":758.6,"H":455.9,"drawnH":455.9,"url":"https://www.caroma.com/au/product/newbury-1675-island-bath-white-24962/","shape":"Rectangular","waste":"End","capacity":"270 L","material":"Acrylic","plan":[[0,4.2],[3.5,0.7],[1663.7,0.7],[1667.2,4.2],[1667.2,754.4],[1663.7,757.9],[3.5,757.9],[0,754.4]]},
   "caroma-urbane-btw-bath": {"kind":"bath","brand":"Caroma","code":"UR7WFW","name":"Urbane Back-to-Wall Bath","range":"Urbane","style":"back-to-wall","W":1668.7,"D":770.4,"H":569.8,"drawnH":569.8,"url":"https://www.caroma.com/au/product/caroma-urbane-back-to-wall-bath-white-25210/","shape":"Rectangular","waste":"Off-set Centre","capacity":"360 L","material":"Acrylic","plan":[[0,23.4],[0.9,0.2],[1668.6,1],[1667,609.6],[1644.3,653.2],[1612.7,681.1],[1583.7,694.3],[1372.6,734.8],[1206.2,756.9],[1049.6,769.9],[648.5,769.9],[586.4,768],[400.9,749.6],[140.7,706.6],[84.2,694],[47.4,675.2],[8.8,628.1],[0.1,602.8],[0.1,595.7]]},
 };
-function caromaProduct(key){ return key ? (CAROMA_PRODUCTS[key] || null) : null; }
+function caromaProduct(key){
+  if(!key) return null;
+  return LIB_PRODUCTS[key] || CAROMA_PRODUCTS[key] || null;
+}
 // The products that can go on a given fixture type.
+// Which fixture a product can go on. The hand-traced table only ever covered
+// toilets and baths; a product imported from supplier CAD can stand in for any
+// of these, so the mapping is wider than the table it started with.
+const FIXTURE_KIND = {
+  'toilet': 'toilet', 'bath': 'bath', 'basin-fs': 'basin', 'shower': 'shower',
+  'mirror': 'mirror', 'sink-base': 'basin', 'laundry-tub': 'basin',
+};
 function caromaFor(type){
-  const kind = (type === 'toilet') ? 'toilet' : (type === 'bath') ? 'bath' : null;
+  const kind = FIXTURE_KIND[type] || null;
   if(!kind) return [];
-  return Object.entries(CAROMA_PRODUCTS).filter(([, p]) => p.kind === kind);
+  const built = Object.entries(CAROMA_PRODUCTS).filter(([, p]) => p.kind === kind);
+  const shared = Object.entries(LIB_PRODUCTS).filter(([, p]) => p.kind === kind);
+  return shared.concat(built);
 }
 // The product a fixture is currently set to, if it still exists.
 function cabProduct(cab){
@@ -8975,6 +9143,19 @@ function productOutline(cab, which){
   const sx = cab.W / (p.W || 1);
   const sy = (which === 'plan') ? (cab.D / (p.D || 1)) : (cab.H / (p.drawnH || p.H || 1));
   return poly.map(q => [q[0] * sx, q[1] * sy]);
+}
+
+// The same thing for a product out of the shared library, which carries the
+// supplier's own curves rather than one traced outline. Scaled the same way, so
+// a fixture resized by hand still draws to the size on the schedule.
+function productPaths(cab, which){
+  const p = cabProduct(cab);
+  if(!p) return null;
+  const paths = (which === 'plan') ? p.planPaths : p.elevPaths;
+  if(!paths || !paths.length) return null;
+  const sx = cab.W / (p.W || 1);
+  const sy = (which === 'plan') ? (cab.D / (p.D || 1)) : (cab.H / (p.drawnH || p.H || 1));
+  return paths.map(pa => pa.map(q => [q[0] * sx, q[1] * sy]));
 }
 
 // ============================================================
@@ -9130,6 +9311,22 @@ function drawSanitaryOnPlan(d, wallId, uOff, cab, plan, view){
   // A toilet is drawn from its own numbers, never from a traced outline. The
   // outline ignored the suite type, so a job where some toilets carried a
   // product and some did not had the setting working on half of them.
+  // Supplier CAD first. The rule below — never trace a toilet — was written
+  // against the hand-traced table, whose outlines ignored the suite type, so a
+  // job with a product on some toilets and not others drew two different
+  // things. A product out of the shared library is the manufacturer's own
+  // drawing of that exact suite, chosen for this fixture, so tracing it is the
+  // whole point of putting it there.
+  const shared = productPaths(cab, 'plan');
+  if(shared){
+    for(const pa of shared){
+      if(sel) d.polyline(P(pa), COL.selected, LW.medium);
+      d.polyline(P(pa), line, lw);
+    }
+    if(cab.type === 'bath') drawBathWasteOnPlan(d, wallId, uOff, cab, plan, D);
+    return;
+  }
+
   const traced = (cab.type === 'toilet') ? null : productOutline(cab, 'plan');
   if(traced){
     if(sel) d.polygon(P(traced), null, COL.selected, LW.medium);
@@ -9479,6 +9676,18 @@ function drawSanitaryOnElevation(d, cab, x, s, oy, Hm, opts){
   const cu = cab.W/2;
 
   // As on the plan: a toilet is built from its numbers, not traced.
+  const sharedE = productPaths(cab, 'elev');
+  if(sharedE){
+    for(const pa of sharedE) d.polyline(pa.map(q => [X(q[0]), Y(q[1])]), stroke, lw);
+    if(cab.type === 'bath' && bathWallMixer(cab)){
+      drawWallMixerOnElevation(d, X(bathTapU(cab)), Y(c.tapH || 1050), s, bathWallMixer(cab));
+    }
+    const prS = cabProduct(cab);
+    d.text(X(cab.W/2), Y(-45), (c.labelText || (prS ? prS.code : '')),
+      { align:'center', baseline:'middle', size:4.5, color:COL.muted, italic:true });
+    return;
+  }
+
   const tracedE = (cab.type === 'toilet') ? null : productOutline(cab, 'elev');
   if(tracedE){
     poly(tracedE, SAN.china, stroke, lw);
@@ -16767,6 +16976,40 @@ function renderEditPanel(){
       row.appendChild(sel);
       editor.appendChild(row);
       const pr = cabProduct(cab);
+
+      // Imported products carry the supplier's own orientation. Turning it is
+      // a property of the product, not of this fixture, so it is saved back to
+      // the shared library and every drawing that uses it follows.
+      if(pr && pr.shared && c.productKey && c.productKey.indexOf('lib:') === 0){
+        const id = c.productKey.slice(4);
+        const fitRow = el('div', { class:'ctrl' });
+        fitRow.appendChild(el('label', {}, 'Plan rotation'));
+        const rsel = el('select');
+        [[0,'0°'],[90,'90°'],[180,'180°'],[270,'270°']].forEach(([v, lab])=>{
+          const o = el('option', { value:String(v) }, lab);
+          if((pr.planRot|0) === v) o.selected = true;
+          rsel.appendChild(o);
+        });
+        rsel.addEventListener('change', ()=>{
+          const lib = sharedLibrary();
+          if(!lib) return;
+          lib.setFit(id, 'plan', { rot:+rsel.value }).then(()=>{
+            _libGeom.clear();
+            return libRefresh();
+          }).then(()=>{
+            // The footprint swaps when it turns, so the fixture takes the new
+            // one rather than keeping a width that is now the depth.
+            applyCaromaProduct(cab, c.productKey);
+            renderActive(); renderEditPanel(); renderCabinetList(); scheduleAutosave();
+          });
+        });
+        fitRow.appendChild(rsel);
+        editor.appendChild(fitRow);
+        const hint = el('div', { class:'sub' },
+          `Drawn ${Math.round(pr.W)} along the wall × ${Math.round(pr.D)} into the room.`);
+        editor.appendChild(hint);
+      }
+
       if(pr){
         const bits = [`${Math.round(pr.W)} × ${Math.round(pr.D)} × ${Math.round(pr.H)} mm`];
         if(pr.panProjection) bits.push(`${pr.panProjection} projection`);
