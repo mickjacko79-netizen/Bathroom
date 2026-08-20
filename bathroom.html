@@ -9016,8 +9016,19 @@ function libSpan(paths){
 function libPlacePlan(paths, fit){
   const out = libTurn(paths, fit);
   const box = libSpan(out);
-  for(const pa of out) for(const q of pa) q[0] -= box[0];
-  return { paths: out, w: box[2] - box[0], d: box[3] };
+  // Suppliers use one of two origins and both are reasonable. Caroma's toilet
+  // is drawn about the WALL FACE, with the pan projecting off it; their
+  // freestanding bath is drawn about its own CENTRE, because a freestanding
+  // bath has no wall to be about. Taking the second for the first reported a
+  // 650 deep bath as 325 — the half of it in front of the origin.
+  //
+  // Which one it is, is visible: an origin on the wall sits at the edge of the
+  // footprint, an origin at the centre sits well inside it.
+  const span = box[3] - box[1];
+  const centred = span > 0 && -box[1] > span * 0.25;
+  const shiftV = centred ? -box[1] : 0;
+  for(const pa of out) for(const q of pa){ q[0] -= box[0]; q[1] += shiftV; }
+  return { paths: out, w: box[2] - box[0], d: box[3] + shiftV };
 }
 
 // The elevation, placed. Height is the supplier's own — 0 is the floor, which
@@ -9091,6 +9102,41 @@ function libAnchor(cab){
                : { u: cab.W / 2, v: 0 };
 }
 
+// A model, rather than a drawing of one.
+//
+// Suppliers ship both. Caroma's toilet came as three 2D views; their
+// freestanding bath came as a 3D DXF — 22,797 mesh vertices, Z up to 1008 mm —
+// and every edge of a mesh drawn from above is a scribble, not a plan.
+//
+// There is no outline in such a file to draw instead: the outline of a solid is
+// not stored, it is worked out. Which the silhouette scan already does, so a
+// view like this is drawn as its silhouette alone.
+//
+// The test is density. A drawn view is tens of points per curve; a mesh is
+// thousands in one path. Caroma's toilet plan tops out at 73 points on a path,
+// their bath at 7,492 — three orders of magnitude apart, so the line between
+// them does not need to be placed carefully.
+function libIsModel(paths){
+  let most = 0, total = 0;
+  for(const pa of paths){ most = Math.max(most, pa.length); total += pa.length; }
+  return most > 1500 || total > 20000;
+}
+
+// A path with more points than the drawing can show. A supplier's logo came in
+// at 15,305 points across 60 mm — a quarter of a millimetre apart, on something
+// drawn at 1:50. Thinning it changes nothing anyone can see and takes the
+// redraw with it.
+function libThin(path, tol){
+  if(path.length < 400) return path;
+  const out = [path[0]];
+  for(let i = 1; i < path.length - 1; i++){
+    const last = out[out.length - 1];
+    if(Math.hypot(path[i][0]-last[0], path[i][1]-last[1]) >= tol) out.push(path[i]);
+  }
+  out.push(path[path.length - 1]);
+  return out;
+}
+
 // The shape to fill: the outline's own silhouette.
 //
 // Not the closed loops in it. A cistern body is not a shape in the drawing — it
@@ -9151,6 +9197,16 @@ function libSilhouette(paths){
 // become paths; W, D and H come off the geometry, so the size on the schedule
 // is the size that is drawn.
 function libToProduct(rec){
+  // What gets drawn on a bathroom sheet. The library keeps the supplier's whole
+  // file either way; this decides what is worth putting on paper.
+  const forDrawing = (paths) => {
+    const thinned = paths.map(pa => libThin(pa, 1));
+    if(!libIsModel(thinned)) return { paths: thinned, model: false };
+    // Its own outline, and nothing else. Every edge of a mesh is not a drawing.
+    const shell = libSilhouette(thinned);
+    return { paths: shell.length ? shell : thinned, model: true };
+  };
+
   const kind = rec.fixture || 'other';
   const out = { kind, brand: rec.brand || '', code: rec.code || '',
                 name: rec.label || rec.name, range: '', shared: true,
@@ -9162,7 +9218,13 @@ function libToProduct(rec){
   const plan = rec.views && rec.views.plan;
   if(plan){
     const o = libPlacePlan(libFlatten(plan.entities), plan.fit);
-    out.planPaths = o.paths; out.planLoops = libSilhouette(o.paths);
+    const clean = forDrawing(o.paths);
+    o.paths = clean.paths;
+    out.fromModel = clean.model;
+    // Already the silhouette when it came from a model, so it is both the
+    // outline and the shape to fill.
+    out.planPaths = o.paths;
+    out.planLoops = clean.model ? o.paths : libSilhouette(o.paths);
     out.W = Math.round(o.w * 10)/10; out.D = Math.round(o.d * 10)/10;
     out.planRot = (plan.fit && plan.fit.rot) || 0;
     out.planFlipX = !!(plan.fit && plan.fit.flipX);
@@ -9172,6 +9234,8 @@ function libToProduct(rec){
   const elev = (rec.views && rec.views.front) || (rec.views && rec.views.side);
   if(elev){
     const o = libPlaceElev(libFlatten(elev.entities), elev.fit, plan ? out.W : 0);
+    const cleanE = forDrawing(o.paths);
+    o.paths = cleanE.paths;
     // A supplier's elevation carries set-out marks well clear of the product —
     // Caroma put one 900 mm to the left of a 373 wide toilet — and on a
     // bathroom elevation that draws a stray circle across whatever is next to
@@ -9186,7 +9250,7 @@ function libToProduct(rec){
       o.paths = keep;
     }
     out.elevPaths = o.paths;
-    out.elevLoops = libSilhouette(o.paths);
+    out.elevLoops = cleanE.model ? o.paths : libSilhouette(o.paths);
     // Height above the floor, not the span of the drawing: a set-out mark
     // below the floor is not part of how tall the fixture is.
     out.H = Math.round(o.h * 10)/10; out.drawnH = out.H;
@@ -9264,9 +9328,15 @@ function applyCaromaProduct(cab, key){
   const c = cab.config || (cab.config = {});
   if(!p){ delete c.productKey; return; }
   c.productKey = key;
-  cab.W = Math.round(p.W);
-  cab.D = Math.round(p.D);
-  cab.H = Math.round(p.drawnH || p.H);
+  // Only what the product actually knows. A bath supplied as a plan and nothing
+  // else has no height in it, and taking that as the truth set the fixture to
+  // zero high: the elevation drew a fixture with no extent, which is why it
+  // could not be picked up or moved. What a product does not say, the fixture
+  // keeps.
+  if(p.W > 0) cab.W = Math.round(p.W);
+  if(p.D > 0) cab.D = Math.round(p.D);
+  const top = Math.round(p.drawnH || p.H || 0);
+  if(top > 0) cab.H = top;
   if(cab.type === 'toilet'){
     if(p.style) c.style = p.style;
     if(p.panHeight){ c.seatH = p.panHeight; c.cisternH = Math.round(p.H); }
@@ -9275,7 +9345,7 @@ function applyCaromaProduct(cab, key){
     if(p.trap) c.trap = /S/i.test(p.trap) && !/Universal/i.test(p.trap) ? 's-trap' : 'p-trap';
   } else if(cab.type === 'bath'){
     if(p.style) c.style = (p.style === 'inset') ? 'inset' : 'freestanding';
-    c.rimH = Math.round(p.H);
+    if(p.H > 0) c.rimH = Math.round(p.H);
     if(p.waste){
       const w = String(p.waste).toLowerCase();
       c.wasteEnd = w.indexOf('off') >= 0 ? 'OC'
