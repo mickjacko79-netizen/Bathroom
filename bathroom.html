@@ -9091,65 +9091,60 @@ function libAnchor(cab){
                : { u: cab.W / 2, v: 0 };
 }
 
-// Stitch open runs into the closed loops they came from.
+// The shape to fill: the outline's own silhouette.
 //
-// Ends that meet are ends that were meant to meet: a manufacturer's outline is
-// tidy to a fraction of a millimetre, and the tolerance below is far larger
-// than the rounding in a DXF and far smaller than any real gap in a drawing.
-// Matching by distance rather than by a rounded key, because two points 0.4
-// apart can land either side of a key boundary and never be joined.
-const LIB_STITCH_TOL = 0.6;
+// Not the closed loops in it. A cistern body is not a shape in the drawing — it
+// is the region between two side lines, closed by the lid above and the seat
+// below — so four entities bound it and none encloses it. Stitching ends
+// together finds the pan and the seat and leaves the cistern hollow, and always
+// would.
+//
+// At any height the china runs from the leftmost line to the rightmost. Scanning
+// for that needs no tolerance to tune and gives back a real polygon, so the PDF
+// stays vector. A height with nothing at it breaks the scan and starts a new
+// band, so a gap under a wall-hung fitting stays a gap.
+const LIB_SCAN_STEPS = 160;
 
-function libLoops(paths){
-  const near = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1]) <= LIB_STITCH_TOL;
-  const runs = paths.filter(pa => pa.length > 1).map(pa => pa.slice());
-  const used = new Array(runs.length).fill(false);
-  const loops = [];
-
-  for(let i = 0; i < runs.length; i++){
-    if(used[i]) continue;
-    used[i] = true;
-    let loop = runs[i].slice();
-    let grew = true;
-    while(grew && !near(loop[0], loop[loop.length-1])){
-      grew = false;
-      for(let j = 0; j < runs.length; j++){
-        if(used[j]) continue;
-        const r = runs[j], a = r[0], b = r[r.length-1];
-        const head = loop[0], tail = loop[loop.length-1];
-        if(near(tail, a)){ loop = loop.concat(r.slice(1)); }
-        else if(near(tail, b)){ loop = loop.concat(r.slice(0,-1).reverse()); }
-        else if(near(head, b)){ loop = r.slice(0,-1).concat(loop); }
-        else if(near(head, a)){ loop = r.slice(1).reverse().concat(loop); }
-        else continue;
-        used[j] = true; grew = true; break;
-      }
+function libSilhouette(paths){
+  let y1 = Infinity, y2 = -Infinity;
+  const segs = [];
+  for(const pa of paths){
+    for(let i = 1; i < pa.length; i++){
+      const a = pa[i-1], b = pa[i];
+      if(!isFinite(a[0]) || !isFinite(a[1]) || !isFinite(b[0]) || !isFinite(b[1])) continue;
+      segs.push([a, b]);
+      y1 = Math.min(y1, a[1], b[1]);
+      y2 = Math.max(y2, a[1], b[1]);
     }
-    // A run that never closes on itself is not a failure. A pan is drawn open
-    // at the bottom because the FLOOR closes it, and the same shape in plan is
-    // open at the back because the WALL does. Closing it with a straight
-    // segment between its own two ends is what the draughtsman left implied,
-    // and it is why the pan came out unfilled while the cistern above it did
-    // not. Anything closed this way that is not really a shape falls out at
-    // the area test below.
-    if(loop.length > 2) loops.push(loop);
+  }
+  if(!segs.length || !(y2 > y1)) return [];
+
+  const step = (y2 - y1) / LIB_SCAN_STEPS;
+  const bands = [];
+  let band = null;
+  // Half a step in from each end: a scan exactly along the top or bottom edge
+  // meets it everywhere and nowhere, depending on rounding.
+  for(let k = 0; k <= LIB_SCAN_STEPS; k++){
+    const y = y1 + step * (k === 0 ? 0.001 : k === LIB_SCAN_STEPS ? k - 0.001 : k);
+    let lo = Infinity, hi = -Infinity;
+    for(const [a, b] of segs){
+      const ay = a[1], by = b[1];
+      if((ay > y && by > y) || (ay < y && by < y)) continue;
+      if(ay === by) continue;                       // along the scan, not across it
+      const t = (y - ay) / (by - ay);
+      if(t < 0 || t > 1) continue;
+      const x = a[0] + (b[0] - a[0]) * t;
+      if(x < lo) lo = x;
+      if(x > hi) hi = x;
+    }
+    if(!isFinite(lo) || hi - lo < 1e-6){ band = null; continue; }
+    if(!band){ band = { left: [], right: [] }; bands.push(band); }
+    band.left.push([lo, y]);
+    band.right.push([hi, y]);
   }
 
-  // Biggest first, and only the ones with real area in them: a fitting is a
-  // body or two — a cistern and a pan — and the rest is detail drawn on top.
-  // Filling a seat line or a flush button would punch a hole in the china.
-  const area = (l) => {
-    let a = 0;
-    for(let i = 0, n = l.length; i < n; i++){
-      const q = l[i], r = l[(i+1) % n];
-      a += q[0]*r[1] - r[0]*q[1];
-    }
-    return Math.abs(a) / 2;
-  };
-  const withArea = loops.map(l => ({ l, a: area(l) })).sort((x, y) => y.a - x.a);
-  if(!withArea.length) return [];
-  const biggest = withArea[0].a;
-  return withArea.filter(x => x.a >= biggest * 0.05).map(x => x.l);
+  return bands.filter(b => b.left.length > 1)
+              .map(b => b.left.concat(b.right.slice().reverse()));
 }
 
 // A library record in the shape the rest of this file expects. plan and elev
@@ -9167,7 +9162,7 @@ function libToProduct(rec){
   const plan = rec.views && rec.views.plan;
   if(plan){
     const o = libPlacePlan(libFlatten(plan.entities), plan.fit);
-    out.planPaths = o.paths; out.planLoops = libLoops(o.paths);
+    out.planPaths = o.paths; out.planLoops = libSilhouette(o.paths);
     out.W = Math.round(o.w * 10)/10; out.D = Math.round(o.d * 10)/10;
     out.planRot = (plan.fit && plan.fit.rot) || 0;
     out.planFlipX = !!(plan.fit && plan.fit.flipX);
@@ -9191,7 +9186,7 @@ function libToProduct(rec){
       o.paths = keep;
     }
     out.elevPaths = o.paths;
-    out.elevLoops = libLoops(o.paths);
+    out.elevLoops = libSilhouette(o.paths);
     // Height above the floor, not the span of the drawing: a set-out mark
     // below the floor is not part of how tall the fixture is.
     out.H = Math.round(o.h * 10)/10; out.drawnH = out.H;
