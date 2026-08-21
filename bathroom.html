@@ -584,12 +584,13 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl"><label>Length <span class="val"><input class="valInp" id="roomLVal" type="number" min="900" max="6000" step="50" value="2700"> mm</span></label><input id="roomL" type="range" min="900" max="6000" step="50" value="2700"></div>
         <div class="ctrl"><label>Ceiling <span class="val"><input class="valInp" id="roomHVal" type="number" min="2100" max="3300" step="50" value="2700"> mm</span></label><input id="roomH" type="range" min="2100" max="3300" step="50" value="2700"></div>
         <div class="ctrl"><label>Wall thickness <span class="val"><input class="valInp" id="wallTVal" type="number" min="70" max="400" step="10" value="90"> mm</span></label><input id="wallT" type="range" min="70" max="400" step="10" value="90"></div>
-        <label class="toggle" style="margin:6px 0 4px"><input type="checkbox" id="compositeWalls"> <span>Build the walls up in layers</span></label>
+        <label class="toggle" style="margin:6px 0 4px"><input type="checkbox" id="compositeWalls"> <span>Build the walls and floor up in layers</span></label>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin:0 0 8px">
           Off, every wall is one band of the thickness above and the room size is to the structure.
           On, each wall is set out layer by layer — tile, adhesive, waterproofing, lining, frame —
           and <b>Width and Length become the finished, tiled clear sizes</b>, because the build-up is
-          drawn outward from them. There is a <b>Wall details</b> sheet for them.
+          drawn outward from them. The floor is set out the same way under <b>Floor</b>, and both go on
+          the <b>Wall &amp; floor details</b> sheet.
         </div>
         <div id="wallBuildBox" style="display:none">
           <div class="ctrl"><label>Wall</label>
@@ -874,6 +875,21 @@ header .project-label .dot.dirty{background:#F7C04A}
         </div>
         <div class="ctrl" id="floorGaugeReadout" style="font-size:11px;color:var(--muted);margin-top:-2px;line-height:1.55"></div>
         <button class="btn small ghost" id="floorReset" style="width:100%;margin-top:4px">Reset to material defaults</button>
+
+        <div id="floorBuildBox" style="display:none">
+          <div style="font-size:10.5px;color:var(--muted);margin:14px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Floor build-up</div>
+          <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:0">
+            Down from finished floor level — tile, adhesive, waterproofing, screed, slab. It moves nothing
+            on the drawings, because every height in the job is measured from the top of it; what it gives
+            you is <b>the set-down</b>, and a section on the <b>Wall &amp; floor details</b> sheet.
+          </div>
+          <div class="cab-list" id="floorBuildList"></div>
+          <div class="add-row" style="grid-template-columns:minmax(0,1fr) auto">
+            <select id="floorBuildAdd"></select>
+            <button class="btn small" id="floorBuildAddBtn" title="Add this layer to the bottom of the build-up">＋</button>
+          </div>
+          <div class="ctrl" id="floorBuildTotal" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
+        </div>
 
         <div style="font-size:10.5px;color:var(--muted);margin:14px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Floor wastes</div>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:0">
@@ -3545,6 +3561,34 @@ const WALL_LAYER_LIBRARY = [
 // What a wet wall in a bathroom is, nine times out of ten.
 const DEFAULT_WALL_BUILD = ['tile', 'adhesive', 'membrane', 'villaboard', 'stud90'];
 
+// And the floor, from the walking surface down. Finished floor level is the top
+// of the first layer, which is where every height in the job is measured from.
+const FLOOR_LAYER_LIBRARY = [
+  { key:'tile',      material:'Floor tile',                t:10 },
+  { key:'tile-porc', material:'Porcelain floor tile',      t:9 },
+  { key:'stone',     material:'Stone tile',                t:20 },
+  { key:'adhesive',  material:'Tile adhesive',             t:5 },
+  { key:'membrane',  material:'Waterproof membrane',       t:1 },
+  { key:'screed',    material:'Screed to falls',           t:30 },
+  { key:'bed',       material:'Mortar bed to falls',       t:40 },
+  { key:'fc-sheet',  material:'Compressed FC sheet 15 mm', t:15 },
+  { key:'yellow',    material:'Structural flooring 19 mm', t:19 },
+  { key:'ply',       material:'Plywood underlay 15 mm',    t:15 },
+  { key:'insul',     material:'Insulation',                t:50 },
+  { key:'slab',      material:'Concrete slab',             t:100 },
+  { key:'joist',     material:'Timber joists',             t:200 },
+];
+const DEFAULT_FLOOR_BUILD = ['tile', 'adhesive', 'membrane', 'screed', 'slab'];
+
+const floorLayerByKey = (k) => FLOOR_LAYER_LIBRARY.find(l => l.key === k) || null;
+
+function blankFloorBuild(){
+  return DEFAULT_FLOOR_BUILD.map(k => {
+    const l = floorLayerByKey(k);
+    return { material: l.material, t: l.t };
+  });
+}
+
 const wallLayerByKey = (k) => WALL_LAYER_LIBRARY.find(l => l.key === k) || null;
 
 function blankWallBuild(){
@@ -3581,6 +3625,11 @@ const state = {
                      // at 603, and a room set out at 600 is out by a joint per
                      // tile all the way across.
                      joint:3,
+                     // What the floor is made of, finished surface downward.
+                     // Drawn on the details sheet when build-ups are switched
+                     // on; it moves nothing, because every height in the job is
+                     // measured from the top of it.
+                     build:blankFloorBuild(),
                      // Which wall gets the full tile when the room does not
                      // divide by it, per direction, plus a manual nudge.
                      gaugeX:'start', gaugeY:'start', offsetX:0, offsetY:0 } },
@@ -4252,8 +4301,11 @@ function layersInnerToOuter(layers){
   return a > b ? layers.slice().reverse() : layers;
 }
 const LAYER_LOOK = [
-  // Adhesive first: "tile adhesive" contains "tile", and the bed is not the
-  // tile.
+  // Screed before adhesive, because a mortar BED to falls is a screed and not
+  // a glue line; adhesive before tile, because "tile adhesive" contains "tile".
+  [/screed|mortar\s*bed/i,                   { color:'#D5D0C4', hatch:null }],
+  [/concrete|slab/i,                        { color:'#C6C2B9', hatch:null }],
+  [/joist|structural\s*flooring|plywood|\bply\b|underlay/i, { color:'#E8DCC4', hatch:null }],
   [/adhesive|glue|\bbed\b/i,                { color:'#CFCAC0', hatch:null }],
   [/waterproof|membrane/i,                  { color:'#5F9EA0', hatch:null }],
   [/tile/i,                                 { color:'#EDEAE3', hatch:null }],
@@ -4300,6 +4352,34 @@ function wallBuildTotal(wall){
 // tile reads as tile and a stud reads as framing.
 function wallBuildLayers(wall){
   const b = wallBuildOf(wall);
+  if(!b) return null;
+  return b.map(l => {
+    const look = layerLook(l.material);
+    return { t: l.t, material: l.material, color: look.color, hatch: layerHatch(look.hatch) };
+  });
+}
+
+// The floor's layers, top down. Same switch as the walls: one decision about
+// whether this job is documented as build-ups or as single thicknesses.
+function floorBuildOf(){
+  if(!compositeWallsOn()) return null;
+  const raw = ((state.room || {}).floor || {}).build;
+  if(!Array.isArray(raw) || !raw.length) return null;
+  const out = raw
+    .map(l => ({ material: String((l && l.material) || '').trim(),
+                 t: Math.max(0, +((l && l.t) || 0)) }))
+    .filter(l => l.t > 0);
+  return out.length ? out : null;
+}
+
+// How far below finished floor level the build-up reaches — the set-down.
+function floorBuildTotal(){
+  const b = floorBuildOf();
+  return b ? b.reduce((a, l) => a + l.t, 0) : 0;
+}
+
+function floorBuildLayers(){
+  const b = floorBuildOf();
   if(!b) return null;
   return b.map(l => {
     const look = layerLook(l.material);
@@ -15227,6 +15307,11 @@ function drawSummary(d, area){
     const _fs = floorSpec();
     row(2, 'Floor', ((floorMaterial(state.room.floor.material) || {}).label || '—')
       + (_fs.joint > 0 ? ' · ' + _fs.joint + ' mm joint' : ''));
+    // Its own row rather than tacked onto the end of that one, where the column
+    // width cut it off mid-word — and the set-down is the figure somebody has to
+    // act on before the frame goes up.
+    const _fb = floorBuildTotal();
+    if(_fb > 0) row(2, 'Floor set-down', Math.round(_fb) + ' mm below FFL');
   }
 
   heading(2, 'HARDWARE');
@@ -15455,8 +15540,77 @@ function drawWallDetail(d, x, y, w, h, wall, roomObj){
   });
 }
 
+// The floor, in section, room side up. x,y is the top-left of the cell.
+function drawFloorDetail(d, x, y, w, h){
+  const layers = floorBuildLayers();
+  const total = floorBuildTotal();
+
+  d.text(x, y + 4, 'FLOOR', { size:8, bold:true, color:COL.brand });
+  d.text(x + w, y + 4,
+    total > 0 ? Math.round(total * 10) / 10 + ' mm below FFL' : 'no build-up set',
+    { size:7, color:COL.ink2, align:'right' });
+  if(!layers) return;
+
+  const BAND_W = Math.min(120, w * 0.42);
+  const top = y + 16;
+  const availH = Math.max(20, h - 26);
+  const k = detailScaleFor(total, availH);
+  const left = x + 26;                        // room for the running dimension
+
+  // Finished floor level, which every height in the job is measured from.
+  d.line(left - 20, top, left + BAND_W + 8, top, COL.accent, LW.thin);
+  d.polygon([[left - 6, top - 2.6], [left - 3.2, top], [left - 6, top + 2.6]],
+    COL.accent, COL.accent, LW.hairline);
+  d.text(left - 7.5, top - 1.6, 'FFL', { size:5.5, color:COL.accent, align:'right' });
+
+  let at = 0;
+  layers.forEach((l, i) => {
+    const ly = top + at * k, lh = l.t * k;
+    d.rect(left, ly, BAND_W, lh, l.color || '#DCDCD6', null, 0);
+    if(l.hatch){
+      d.save(); d.clip(left, ly, BAND_W, lh);
+      try { drawWallMaterialHatch(d, left, ly, BAND_W, lh, l.hatch); } catch(_){}
+      d.restore();
+    }
+    d.rect(left, ly, BAND_W, lh, null, COL.ink3, LW.hairline);
+    if(lh > 3.2) d.text(left + BAND_W/2, ly + lh/2 + 1.4, String(i + 1),
+      { size:5.5, color:COL.ink2, align:'center' });
+    at += l.t;
+  });
+  d.rect(left, top, BAND_W, total * k, null, COL.ink, LW.thin);
+
+  // The running dimension down the left, and the set-down under it all.
+  at = 0;
+  layers.forEach((l) => {
+    const a = top + at * k, b = a + l.t * k;
+    if(b - a >= 4) archDimV(d, a, b, left - 4, String(Math.round(l.t * 10) / 10), { size:5, ext:1.1 });
+    at += l.t;
+  });
+  archDimV(d, top, top + total * k, left - 13, String(Math.round(total * 10) / 10),
+    { size:6, ext:1.3 });
+
+  // The list, beside the section rather than under it — the section is tall and
+  // the sheet's width is what is going spare.
+  const lx = left + BAND_W + 12;
+  let ly = top + 3;
+  layers.forEach((l, i) => {
+    d.rect(lx, ly - 2.6, 3.2, 3.2, l.color || '#DCDCD6', COL.ink3, LW.hairline);
+    d.text(lx + 5, ly, (i + 1) + '.', { size:6, color:COL.ink2 });
+    d.text(lx + 10, ly, l.material || '—', { size:6, color:COL.ink });
+    d.text(x + w, ly, Math.round(l.t * 10) / 10 + ' mm', { size:6, color:COL.ink2, align:'right' });
+    ly += 5.2;
+  });
+
+  ly += 3;
+  d.text(lx, ly, 'Set the substrate down ' + Math.round(total) + ' mm from FFL so the tile finishes flush.',
+    { size:6, color:COL.accent });
+  d.text(lx, ly + 5, 'Falls to waste 1:80 minimum, formed in the screed — see the floor plan for the waste.',
+    { size:6, color:COL.muted, italic:true });
+  d.text(x + w, y + h - 1, detailScaleLabel(k), { size:5.5, color:COL.muted, align:'right' });
+}
+
 function drawWallDetails(d, area){
-  d.text(area.x + 2, area.y + 8, `${(sheetFor('wall-detail') || {}).no || ''} · WALL DETAILS`,
+  d.text(area.x + 2, area.y + 8, `${(sheetFor('wall-detail') || {}).no || ''} · WALL & FLOOR DETAILS`,
     { size:11, bold:true, color:COL.brand });
 
   const walls = state.walls || [];
@@ -15466,6 +15620,9 @@ function drawWallDetails(d, area){
       ? `${state.project.name}  ·  Room ${state.room.W} × ${state.room.L} mm measured to the room side of these build-ups — the finished face`
       : `${state.project.name}  ·  Wall build-ups are switched off`,
     { size:6.5, color:COL.muted });
+  d.text(area.x + area.w - 2, area.y + 13,
+    'Wall layers room face outward · floor layers down from FFL · waterproofing to AS 3740',
+    { size:6, color:COL.muted, align:'right' });
   d.line(area.x + 2, area.y + 17, area.x + area.w - 2, area.y + 17, COL.accent, LW.medium);
 
   if(!on){
@@ -15476,33 +15633,41 @@ function drawWallDetails(d, area){
       'Switch on "Build the walls up in layers" under Room to set out each wall — tile, adhesive, waterproofing,',
       { size:7.5, color:COL.ink });
     d.text(area.x + 2, area.y + 44,
-      'lining and frame — and the room dimensions become the finished, tiled clear sizes.',
+      'lining and frame — and the room dimensions become the finished, tiled clear sizes. The floor is set out',
+      { size:7.5, color:COL.ink });
+    d.text(area.x + 2, area.y + 51,
+      'the same way, down from finished floor level, and its total is the set-down for the wet area.',
       { size:7.5, color:COL.ink });
     return;
   }
 
-  // Two columns, as many rows as there are walls. Four is the usual number.
+  // Two columns of walls, then the floor across the foot of the sheet. The
+  // floor gets the full width because its section is tall and narrow, and the
+  // room beside it is where the layer list goes.
   const cols = 2;
   const gapX = 14, gapY = 10;
   const cellW = (area.w - gapX) / cols;
   const rows = Math.ceil(walls.length / cols);
-  const cellH = (area.h - 30 - gapY * (rows - 1)) / Math.max(1, rows);
+  const floorH = floorBuildOf() ? Math.min(86, (area.h - 30) * 0.36) : 0;
+  const wallsH = area.h - 30 - floorH - (floorH ? gapY : 0);
+  const cellH = (wallsH - gapY * (rows - 1)) / Math.max(1, rows);
   walls.forEach((wall, i) => {
     const cx = area.x + (i % cols) * (cellW + gapX);
     const cy = area.y + 24 + Math.floor(i / cols) * (cellH + gapY);
-    if(cy + cellH > area.y + area.h) return;         // anything that will not fit
+    if(cy + cellH > area.y + 24 + wallsH + 1) return;   // anything that will not fit
     drawWallDetail(d, cx, cy, cellW, cellH, wall, null);
   });
+  if(floorH){
+    const fy = area.y + 24 + wallsH + gapY;
+    d.line(area.x, fy - 5, area.x + area.w, fy - 5, COL.faint2, LW.hairline);
+    drawFloorDetail(d, area.x, fy, area.w, floorH);
+  }
 
-  const shown = Math.min(walls.length, cols * Math.max(1, Math.floor((area.h - 26 + gapY) / (cellH + gapY))));
+  const shown = Math.min(walls.length, cols * Math.max(1, Math.floor((wallsH + gapY) / (cellH + gapY))));
   if(shown < walls.length){
     d.text(area.x + 2, area.y + area.h - 4,
       (walls.length - shown) + ' further wall(s) not shown — the sheet holds ' + shown + '.',
       { size:6, color:COL.accent, italic:true });
-  } else {
-    d.text(area.x + 2, area.y + area.h - 4,
-      'Layers are listed room face outward. Waterproofing to AS 3740; set out and flash junctions before lining.',
-      { size:6, color:COL.muted, italic:true });
   }
 }
 
@@ -15798,7 +15963,7 @@ const SHEETS_ELEV = [
   { view:'elev-island', title:'FREESTANDING VANITY',               canvas:'cElevIsland', indexTitle:'Freestanding vanity elevation', needsIsland:true },
 ];
 const SHEETS_TAIL = [
-  { view:'wall-detail', title:'WALL DETAILS',                      canvas:'cWallDetail', indexTitle:'Wall details' },
+  { view:'wall-detail', title:'WALL & FLOOR DETAILS',              canvas:'cWallDetail', indexTitle:'Wall & floor details' },
   { view:'schedule',    title:'FIXTURE SCHEDULE',                  canvas:'cSchedule',   indexTitle:'Fixture schedule' },
   { view:'appliances',  title:'SANITARYWARE SCHEDULE',                canvas:'cAppliances', indexTitle:'Sanitaryware schedule' },
   // Not a sheet — a working tab, like Draw. Out of the index and the PDF.
@@ -19455,8 +19620,11 @@ bindRange('wallT', v=> state.room.wallT = v, 'wallTVal');
     (state.rooms || []).forEach(r => (r.walls || []).forEach(w=>{
       if(!Array.isArray(w.build) || !w.build.length) w.build = blankWallBuild();
     }));
+    if(state.room.floor && (!Array.isArray(state.room.floor.build) || !state.room.floor.build.length)){
+      state.room.floor.build = blankFloorBuild();
+    }
     rebuildSheets();
-    renderWallBuildPanel(); renderActive(); renderTabs();
+    renderWallBuildPanel(); renderFloorBuildPanel(); renderActive(); renderTabs();
   });
   const addBtn = document.getElementById('wallBuildAddBtn');
   if(addBtn) addBtn.addEventListener('click', ()=>{
@@ -19467,6 +19635,16 @@ bindRange('wallT', v=> state.room.wallT = v, 'wallTVal');
     if(!Array.isArray(wall.build)) wall.build = [];
     wall.build.push({ material: l.material, t: l.t });
     renderWallBuildPanel(); renderActive();
+  });
+  const fAdd = document.getElementById('floorBuildAddBtn');
+  if(fAdd) fAdd.addEventListener('click', ()=>{
+    const sel = document.getElementById('floorBuildAdd');
+    const l = floorLayerByKey(sel && sel.value);
+    const f = state.room.floor;
+    if(!l || !f) return;
+    if(!Array.isArray(f.build)) f.build = [];
+    f.build.push({ material: l.material, t: l.t });
+    renderFloorBuildPanel(); renderActive();
   });
   const copy = document.getElementById('wallBuildCopy');
   if(copy) copy.addEventListener('click', ()=>{
@@ -20104,6 +20282,7 @@ function renderFloorPanel(){
       'Across: ' + phrase(set.x, f.gaugeX || 'start', 'D', 'B', set.tile) + '<br>' +
       'Along: '  + phrase(set.y, f.gaugeY || 'start', 'A', 'C', set.tile2);
   })();
+  try { renderFloorBuildPanel(); } catch(_){}
   const def = floorMaterial(f.material);
   _fillPatternSelect('floorMaterial',
     Object.entries(FLOOR_MATERIALS).map(([k, v]) => [k, v.label]), f.material,
@@ -20277,6 +20456,93 @@ function renderWallBuildPanel(){
   }
   const tot = document.getElementById('wallBuildTotal');
   if(tot) tot.innerHTML = wallBuildSummary();
+}
+
+function renderFloorBuildPanel(){
+  const box = document.getElementById('floorBuildBox');
+  if(!box) return;
+  box.style.display = compositeWallsOn() ? '' : 'none';
+  if(!compositeWallsOn()) return;
+
+  const f = state.room.floor;
+  if(!f) return;
+  if(!Array.isArray(f.build)) f.build = blankFloorBuild();
+
+  const list = document.getElementById('floorBuildList');
+  if(!list) return;
+  const redraw = ()=>{ renderFloorBuildPanel(); renderActive(); };
+  list.innerHTML = '';
+  f.build.forEach((l, i)=>{
+    const row = document.createElement('div');
+    row.className = 'cab-row';
+    row.style.gridTemplateColumns = '10px minmax(0,1fr) 54px auto auto auto';
+    row.style.cursor = 'default';
+
+    const sw = document.createElement('span');
+    const look = layerLook(l.material);
+    sw.style.cssText = 'width:9px;height:14px;border-radius:2px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2);background:'
+      + (look.color || '#DCDCD6');
+    row.appendChild(sw);
+
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.value = l.material || '';
+    name.title = 'What this layer is. Anything you type is what goes on the detail.';
+    name.style.cssText = 'border:0;background:none;font:inherit;color:inherit;min-width:0;padding:0';
+    name.addEventListener('change', ()=>{ l.material = name.value.trim(); redraw(); });
+    row.appendChild(name);
+
+    const th = document.createElement('input');
+    th.type = 'number'; th.min = '0'; th.max = '600'; th.step = '1';
+    th.value = String(l.t);
+    th.title = 'Thickness in millimetres';
+    th.style.cssText = 'width:52px;font:inherit;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px';
+    th.addEventListener('input', ()=>{
+      const v = parseFloat(th.value);
+      if(!isFinite(v) || v < 0) return;
+      l.t = Math.min(600, v);
+      renderActive();
+      const tot = document.getElementById('floorBuildTotal');
+      if(tot) tot.innerHTML = floorBuildSummary();
+    });
+    row.appendChild(th);
+
+    const up = document.createElement('button');
+    up.className = 'ro'; up.textContent = '↑'; up.title = 'Move towards the surface';
+    up.disabled = i === 0;
+    up.addEventListener('click', ()=>{ f.build.splice(i - 1, 0, f.build.splice(i, 1)[0]); redraw(); });
+    row.appendChild(up);
+
+    const dn = document.createElement('button');
+    dn.className = 'ro'; dn.textContent = '↓'; dn.title = 'Move down';
+    dn.disabled = i === f.build.length - 1;
+    dn.addEventListener('click', ()=>{ f.build.splice(i + 1, 0, f.build.splice(i, 1)[0]); redraw(); });
+    row.appendChild(dn);
+
+    const del = document.createElement('button');
+    del.className = 'del'; del.textContent = '×'; del.title = 'Remove this layer';
+    del.addEventListener('click', ()=>{ f.build.splice(i, 1); redraw(); });
+    row.appendChild(del);
+
+    list.appendChild(row);
+  });
+
+  const add = document.getElementById('floorBuildAdd');
+  if(add && !add.options.length){
+    FLOOR_LAYER_LIBRARY.forEach(l=> add.add(new Option(l.material + '  ·  ' + l.t + ' mm', l.key)));
+  }
+  const tot = document.getElementById('floorBuildTotal');
+  if(tot) tot.innerHTML = floorBuildSummary();
+}
+
+// The set-down, said as the thing it is used for.
+function floorBuildSummary(){
+  const t = floorBuildTotal();
+  if(!(t > 0)) return '';
+  const b = floorBuildOf();
+  return 'Build-up <b>' + Math.round(t * 10) / 10 + ' mm</b> below FFL'
+    + (b && b.length ? ' — ' + (b[0].material || 'the top layer').toLowerCase() + ' is the finished surface' : '')
+    + '<br>Set the substrate down that much in the wet area for the tile to finish flush.';
 }
 
 // What the build-up comes to, and what that leaves the room at overall. The
@@ -24305,6 +24571,9 @@ function loadDesign(snap){
   const _fixBuild = (w)=>{ if(w && !Array.isArray(w.build)) w.build = blankWallBuild(); };
   (state.walls || []).forEach(_fixBuild);
   (state.rooms || []).forEach(r => (r.walls || []).forEach(_fixBuild));
+  if(state.room && state.room.floor && !Array.isArray(state.room.floor.build)){
+    state.room.floor.build = blankFloorBuild();
+  }
   // Wall composites and internal partitions for jobs saved before they existed.
   if(!state.composites || typeof state.composites !== 'object') state.composites = {};
   if(!Array.isArray(state.room.internalWalls)) state.room.internalWalls = [];
@@ -25165,7 +25434,7 @@ function syncSidebarFromState(){
   setVal('roomL', state.room.L); setVal('roomLVal', state.room.L);
   setVal('roomH', state.room.H); setVal('roomHVal', state.room.H);
   setVal('wallT', state.room.wallT); setVal('wallTVal', state.room.wallT);
-  try { renderWallBuildPanel(); } catch(_){}
+  try { renderWallBuildPanel(); renderFloorBuildPanel(); } catch(_){}
   setVal('wallMaterial', state.room.wallMaterial || 'plaster');
   setVal('o', state.bench.overhang); setVal('oVal', state.bench.overhang);
   setVal('sp', tileLineY()); setVal('spVal', tileLineY());
