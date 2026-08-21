@@ -584,6 +584,25 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl"><label>Length <span class="val"><input class="valInp" id="roomLVal" type="number" min="900" max="6000" step="50" value="2700"> mm</span></label><input id="roomL" type="range" min="900" max="6000" step="50" value="2700"></div>
         <div class="ctrl"><label>Ceiling <span class="val"><input class="valInp" id="roomHVal" type="number" min="2100" max="3300" step="50" value="2700"> mm</span></label><input id="roomH" type="range" min="2100" max="3300" step="50" value="2700"></div>
         <div class="ctrl"><label>Wall thickness <span class="val"><input class="valInp" id="wallTVal" type="number" min="70" max="400" step="10" value="90"> mm</span></label><input id="wallT" type="range" min="70" max="400" step="10" value="90"></div>
+        <label class="toggle" style="margin:6px 0 4px"><input type="checkbox" id="compositeWalls"> <span>Build the walls up in layers</span></label>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin:0 0 8px">
+          Off, every wall is one band of the thickness above and the room size is to the structure.
+          On, each wall is set out layer by layer — tile, adhesive, waterproofing, lining, frame —
+          and <b>Width and Length become the finished, tiled clear sizes</b>, because the build-up is
+          drawn outward from them. There is a <b>Wall details</b> sheet for them.
+        </div>
+        <div id="wallBuildBox" style="display:none">
+          <div class="ctrl"><label>Wall</label>
+            <div class="pillbar" id="wallBuildPick"></div>
+          </div>
+          <div class="cab-list" id="wallBuildList"></div>
+          <div class="add-row" style="grid-template-columns:minmax(0,1fr) auto">
+            <select id="wallBuildAdd"></select>
+            <button class="btn small" id="wallBuildAddBtn" title="Add this layer to the outside of the build-up">＋</button>
+          </div>
+          <div class="ctrl" id="wallBuildTotal" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
+          <button class="btn small ghost" id="wallBuildCopy" style="width:100%;margin-top:4px">Copy this build-up to every wall</button>
+        </div>
         <div class="ctrl"><label>North <span class="val"><input class="valInp" id="northDeg" type="number" min="0" max="359" step="1" value="0"> °</span></label>
           <div style="font-size:11px;color:var(--muted);margin-top:2px">Clockwise from up the sheet. Comes across from the site measure.</div>
         </div>
@@ -3499,6 +3518,42 @@ function wallPattern(k){ return WALL_PATTERNS[k] || WALL_PATTERNS['solid']; }
 function floorMaterial(k){ return FLOOR_MATERIALS[k] || FLOOR_MATERIALS['timber-boards']; }
 function wallMaterial(k){ return WALL_MATERIALS[k] || WALL_MATERIALS['plaster']; }
 
+// ---- Wall build-ups, authored here ---------------------------------------
+// The layers on offer. Thicknesses are the common Australian ones; every one of
+// them can be typed over, because the tile is whatever the tile is.
+const WALL_LAYER_LIBRARY = [
+  { key:'tile',        material:'Ceramic tile',            t:10 },
+  { key:'tile-porc',   material:'Porcelain tile',          t:9 },
+  { key:'stone',       material:'Stone tile',              t:12 },
+  { key:'adhesive',    material:'Tile adhesive',           t:4 },
+  { key:'membrane',    material:'Waterproof membrane',     t:1 },
+  { key:'villaboard',  material:'Villaboard 6 mm',         t:6 },
+  { key:'fc9',         material:'Fibre cement 9 mm',       t:9 },
+  { key:'wr-board',    material:'Wet-area plasterboard 10 mm', t:10 },
+  { key:'plasterboard',material:'Plasterboard 10 mm',      t:10 },
+  { key:'furring',     material:'Furring channel',         t:16 },
+  { key:'stud90',      material:'Timber stud 90 × 45',     t:90 },
+  { key:'stud70',      material:'Timber stud 70 × 35',     t:70 },
+  { key:'steel64',     material:'Steel stud 64',           t:64 },
+  { key:'steel92',     material:'Steel stud 92',           t:92 },
+  { key:'insul',       material:'Insulation batt',         t:90 },
+  { key:'cavity',      material:'Cavity',                  t:40 },
+  { key:'brick',       material:'Face brick',              t:110 },
+  { key:'block',       material:'Blockwork',               t:90 },
+  { key:'render',      material:'Render',                  t:20 },
+];
+// What a wet wall in a bathroom is, nine times out of ten.
+const DEFAULT_WALL_BUILD = ['tile', 'adhesive', 'membrane', 'villaboard', 'stud90'];
+
+const wallLayerByKey = (k) => WALL_LAYER_LIBRARY.find(l => l.key === k) || null;
+
+function blankWallBuild(){
+  return DEFAULT_WALL_BUILD.map(k => {
+    const l = wallLayerByKey(k);
+    return { material: l.material, t: l.t };
+  });
+}
+
 // ============================================================
 // STATE
 // ============================================================
@@ -3512,6 +3567,11 @@ const state = {
   // pattern starts blank and every material's own poché is one pick away.
   room:    { W:2400, L:2700, H:2700, wallT:90, wallMaterial:'plaster', wallColorOverride:null, wallHatchOverride:'blank',
              layerHatch: false,
+             // Off, every wall is one band of wallT and the room dimension is
+             // to the structure, which is how this app always drew. On, each
+             // wall carries its own build-up and W × L becomes the finished
+             // face — see the note above WALL_LAYER_LIBRARY.
+             compositeWalls: false,
              lights: [], internalWalls: [],
              floorWastes: [],
              floor:{ material:'tile-600', colorOverride:null, hatchOverride:null,
@@ -3904,6 +3964,9 @@ function findWallForCab(cabId){
 function makeWall(id){
   return {
     id, baseRow:[], wallRow:[], openings:[], electrical:[],
+    // What this wall is made of, room face outward. Only drawn when composite
+    // walls are switched on; until then it is a suggestion sitting in the file.
+    build: blankWallBuild(),
     // A low wall stood in front of this one. Height is to the top of the
     // capping; from/to are along the wall, and to:null means all of it.
     // This wall's own tile. null means it takes the job's, set in Wall tiling.
@@ -4189,6 +4252,11 @@ function layersInnerToOuter(layers){
   return a > b ? layers.slice().reverse() : layers;
 }
 const LAYER_LOOK = [
+  // Adhesive first: "tile adhesive" contains "tile", and the bed is not the
+  // tile.
+  [/adhesive|glue|\bbed\b/i,                { color:'#CFCAC0', hatch:null }],
+  [/waterproof|membrane/i,                  { color:'#5F9EA0', hatch:null }],
+  [/tile/i,                                 { color:'#EDEAE3', hatch:null }],
   [/face\s*brick|brickwork|^brick/i,        { color:'#B45309', hatch:'brick' }],
   [/block|besser|masonry/i,                 { color:'#9AA0A6', hatch:'block' }],
   [/aac|hebel|aerated/i,                    { color:'#D8D5CC', hatch:'aac' }],
@@ -4207,6 +4275,51 @@ function layerLook(material){
   for(const [re, look] of LAYER_LOOK) if(re.test(m)) return look;
   return { color:'#DCDCD6', hatch:null };
 }
+const compositeWallsOn = () => !!(state.room && state.room.compositeWalls);
+
+// One wall's layers, room face outward, or null when there is nothing to draw.
+// The order is the author's: a build-up is written down the way it is built,
+// and reordering it for them would be second-guessing which face is which.
+function wallBuildOf(wall){
+  if(!compositeWallsOn()) return null;
+  const raw = (wall && Array.isArray(wall.build)) ? wall.build : null;
+  if(!raw || !raw.length) return null;
+  const out = raw
+    .map(l => ({ material: String((l && l.material) || '').trim(),
+                 t: Math.max(0, +((l && l.t) || 0)) }))
+    .filter(l => l.t > 0);
+  return out.length ? out : null;
+}
+
+function wallBuildTotal(wall){
+  const b = wallBuildOf(wall);
+  return b ? b.reduce((a, l) => a + l.t, 0) : 0;
+}
+
+// The same layers with a colour and a hatch worked out from what they are, so
+// tile reads as tile and a stud reads as framing.
+function wallBuildLayers(wall){
+  const b = wallBuildOf(wall);
+  if(!b) return null;
+  return b.map(l => {
+    const look = layerLook(l.material);
+    return { t: l.t, material: l.material, color: look.color, hatch: layerHatch(look.hatch) };
+  });
+}
+
+// The layer against the room — the one the room dimension is measured to.
+function wallFaceLayer(wall){
+  const b = wallBuildOf(wall);
+  return b ? b[0] : null;
+}
+
+// How thick the tiling on this wall is, when the build-up says so. Used to draw
+// the tiling inside the wall band rather than as a strip laid over the room.
+function wallTileLayerT(wall){
+  const f = wallFaceLayer(wall);
+  return (f && /tile/i.test(f.material) && !/adhesive|glue/i.test(f.material)) ? f.t : 0;
+}
+
 function compositeById(id){ return (state.composites && state.composites[id]) || null; }
 // How a wall fills when it has no layer break-down: the composite's own colour
 // and hatch flag, so the poché reads the same as it does in the site measure.
@@ -4248,6 +4361,10 @@ function compositeLayers(cmp){
 // The thickness of one wall: its own override, then its composite, then the
 // room default.
 function wallThickness(wall, roomObj){
+  // An authored build-up is the most specific answer there is, and the only one
+  // the room dimension depends on.
+  const built = wallBuildTotal(wall);
+  if(built > 0) return built;
   if(wall && wall.thicknessMm > 0) return wall.thicknessMm;
   const cmp = wall && compositeById(wall.compositeId);
   if(cmp && cmp.thicknessMm > 0) return cmp.thicknessMm;
@@ -6875,10 +6992,11 @@ function drawOutlineRoom(d, pox, poy, s, roomObj, wmat){
   const segs = wallSegmentsOf(roomObj);
   let anyLayers = false;
   segs.forEach((sg, i)=>{
-    const layers = compositeLayers(compositeById((walls[i] || {}).compositeId));
+    const layers = wallBuildLayers(walls[i]) || compositeLayers(compositeById((walls[i] || {}).compositeId));
     if(layers) anyLayers = true;
   });
-  const anyComposite = segs.some((sg, i)=> !!compositeById((walls[i] || {}).compositeId));
+  const anyComposite = segs.some((sg, i)=>
+    !!wallBuildOf(walls[i]) || !!compositeById((walls[i] || {}).compositeId));
   if(anyLayers || anyComposite){
     const perEdge = segs.map((sg, i)=>{
       const wl = walls[i] || {};
@@ -6886,7 +7004,10 @@ function drawOutlineRoom(d, pox, poy, s, roomObj, wmat){
       const fill = compositeFill(cmp, wmat.color);
       // These bands are laid from the inner face outwards, so the cladding has
       // to end up last no matter which way round the wall was measured.
-      const layers = layersInnerToOuter(compositeLayers(cmp));
+      // An authored build-up is already written room face outward. Only the
+      // ones that came in from a site measure need turning the right way round.
+      const own = wallBuildLayers(wl);
+      const layers = own || layersInnerToOuter(compositeLayers(cmp));
       return { layers, total: thick[i], color: fill.color, hatch: fill.hatch };
     });
     drawOutlineWallLayers(d, pox, poy, s, inner, perEdge);
@@ -10888,13 +11009,21 @@ function drawWallTilingOnPlan(d, plan, walls, roomObj){
       let at = 0;
       gaps.forEach(([a, b]) => { if(a > at) runs.push([at, Math.min(a, len)]); at = Math.max(at, b); });
       if(at < len) runs.push([at, len]);
-      const depth = Math.max(TILE_PLAN_T, TILE_PLAN_MIN / (plan.s || 1));
+      // Where the build-up names the tile, the tiling IS the first layer of the
+      // wall and the joints belong in it — drawing a second strip over the room
+      // would put the tile on twice and take it off the room dimension.
+      const inBuild = wallTileLayerT(wall);
+      const depth = inBuild > 0 ? -inBuild
+        : Math.max(TILE_PLAN_T, TILE_PLAN_MIN / (plan.s || 1));
       const P = (u, v) => planMap(wall.id, u, v, plan);
       runs.forEach(([a, b]) => {
         if(b - a < 1) return;
-        // The face of the tiling, standing off the wall.
-        const f1 = P(a, depth), f2 = P(b, depth);
-        d.line(f1[0], f1[1], f2[0], f2[1], col, LW.hairline);
+        // The face of the tiling, standing off the wall. In a build-up that
+        // face is the room face, already drawn as the inside of the wall.
+        if(!inBuild){
+          const f1 = P(a, depth), f2 = P(b, depth);
+          d.line(f1[0], f1[1], f2[0], f2[1], col, LW.hairline);
+        }
         // A joint every module, set out the way the elevation sets it out.
         const first = Math.ceil((a - g.shift) / t.w);
         const last  = Math.floor((b - g.shift) / t.w);
@@ -11824,7 +11953,12 @@ function drawPlan(d, area, view, opts){
   const wmat = { ...wmatBase,
     color: state.room.wallColorOverride || wmatBase.color,
     hatch: state.room.wallHatchOverride || wmatBase.hatch };
-  const _isRect = isRectOutline(null);
+  // A rectangle normally draws as one band of one thickness, which is quicker
+  // and merges the junctions with any adjoining room. Once the walls are built
+  // up they are no longer one thickness, so it goes through the outline path
+  // instead — the same one a traced plan uses, which draws every wall as its
+  // own layers and mitres the corners between them.
+  const _isRect = isRectOutline(null) && !compositeWallsOn();
   let _poly = null;
   if(_isRect){
     const outerX = ox - wallT*s, outerY = oy - wallT*s;
@@ -15235,6 +15369,143 @@ function scheduleNoteFor(cab){
   if(cab.dimNote) bits.push(cab.dimNote);
   return bits.join(', ');
 }
+// One wall, in section, room side at the left.
+//
+// Scale is picked off a short list and printed, rather than fitted and left for
+// the reader to guess. A 111 mm build-up on a quarter of an A3 goes at 1:1,
+// which is the right way to look at a waterproofing junction anyway.
+const DETAIL_SCALES = [1, 1/2, 1/2.5, 1/5, 1/10, 1/20];
+function detailScaleFor(totalMM, availMM){
+  for(const k of DETAIL_SCALES) if(totalMM * k <= availMM) return k;
+  return DETAIL_SCALES[DETAIL_SCALES.length - 1];
+}
+const detailScaleLabel = (k) => (k >= 0.999 ? '1:1' : '1:' + (Math.round(10/k)/10));
+
+function drawWallDetail(d, x, y, w, h, wall, roomObj){
+  // The band takes about a quarter of whatever height the cell has, so four
+  // walls on an A3 read as details rather than as a strip of colour.
+  const BAND_H = Math.min(38, Math.max(18, h * 0.26));
+  const letter = wallLetter(roomObj || null, wall.id);
+  const layers = wallBuildLayers(wall);
+  const total = layers ? layers.reduce((a, l) => a + l.t, 0) : wallThickness(wall, roomObj);
+
+  d.text(x, y + 4, 'WALL ' + letter, { size:8, bold:true, color:COL.brand });
+  d.text(x + w, y + 4, Math.round(total * 10) / 10 + ' mm overall',
+    { size:7, color:COL.ink2, align:'right' });
+
+  if(!layers){
+    d.text(x, y + 13, 'One band of ' + Math.round(total) + ' mm — no build-up set for this wall.',
+      { size:6.5, color:COL.muted, italic:true });
+    return;
+  }
+
+  const left = x + 16;                       // room side, with room for the mark
+  const avail = w - 16 - 20;
+  const k = detailScaleFor(total, avail);
+  const bandW = total * k;
+  const top = y + 10;
+
+  // The room, and the face the room dimension is measured to.
+  d.text(x, top + BAND_H/2, 'ROOM', { size:5.5, color:COL.accent, align:'left', baseline:'middle' });
+  d.polygon([[left - 3.4, top + BAND_H/2 - 1.8], [left - 0.6, top + BAND_H/2],
+             [left - 3.4, top + BAND_H/2 + 1.8]], COL.accent, COL.accent, LW.hairline);
+
+  // The layers, room face outward.
+  let at = 0;
+  layers.forEach((l, i) => {
+    const lx = left + at * k, lw = l.t * k;
+    d.rect(lx, top, lw, BAND_H, l.color || '#DCDCD6', null, 0);
+    if(l.hatch){
+      d.save(); d.clip(lx, top, lw, BAND_H);
+      try { drawWallMaterialHatch(d, lx, top, lw, BAND_H, l.hatch); } catch(_){}
+      d.restore();
+    }
+    d.rect(lx, top, lw, BAND_H, null, COL.ink3, LW.hairline);
+    // The number ties the band to the list underneath. Only where it fits —
+    // a 1 mm membrane at 1:2 has nowhere to put it.
+    if(lw > 3.2) d.text(lx + lw/2, top + BAND_H/2 + 1.4, String(i + 1),
+      { size:5.5, color:COL.ink2, align:'center' });
+    at += l.t;
+  });
+  d.rect(left, top, bandW, BAND_H, null, COL.ink, LW.thin);
+
+  // A running dimension: every layer, then the total under it.
+  const dy = top + BAND_H + 6;
+  at = 0;
+  layers.forEach((l) => {
+    const a = left + at * k, b = a + l.t * k;
+    // Below about 4 mm of paper the figure cannot sit between its own ticks;
+    // those layers are read off the list instead.
+    if(b - a >= 4) archDimH(d, a, b, dy, String(Math.round(l.t * 10) / 10), { size:5, ext:1.1 });
+    at += l.t;
+  });
+  archDimH(d, left, left + bandW, dy + 9, String(Math.round(total * 10) / 10), { size:6, ext:1.3 });
+
+  d.text(x + w, dy + 9, detailScaleLabel(k), { size:5.5, color:COL.muted, align:'right' });
+
+  // The list. Numbered to the band, room side first, which is the order it goes
+  // on in.
+  let ly = dy + 18;
+  layers.forEach((l, i) => {
+    d.rect(x, ly - 2.6, 3.2, 3.2, l.color || '#DCDCD6', COL.ink3, LW.hairline);
+    d.text(x + 5, ly, (i + 1) + '.', { size:6, color:COL.ink2 });
+    d.text(x + 10, ly, l.material || '—', { size:6, color:COL.ink });
+    d.text(x + w, ly, Math.round(l.t * 10) / 10 + ' mm', { size:6, color:COL.ink2, align:'right' });
+    ly += 5.2;
+  });
+}
+
+function drawWallDetails(d, area){
+  d.text(area.x + 2, area.y + 8, `${(sheetFor('wall-detail') || {}).no || ''} · WALL DETAILS`,
+    { size:11, bold:true, color:COL.brand });
+
+  const walls = state.walls || [];
+  const on = compositeWallsOn();
+  d.text(area.x + 2, area.y + 13,
+    on
+      ? `${state.project.name}  ·  Room ${state.room.W} × ${state.room.L} mm measured to the room side of these build-ups — the finished face`
+      : `${state.project.name}  ·  Wall build-ups are switched off`,
+    { size:6.5, color:COL.muted });
+  d.line(area.x + 2, area.y + 17, area.x + area.w - 2, area.y + 17, COL.accent, LW.medium);
+
+  if(!on){
+    d.text(area.x + 2, area.y + 30,
+      'Every wall is drawn as one band of ' + state.room.wallT + ' mm, and the room dimensions are to the structure.',
+      { size:7.5, color:COL.ink });
+    d.text(area.x + 2, area.y + 37,
+      'Switch on "Build the walls up in layers" under Room to set out each wall — tile, adhesive, waterproofing,',
+      { size:7.5, color:COL.ink });
+    d.text(area.x + 2, area.y + 44,
+      'lining and frame — and the room dimensions become the finished, tiled clear sizes.',
+      { size:7.5, color:COL.ink });
+    return;
+  }
+
+  // Two columns, as many rows as there are walls. Four is the usual number.
+  const cols = 2;
+  const gapX = 14, gapY = 10;
+  const cellW = (area.w - gapX) / cols;
+  const rows = Math.ceil(walls.length / cols);
+  const cellH = (area.h - 30 - gapY * (rows - 1)) / Math.max(1, rows);
+  walls.forEach((wall, i) => {
+    const cx = area.x + (i % cols) * (cellW + gapX);
+    const cy = area.y + 24 + Math.floor(i / cols) * (cellH + gapY);
+    if(cy + cellH > area.y + area.h) return;         // anything that will not fit
+    drawWallDetail(d, cx, cy, cellW, cellH, wall, null);
+  });
+
+  const shown = Math.min(walls.length, cols * Math.max(1, Math.floor((area.h - 26 + gapY) / (cellH + gapY))));
+  if(shown < walls.length){
+    d.text(area.x + 2, area.y + area.h - 4,
+      (walls.length - shown) + ' further wall(s) not shown — the sheet holds ' + shown + '.',
+      { size:6, color:COL.accent, italic:true });
+  } else {
+    d.text(area.x + 2, area.y + area.h - 4,
+      'Layers are listed room face outward. Waterproofing to AS 3740; set out and flash junctions before lining.',
+      { size:6, color:COL.muted, italic:true });
+  }
+}
+
 function drawSchedule(d, area){
   const rows = enumerateCabinets();
   // Number read from the live set — the schedules move as rooms are added.
@@ -15527,6 +15798,7 @@ const SHEETS_ELEV = [
   { view:'elev-island', title:'FREESTANDING VANITY',               canvas:'cElevIsland', indexTitle:'Freestanding vanity elevation', needsIsland:true },
 ];
 const SHEETS_TAIL = [
+  { view:'wall-detail', title:'WALL DETAILS',                      canvas:'cWallDetail', indexTitle:'Wall details' },
   { view:'schedule',    title:'FIXTURE SCHEDULE',                  canvas:'cSchedule',   indexTitle:'Fixture schedule' },
   { view:'appliances',  title:'SANITARYWARE SCHEDULE',                canvas:'cAppliances', indexTitle:'Sanitaryware schedule' },
   // Not a sheet — a working tab, like Draw. Out of the index and the PDF.
@@ -15640,6 +15912,7 @@ function drawSheetContent(d, area, view){
   try { syncRoomAttachments(); } catch(_){}
   if(view === 'cover') return drawCover(d, area);
   if(view === 'summary') return drawSummary(d, area);
+  if(view === 'wall-detail') return drawWallDetails(d, area);
   if(view === 'schedule') return drawSchedule(d, area);
   if(view === 'appliances') return drawApplianceSchedule(d, area);
   if(view === 'plan'){
@@ -15683,7 +15956,8 @@ function renderSheet(view){
   const idx = list.findIndex(s => s.view === view);
   titleBlock(d, PAGE_W, PAGE_H, {
     sheetNo: meta.no, title: meta.title,
-    scale: ['cover','summary','schedule','appliances'].indexOf(view) >= 0 ? 'NTS' : scaleLabelFor(view),
+    scale: ['cover','summary','schedule','appliances','wall-detail'].indexOf(view) >= 0
+      ? 'NTS' : scaleLabelFor(view),
     sheetOf: idx >= 0 ? `SHEET ${idx+1} OF ${list.length}` : '',
   });
   document.getElementById('zoomHud').textContent = Math.round(getViewport(view).zoom * 100) + '%';
@@ -19171,6 +19445,39 @@ bindRange('roomW', v=> state.room.W = v, 'roomWVal');
 bindRange('roomL', v=> state.room.L = v, 'roomLVal');
 bindRange('roomH', v=> state.room.H = v, 'roomHVal');
 bindRange('wallT', v=> state.room.wallT = v, 'wallTVal');
+(function(){
+  const cb = document.getElementById('compositeWalls');
+  if(cb) cb.addEventListener('change', ()=>{
+    state.room.compositeWalls = cb.checked;
+    // A wall with no build-up would draw as nothing at all once the band is
+    // taken from the layers, so give it the standard one on the way in.
+    (state.walls || []).forEach(w=>{ if(!Array.isArray(w.build) || !w.build.length) w.build = blankWallBuild(); });
+    (state.rooms || []).forEach(r => (r.walls || []).forEach(w=>{
+      if(!Array.isArray(w.build) || !w.build.length) w.build = blankWallBuild();
+    }));
+    rebuildSheets();
+    renderWallBuildPanel(); renderActive(); renderTabs();
+  });
+  const addBtn = document.getElementById('wallBuildAddBtn');
+  if(addBtn) addBtn.addEventListener('click', ()=>{
+    const sel = document.getElementById('wallBuildAdd');
+    const l = wallLayerByKey(sel && sel.value);
+    const wall = buildWallObj();
+    if(!l || !wall) return;
+    if(!Array.isArray(wall.build)) wall.build = [];
+    wall.build.push({ material: l.material, t: l.t });
+    renderWallBuildPanel(); renderActive();
+  });
+  const copy = document.getElementById('wallBuildCopy');
+  if(copy) copy.addEventListener('click', ()=>{
+    const wall = buildWallObj();
+    if(!wall) return;
+    (state.walls || []).forEach(w=>{
+      if(w.id !== wall.id) w.build = wall.build.map(l => ({ material:l.material, t:l.t }));
+    });
+    renderWallBuildPanel(); renderActive();
+  });
+})();
 bindRange('o', v=> state.bench.overhang = v, 'oVal');
 bindRange('sp', function(v){
   state.splashback.height = Math.max(0, v);
@@ -19852,6 +20159,144 @@ function renderFloorPanel(){
       size:spec.gauge, size2:spec.gauge2, angle:spec.angle, lw:jointLW(spec.joint, s) });
   }, across);
 }
+// ---- Wall build-up editor -------------------------------------------------
+// Which wall the editor is pointed at. Its own, rather than the sidebar's
+// active wall: you set the four build-ups in one sitting, and having the list
+// jump because a cabinet was clicked would be its own small misery.
+let _buildWall = 'A';
+
+function buildWallObj(){
+  const walls = state.walls || [];
+  return walls.find(w => w.id === _buildWall) || walls[0] || null;
+}
+
+function renderWallBuildPanel(){
+  const box = document.getElementById('wallBuildBox');
+  const cb = document.getElementById('compositeWalls');
+  if(cb) cb.checked = compositeWallsOn();
+  if(!box) return;
+  box.style.display = compositeWallsOn() ? '' : 'none';
+  // The single thickness above is not being used any more; say so quietly
+  // rather than leaving a live-looking control that does nothing.
+  const wtF = document.getElementById('wallTVal');
+  const wtRow = wtF && wtF.closest('.ctrl');
+  if(wtRow){
+    wtRow.style.opacity = compositeWallsOn() ? '0.45' : '';
+    wtRow.title = compositeWallsOn() ? 'Not used while the walls are built up in layers.' : '';
+  }
+  if(!compositeWallsOn()) return;
+
+  const walls = state.walls || [];
+  const pick = document.getElementById('wallBuildPick');
+  if(pick){
+    pick.innerHTML = '';
+    walls.forEach(w => {
+      const el = document.createElement('div');
+      el.className = 'pill' + (w.id === _buildWall ? ' on' : '');
+      const t = wallBuildTotal(w);
+      el.textContent = wallLetter(null, w.id) + (t > 0 ? '  ' + Math.round(t) : '');
+      el.title = 'Wall ' + wallLetter(null, w.id);
+      el.addEventListener('click', ()=>{ _buildWall = w.id; renderWallBuildPanel(); });
+      pick.appendChild(el);
+    });
+  }
+
+  const wall = buildWallObj();
+  const list = document.getElementById('wallBuildList');
+  if(!wall || !list) return;
+  if(!Array.isArray(wall.build)) wall.build = blankWallBuild();
+
+  const redraw = ()=>{ renderWallBuildPanel(); renderActive(); };
+  list.innerHTML = '';
+  wall.build.forEach((l, i)=>{
+    const row = document.createElement('div');
+    row.className = 'cab-row';
+    row.style.gridTemplateColumns = '10px minmax(0,1fr) 54px auto auto auto';
+    row.style.cursor = 'default';
+
+    const sw = document.createElement('span');
+    const look = layerLook(l.material);
+    sw.style.cssText = 'width:9px;height:14px;border-radius:2px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2);background:'
+      + (look.color || '#DCDCD6');
+    row.appendChild(sw);
+
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.value = l.material || '';
+    name.title = 'What this layer is. Anything you type is what goes on the detail.';
+    name.style.cssText = 'border:0;background:none;font:inherit;color:inherit;min-width:0;padding:0';
+    name.addEventListener('change', ()=>{ l.material = name.value.trim(); redraw(); });
+    row.appendChild(name);
+
+    const th = document.createElement('input');
+    th.type = 'number'; th.min = '0'; th.max = '400'; th.step = '1';
+    th.value = String(l.t);
+    th.title = 'Thickness in millimetres';
+    th.style.cssText = 'width:52px;font:inherit;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px';
+    th.addEventListener('input', ()=>{
+      const v = parseFloat(th.value);
+      if(!isFinite(v) || v < 0) return;
+      l.t = Math.min(400, v);
+      // Not a full redraw: retyping the field under the cursor would take the
+      // rest of the number with it.
+      renderActive();
+      const tot = document.getElementById('wallBuildTotal');
+      if(tot) tot.innerHTML = wallBuildSummary();
+    });
+    row.appendChild(th);
+
+    const up = document.createElement('button');
+    up.className = 'ro'; up.textContent = '↑'; up.title = 'Move towards the room';
+    up.disabled = i === 0;
+    up.addEventListener('click', ()=>{
+      wall.build.splice(i - 1, 0, wall.build.splice(i, 1)[0]); redraw();
+    });
+    row.appendChild(up);
+
+    const dn = document.createElement('button');
+    dn.className = 'ro'; dn.textContent = '↓'; dn.title = 'Move outward';
+    dn.disabled = i === wall.build.length - 1;
+    dn.addEventListener('click', ()=>{
+      wall.build.splice(i + 1, 0, wall.build.splice(i, 1)[0]); redraw();
+    });
+    row.appendChild(dn);
+
+    const del = document.createElement('button');
+    del.className = 'del'; del.textContent = '×'; del.title = 'Remove this layer';
+    del.addEventListener('click', ()=>{ wall.build.splice(i, 1); redraw(); });
+    row.appendChild(del);
+
+    list.appendChild(row);
+  });
+
+  const add = document.getElementById('wallBuildAdd');
+  if(add && !add.options.length){
+    WALL_LAYER_LIBRARY.forEach(l=>{
+      add.add(new Option(l.material + '  ·  ' + l.t + ' mm', l.key));
+    });
+  }
+  const tot = document.getElementById('wallBuildTotal');
+  if(tot) tot.innerHTML = wallBuildSummary();
+}
+
+// What the build-up comes to, and what that leaves the room at overall. The
+// second figure is the one that has to fit between two existing walls on site.
+function wallBuildSummary(){
+  const wall = buildWallObj();
+  if(!wall) return '';
+  const t = wallBuildTotal(wall);
+  const walls = state.walls || [];
+  const byId = (id)=> walls.find(w => w.id === id);
+  const across = wallBuildTotal(byId('D')) + wallBuildTotal(byId('B'));
+  const along  = wallBuildTotal(byId('A')) + wallBuildTotal(byId('C'));
+  const first = wallFaceLayer(wall);
+  return 'Wall ' + wallLetter(null, wall.id) + ': <b>' + Math.round(t * 10) / 10 + ' mm</b>'
+    + (first ? ' — room face is the ' + (first.material || 'first layer').toLowerCase() : '')
+    + '<br>Room ' + state.room.W + ' × ' + state.room.L + ' finished'
+    + ' · ' + Math.round(state.room.W + across) + ' × ' + Math.round(state.room.L + along)
+    + ' over the frames.';
+}
+
 function renderWallPanel(){
   const r = state.room;
   const def = wallMaterial(r.wallMaterial);
@@ -23853,6 +24298,13 @@ function loadDesign(snap){
       syncWallsToOutline(null);
     }
   }
+  // Build-ups for jobs saved before walls had any. Switched off, so nothing
+  // moves: turning it on is what changes the drawing, and that is a decision
+  // rather than a side effect of opening a file.
+  if(state.room && typeof state.room.compositeWalls !== 'boolean') state.room.compositeWalls = false;
+  const _fixBuild = (w)=>{ if(w && !Array.isArray(w.build)) w.build = blankWallBuild(); };
+  (state.walls || []).forEach(_fixBuild);
+  (state.rooms || []).forEach(r => (r.walls || []).forEach(_fixBuild));
   // Wall composites and internal partitions for jobs saved before they existed.
   if(!state.composites || typeof state.composites !== 'object') state.composites = {};
   if(!Array.isArray(state.room.internalWalls)) state.room.internalWalls = [];
@@ -24713,6 +25165,7 @@ function syncSidebarFromState(){
   setVal('roomL', state.room.L); setVal('roomLVal', state.room.L);
   setVal('roomH', state.room.H); setVal('roomHVal', state.room.H);
   setVal('wallT', state.room.wallT); setVal('wallTVal', state.room.wallT);
+  try { renderWallBuildPanel(); } catch(_){}
   setVal('wallMaterial', state.room.wallMaterial || 'plaster');
   setVal('o', state.bench.overhang); setVal('oVal', state.bench.overhang);
   setVal('sp', tileLineY()); setVal('spVal', tileLineY());
