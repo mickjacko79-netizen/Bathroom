@@ -793,6 +793,9 @@ header .project-label .dot.dirty{background:#F7C04A}
           <div class="ctrl"><label>Tile width <span class="val"><input class="valInp" id="tileW" type="number" min="20" max="1800" step="10" value="300"> mm</span></label></div>
           <div class="ctrl"><label>Tile height <span class="val"><input class="valInp" id="tileH" type="number" min="20" max="3000" step="10" value="600"> mm</span></label></div>
         </div>
+        <div class="ctrl"><label>Grout joint <span class="val"><input class="valInp" id="tileJoint" type="number" min="0" max="30" step="0.5" value="3"> mm</span></label>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px" id="tileJointNote"></div>
+        </div>
         <div class="ctrl"><label>Bond</label>
           <div class="pillbar" id="tileBondBar">
             <div class="pill" data-v="0">Stack</div>
@@ -824,6 +827,9 @@ header .project-label .dot.dirty{background:#F7C04A}
         <div class="ctrl" id="floorSizeRow"><label>Board / tile width <span class="val"><input class="valInp" id="floorSizeVal" type="number" min="20" max="3000" step="10" value="180"> mm</span></label><input id="floorSize" type="range" min="20" max="3000" step="10" value="180"></div>
         <div class="ctrl" id="floorSize2Row"><label>Board length / tile height <span class="val"><input class="valInp" id="floorSize2Val" type="number" min="20" max="4000" step="10" value="1800"> mm</span></label><input id="floorSize2" type="range" min="20" max="4000" step="10" value="1800"></div>
         <div class="ctrl" id="floorAngleRow"><label>Laying angle <span class="val"><input class="valInp" id="floorAngleVal" type="number" min="0" max="90" step="5" value="0"> °</span></label><input id="floorAngle" type="range" min="0" max="90" step="5" value="0"></div>
+        <div class="ctrl" id="floorJointRow"><label>Grout joint <span class="val"><input class="valInp" id="floorJoint" type="number" min="0" max="30" step="0.5" value="3"> mm</span></label>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px" id="floorJointNote"></div>
+        </div>
         <div style="font-size:10.5px;color:var(--muted);margin:14px 0 5px;font-weight:600;letter-spacing:.10em;text-transform:uppercase">Setout</div>
         <div class="ctrl" style="font-size:11px;color:var(--muted);margin-top:0">
           A room rarely divides by the tile. Say which wall keeps the full tile and
@@ -2803,7 +2809,7 @@ function drawWallTiling(d, ox, oy, wL, Hm, s){
         : Math.round(-bottom) + ' BELOW FFL'),
       { size:4.2, color:COL.accent, align:'right' });
     d.text(ox - 13, dy + 4,
-      `${g.full} × ${g.module.h} ${g.cut > 0.5 ? '+ ' + g.cut + ' cut ' + (g.mode === 'both' ? 'each end' : 'at ' + (g.mode === 'top' ? 'floor' : 'top')) : '· gauges full'}`,
+      `${g.full} × ${g.module.h}${g.module.joint > 0 ? ' GAUGE' : ''} ${g.cut > 0.5 ? '+ ' + g.cut + ' cut ' + (g.mode === 'both' ? 'each end' : 'at ' + (g.mode === 'top' ? 'floor' : 'top')) : '· gauges full'}`,
       { size:3.8, color:COL.muted, align:'right' });
   }
 }
@@ -3312,13 +3318,13 @@ const FLOOR_PATTERNS = {
   'blank':      { label:'Blank — no floor shown',      noFill:true, draw(){} },
   'solid':      { label:'Solid colour — no pattern',   draw(){} },
   'boards':     { label:'Timber boards',               dflt:{ size:180, size2:1800, angle:0 },
-    draw(d, r, o){ bondGrid(d, r, o.size2*o.s, o.size*o.s, 0.5, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size2*o.s, o.size*o.s, 0.5, o.angle, o.line, o.lw || LW.hairline); } },
   'boards-plain':{ label:'Timber boards — no end joints', dflt:{ size:180, angle:0 },
-    draw(d, r, o){ bandLines(d, r, o.size*o.s, o.angle + 90, o.line, LW.hairline); } },
+    draw(d, r, o){ bandLines(d, r, o.size*o.s, o.angle + 90, o.line, o.lw || LW.hairline); } },
   'herringbone':{ label:'Timber herringbone',          dflt:{ size:100, size2:500, angle:45 },
-    draw(d, r, o){ herringbonePattern(d, r, o.size2*o.s, o.size*o.s, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ herringbonePattern(d, r, o.size2*o.s, o.size*o.s, o.angle, o.line, o.lw || LW.hairline); } },
   'chevron':    { label:'Timber chevron',              dflt:{ size:110, size2:600, angle:0 },
-    draw(d, r, o){ chevronPattern(d, r, o.size2*o.s, o.size*o.s, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ chevronPattern(d, r, o.size2*o.s, o.size*o.s, o.angle, o.line, o.lw || LW.hairline); } },
   'parquet':    { label:'Parquet — basket weave',      dflt:{ size:200, angle:0 },
     draw(d, r, o){
       const sq = o.size*o.s, f = _patFrame(r, o.angle);
@@ -3327,28 +3333,28 @@ const FLOOR_PATTERNS = {
       if((i1-i0)*(j1-j0) > 20000) return;
       for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
         const u=i*sq, v=j*sq, flip=(((i+j)%2)+2)%2;
-        _framedRect(d, f, r, u, v, sq, sq, o.line, LW.hairline);
+        _framedRect(d, f, r, u, v, sq, sq, o.line, o.lw || LW.hairline);
         for(let k=1;k<=3;k++){
           const a = flip ? f.map(u + k*sq/4, v) : f.map(u, v + k*sq/4);
           const b = flip ? f.map(u + k*sq/4, v+sq) : f.map(u+sq, v + k*sq/4);
-          _cline(d, a[0],a[1], b[0],b[1], r, o.line, LW.hairline);
+          _cline(d, a[0],a[1], b[0],b[1], r, o.line, o.lw || LW.hairline);
         }
       }
     } },
   'tile-stack': { label:'Tile — stack bond',           dflt:{ size:600, size2:600, angle:0 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, o.angle, o.line, o.lw || LW.hairline); } },
   'tile-brick': { label:'Tile — running (brick) bond', dflt:{ size:600, size2:300, angle:0 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0.5, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0.5, o.angle, o.line, o.lw || LW.hairline); } },
   'tile-third': { label:'Tile — third bond',           dflt:{ size:600, size2:300, angle:0 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 1/3, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 1/3, o.angle, o.line, o.lw || LW.hairline); } },
   'tile-diag':  { label:'Tile — diagonal (45°)',       dflt:{ size:450, size2:450, angle:45 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, o.angle, o.line, o.lw || LW.hairline); } },
   'hexagon':    { label:'Hexagon tile',                dflt:{ size:200, angle:0 },
-    draw(d, r, o){ hexPattern(d, r, o.size*o.s, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ hexPattern(d, r, o.size*o.s, o.angle, o.line, o.lw || LW.hairline); } },
   'mosaic':     { label:'Mosaic / small format',       dflt:{ size:50, size2:50, angle:0 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, o.angle, o.line, o.lw || LW.hairline); } },
   'flagstone':  { label:'Stone flagging — random',     dflt:{ size:450, angle:0 },
-    draw(d, r, o){ flagstonePattern(d, r, o.size*o.s, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ flagstonePattern(d, r, o.size*o.s, o.angle, o.line, o.lw || LW.hairline); } },
   'speckle':    { label:'Polished concrete — speckle',
     draw(d, r){ concreteHatch(d, r.x, r.y, r.w, r.h); } },
   'screed':     { label:'Screed — light speckle + joints', dflt:{ size:3000, angle:0 },
@@ -3359,17 +3365,22 @@ const FLOOR_PATTERNS = {
   'carpet':     { label:'Carpet — fibre stipple',
     draw(d, r){ graniteHatch(d, r.x, r.y, r.w, r.h); } },
   'vinyl-plank':{ label:'Vinyl / laminate plank',      dflt:{ size:220, size2:1200, angle:0 },
-    draw(d, r, o){ bondGrid(d, r, o.size2*o.s, o.size*o.s, 1/3, o.angle, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size2*o.s, o.size*o.s, 1/3, o.angle, o.line, o.lw || LW.hairline); } },
   // ---- legacy aliases ----
   'h-lines':    { label:'Horizontal boards (legacy)',  hidden:true, dflt:{ size:180, angle:0 },
-    draw(d, r, o){ bandLines(d, r, o.size*o.s, 90, o.line, LW.hairline); } },
+    draw(d, r, o){ bandLines(d, r, o.size*o.s, 90, o.line, o.lw || LW.hairline); } },
   'grid':       { label:'Square tile grid (legacy)',   hidden:true, dflt:{ size:600, size2:600 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, 0, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, 0, o.line, o.lw || LW.hairline); } },
   'grid-2':     { label:'Large format grid (legacy)',  hidden:true, dflt:{ size:1200, size2:600 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, 0, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0, 0, o.line, o.lw || LW.hairline); } },
   'grid-3':     { label:'Brick-bond tile (legacy)',    hidden:true, dflt:{ size:600, size2:400 },
-    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0.5, 0, o.line, LW.hairline); } },
+    draw(d, r, o){ bondGrid(d, r, o.size*o.s, o.size2*o.s, 0.5, 0, o.line, o.lw || LW.hairline); } },
 };
+
+const GROUTED_PATTERNS = new Set(['tile-stack', 'tile-brick', 'tile-third', 'tile-diag',
+  'hexagon', 'mosaic', 'flagstone', 'grid', 'grid-2', 'grid-3']);
+const TIGHT_PATTERNS = new Set(['boards', 'boards-plain', 'parquet', 'vinyl-plank',
+  'speckle', 'screed', 'carpet', 'solid', 'blank', 'h-lines']);
 
 const FLOOR_MATERIALS = {
   'timber-boards':      { label:'Timber floorboards',            color:'#EFE0BF', hatch:'boards',      size:180, size2:1800, lineColor:'#C9A878' },
@@ -3503,6 +3514,11 @@ const state = {
              floorWastes: [],
              floor:{ material:'tile-600', colorOverride:null, hatchOverride:null,
                      jointColorOverride:null, size:null, size2:null, angle:null,
+                     // The grout joint, in millimetres. Part of the gauge, not
+                     // a drawing preference: 600 tiles at a 3 mm joint course
+                     // at 603, and a room set out at 600 is out by a joint per
+                     // tile all the way across.
+                     joint:3,
                      // Which wall gets the full tile when the room does not
                      // divide by it, per direction, plus a manual nudge.
                      gaugeX:'start', gaugeY:'start', offsetX:0, offsetY:0 } },
@@ -3515,6 +3531,9 @@ const state = {
              brand:'dekton', product:'', finish:'matt', edge:'square' },
   splashback: { type:'tile', brand:null, product:'', finish:null, colorOverride:null, hatchOverride:null,
                 height:2100, tileW:300, tileH:600, tileSized:false, bond:0.5, fullWalls:true,
+                // Grout joint in millimetres — see the floor's note above. One
+                // figure for the job: it is one bag of grout and one spacer.
+                joint:3,
                 gaugeX:'start', offsetX:0, showOnPlan:true,
                 // datum: where the tiling is set out from, mm above finished
                 // floor level. gauge: which end of the wall carries the part
@@ -5816,16 +5835,19 @@ function benchHatch(d, x, y, w, h, materialKey, hatchOverride){
       // off its own face, which is what a benchtop wants.
       const _spj = _splashDraw && state.splashback && state.splashback.jointColorOverride;
       const grout = _spj || shade(color, -0.14);
+      const t = tileModule();
+      // The joint is drawn at its own width, so widening it widens the line on
+      // the sheet rather than only moving the tiles apart.
+      const jlw = jointLW(t.joint, s);
       if(_tileSetout){
         // On an elevation the courses are set out from the job's datum, so the
         // drawing shows where the cut actually lands.
-        return tileGrid(d, x, y, w, h, s, grout, LW.hairline);
+        return tileGrid(d, x, y, w, h, s, grout, jlw);
       }
-      const t = tileModule();
       const tw = (hatch === 'tile-vstack' ? t.h : t.w) * s;
       const th = (hatch === 'tile-vstack' ? t.w : t.h) * s;
       const bond = (hatch === 'tile-brick') ? t.bond : 0;
-      return bondGrid(d, { x, y, w, h }, tw, th, bond, 0, grout, LW.hairline);
+      return bondGrid(d, { x, y, w, h }, tw, th, bond, 0, grout, jlw);
     }
     case 'stone':   return stoneHatch(d, x, y, w, h);
     case 'stone-fine':
@@ -5896,6 +5918,19 @@ function noteViewScale(view, s){
   if(s > 0 && isFinite(s)) _curScale = s;
 }
 // Tile module for the wall tiling, in real millimetres.
+// The grout joint for the wall tiling, in real millimetres. A job saved before
+// this existed has none, and gets none, so its drawing does not move.
+function tileJoint(){
+  const sp = state.splashback || {};
+  const j = +(sp.joint);
+  return isFinite(j) ? Math.min(30, Math.max(0, j)) : 0;
+}
+// The wall tiling module.
+//
+// w and h are the GAUGE — tile plus joint — because that is what every setout
+// in here divides by: courses up the wall, tiles across it, where the cut
+// lands. tileW and tileH are the tile itself, for the fields and the schedule,
+// which are answering a different question.
 function tileModule(){
   const sp = state.splashback || {};
   // A tile off the list sets the module; the fields below it still win, so a
@@ -5904,7 +5939,22 @@ function tileModule(){
   const w = (typeof sp.tileW === 'number' && sp.tileW > 0) ? sp.tileW : (def ? def.w : 300);
   const h = (typeof sp.tileH === 'number' && sp.tileH > 0) ? sp.tileH : (def ? def.h : 600);
   const b = (sp.bond === undefined || sp.bond === null) ? (def ? def.bond : 0.5) : sp.bond;
-  return { w: Math.max(20, w), h: Math.max(20, h), bond: b };
+  const tw = Math.max(20, w), th = Math.max(20, h);
+  const j = tileJoint();
+  return { w: tw + j, h: th + j, bond: b, joint: j, tileW: tw, tileH: th };
+}
+// How wide to draw a joint: its real width at the scale of the sheet, held
+// between the drawing's own hairline and its thick line. The floor is so a fine
+// joint does not vanish; the ceiling is because grout has no business being the
+// boldest line on a sheet — at 1:20 a 3 mm joint is 0.15 mm, which is wider
+// than every outline on the page.
+function jointLW(jointMm, s){
+  const w = (+jointMm || 0) * (+s || 0);
+  return Math.min(LW.thick, Math.max(LW.hairline, w));
+}
+// Said the way a tiler says it, when there is a joint to say.
+function gaugeNote(tile, joint){
+  return joint > 0 ? (tile + ' + ' + joint + ' joint') : (tile + ' tile');
 }
 // The tiling datum, in mm above finished floor level. Everything about the
 // tiling setout is measured from here, so moving it moves every course.
@@ -6544,14 +6594,38 @@ function floorSpec(){
   const key = f.hatchOverride || def.hatch || 'solid';
   const pat = floorPattern(key);
   const pd = pat.dflt || {};
+  const size  = (typeof f.size  === 'number' && f.size  > 0) ? f.size  : (def.size  || pd.size  || 180);
+  const size2 = (typeof f.size2 === 'number' && f.size2 > 0) ? f.size2 : (def.size2 || pd.size2 || 600);
+  const joint = floorJoint();
   return {
     key, pat,
     color: f.colorOverride || def.color || '#FFFFFF',
     line:  f.jointColorOverride || def.lineColor || '#A0A0A0',
-    size:  (typeof f.size  === 'number' && f.size  > 0) ? f.size  : (def.size  || pd.size  || 180),
-    size2: (typeof f.size2 === 'number' && f.size2 > 0) ? f.size2 : (def.size2 || pd.size2 || 600),
+    size, size2,
+    // What the tiles are laid at: the piece plus its joint. size stays the
+    // piece, because that is what the fields and the schedule are asking.
+    joint, gauge: size + joint, gauge2: size2 + joint,
     angle: (typeof f.angle === 'number') ? f.angle : (pd.angle || 0),
   };
+}
+// Which floors have grout in them. The pattern usually knows — a tile grid has
+// joints you fill and floorboards do not — but herringbone and chevron are
+// drawn for both timber and tile, so those are settled by the material.
+function floorGroutable(){
+  const f = state.room.floor || {};
+  const def = floorMaterial(f.material);
+  const key = f.hatchOverride || def.hatch || 'solid';
+  if(GROUTED_PATTERNS.has(key)) return true;
+  if(TIGHT_PATTERNS.has(key)) return false;
+  return /^(tile|mosaic|penny|bluestone|travertine|stone)/.test(f.material || '');
+}
+// A floor that is not grouted is laid tight, whatever number is stored against
+// it — a timber board does not take a 3 mm joint because the tiles before it
+// did. Saved jobs from before this existed have no figure and get none.
+function floorJoint(){
+  if(!floorGroutable()) return 0;
+  const j = +((state.room.floor || {}).joint);
+  return isFinite(j) ? Math.min(30, Math.max(0, j)) : 0;
 }
 // How the floor tiles gauge out across a room, in one direction.
 //   'start'  full tile at the first wall, the cut at the far one
@@ -6574,8 +6648,10 @@ function floorSetout(W, L){
   const f = state.room.floor || {};
   const spec = floorSpec();
   return {
-    x: floorGauge(W, spec.size,  f.gaugeX || 'start', f.offsetX || 0),
-    y: floorGauge(L, spec.size2, f.gaugeY || 'start', f.offsetY || 0),
+    x: floorGauge(W, spec.gauge,  f.gaugeX || 'start', f.offsetX || 0),
+    y: floorGauge(L, spec.gauge2, f.gaugeY || 'start', f.offsetY || 0),
+    joint: spec.joint,
+    tile: spec.size, tile2: spec.size2,
     angled: !!spec.angle,
   };
 }
@@ -6596,7 +6672,8 @@ function drawFloor(d, ox, oy, W, L, s, poly){
   const _set = spec.angle ? null : floorSetout(W, L);
   if(_set) _patOrigin = { x: ox + _set.x.shift * s, y: oy + _set.y.shift * s };
   try {
-    spec.pat.draw(d, rect, { s, line:spec.line, color:spec.color, size:spec.size, size2:spec.size2, angle:spec.angle });
+    spec.pat.draw(d, rect, { s, line:spec.line, color:spec.color,
+      size:spec.gauge, size2:spec.gauge2, angle:spec.angle, lw:jointLW(spec.joint, s) });
   } catch(e){ console.warn('[Bathroom] floor pattern failed', spec.key, e.message); }
   finally { _patOrigin = null; }
   d.restore();
@@ -10795,6 +10872,7 @@ function drawWallTilingOnPlan(d, plan, walls, roomObj){
       if(!(t.w > 0)) return;
       const g = tileGaugeX(len);
       const col = sp.jointColorOverride || COL.ink3;
+      const jlw = jointLW(t.joint, plan.s || 1);
       // The stretches that are actually tiled: the wall, less its openings.
       const gaps = (wall.openings || []).map(op => [op.position, op.position + op.width])
         .sort((a, b) => a[0] - b[0]);
@@ -10817,7 +10895,7 @@ function drawWallTilingOnPlan(d, plan, walls, roomObj){
           const u = g.shift + k * t.w;
           if(u <= a + 0.5 || u >= b - 0.5) continue;
           const j1 = P(u, 0), j2 = P(u, depth);
-          d.line(j1[0], j1[1], j2[0], j2[1], col, LW.hairline);
+          d.line(j1[0], j1[1], j2[0], j2[1], col, jlw);
         }
       });
     });
@@ -14987,11 +15065,19 @@ function drawSummary(d, area){
   row(2, 'Wall tiling', splashbackSpecLabel());
   {
     const _sp = state.splashback || {};
-    row(2, 'Tile module', `${_sp.tileW || 300} × ${_sp.tileH || 600} mm · ${
-      (_sp.bond === 0) ? 'stack bond' : (Math.abs((_sp.bond ?? 0.5) - 0.5) < 0.01 ? 'half brick' : 'third bond')}`);
+    // The module actually being drawn, which is not always what is typed in the
+    // fields — a tile off the list brings its own size.
+    const _tm = tileModule();
+    row(2, 'Tile module', `${_tm.tileW} × ${_tm.tileH} mm · ${
+      _tm.joint > 0 ? _tm.joint + ' mm joint · ' : 'laid tight · '}${
+      (_tm.bond === 0) ? 'stack bond' : (Math.abs((_tm.bond ?? 0.5) - 0.5) < 0.01 ? 'half brick' : 'third bond')}`);
     row(2, 'Tile line', `${tileLineY()} mm above FFL${_sp.fullWalls === false ? ' (over the vanity only)' : ' (all walls)'}`);
   }
-  row(2, 'Floor', (floorMaterial(state.room.floor.material) || {}).label || '—');
+  {
+    const _fs = floorSpec();
+    row(2, 'Floor', ((floorMaterial(state.room.floor.material) || {}).label || '—')
+      + (_fs.joint > 0 ? ' · ' + _fs.joint + ' mm joint' : ''));
+  }
 
   heading(2, 'HARDWARE');
   const _h = HANDLE_STYLES[state.handleDefault.style];
@@ -19112,6 +19198,18 @@ bindText('splashProduct', v=> state.splashback.product = v);
     renderActive();
   });
 });
+// The joint is a setout figure, not a drawing preference, so it redraws the
+// sheet and re-reads the gauge underneath the fields.
+(function(){
+  const el = document.getElementById('tileJoint');
+  if(!el) return;
+  el.addEventListener('input', ()=>{
+    const v = parseFloat(el.value);
+    if(!isFinite(v) || v < 0) return;
+    state.splashback.joint = Math.min(30, v);
+    renderActive(); renderSurfacePanel();
+  });
+})();
 (function(){
   const fw = document.getElementById('tileFullWalls');
   if(fw) fw.addEventListener('change', ()=>{ state.splashback.fullWalls = fw.checked; renderActive(); });
@@ -19559,6 +19657,7 @@ function _drawPreview(canvasId, kind, drawFn, mmAcross){
       });
     }
   };
+  bind('floorJoint',   v => state.room.floor.joint = Math.min(30, Math.max(0, v)));
   bind('floorGaugeX',  v => state.room.floor.gaugeX = v);
   bind('floorGaugeY',  v => state.room.floor.gaugeY = v);
   bind('floorOffsetX', v => state.room.floor.offsetX = v);
@@ -19669,15 +19768,18 @@ function renderFloorPanel(){
       return;
     }
     const set = floorSetout(state.room.W, state.room.L);
-    // first is the wall the setout starts from, last the far one.
-    const phrase = (g, mode, first, last)=> g.cut <= 0.5
-      ? `${g.full} × ${g.module} — exact.`
+    // first is the wall the setout starts from, last the far one. The figure
+    // quoted is the gauge — the tile plus its joint — because that is what the
+    // count of full tiles divides by.
+    const said = (g, tile)=> gaugeNote(tile, set.joint);
+    const phrase = (g, mode, first, last, tile)=> g.cut <= 0.5
+      ? `${g.full} × ${said(g, tile)} — exact.`
       : (mode === 'both'
-          ? `${g.full} × ${g.module} + ${Math.round(g.cut / 2 * 10) / 10} mm cut at ${first} and ${last}.`
-          : `${g.full} × ${g.module} + ${g.cut} mm cut at ${mode === 'end' ? first : last}.`);
+          ? `${g.full} × ${said(g, tile)} + ${Math.round(g.cut / 2 * 10) / 10} mm cut at ${first} and ${last}.`
+          : `${g.full} × ${said(g, tile)} + ${g.cut} mm cut at ${mode === 'end' ? first : last}.`);
     out.innerHTML =
-      'Across: ' + phrase(set.x, f.gaugeX || 'start', 'D', 'B') + '<br>' +
-      'Along: '  + phrase(set.y, f.gaugeY || 'start', 'A', 'C');
+      'Across: ' + phrase(set.x, f.gaugeX || 'start', 'D', 'B', set.tile) + '<br>' +
+      'Along: '  + phrase(set.y, f.gaugeY || 'start', 'A', 'C', set.tile2);
   })();
   const def = floorMaterial(f.material);
   _fillPatternSelect('floorMaterial',
@@ -19711,6 +19813,16 @@ function renderFloorPanel(){
   show('floorSizeRow',  pd.size  !== undefined);
   show('floorSize2Row', pd.size2 !== undefined);
   show('floorAngleRow', pd.angle !== undefined);
+  // Only where there is grout to set: a floorboard does not take a 3 mm joint.
+  const _grout = floorGroutable();
+  show('floorJointRow', _grout);
+  const _fj = document.getElementById('floorJoint');
+  if(_fj && document.activeElement !== _fj) setFieldValue('floorJoint', spec.joint);
+  const _fjn = document.getElementById('floorJointNote');
+  if(_fjn) _fjn.textContent = !_grout ? ''
+    : spec.joint > 0
+      ? (spec.size + ' × ' + spec.size2 + ' tile laid at ' + spec.gauge + ' × ' + spec.gauge2 + ' centres.')
+      : 'Laid tight, with no joint allowance.';
   setFieldValue('floorSize',  spec.size);  setFieldValue('floorSizeVal',  spec.size);
   setFieldValue('floorSize2', spec.size2); setFieldValue('floorSize2Val', spec.size2);
   setFieldValue('floorAngle', spec.angle); setFieldValue('floorAngleVal', spec.angle);
@@ -19720,7 +19832,8 @@ function renderFloorPanel(){
   _drawPreview('floorPreview', spec.key, (d, r, s)=>{
     if(!spec.pat.noFill) d.rect(r.x, r.y, r.w, r.h, spec.color, null);
     d.rect(r.x, r.y, r.w, r.h, null, '#C9C4B8', 0.2);
-    spec.pat.draw(d, r, { s, line:spec.line, color:spec.color, size:spec.size, size2:spec.size2, angle:spec.angle });
+    spec.pat.draw(d, r, { s, line:spec.line, color:spec.color,
+      size:spec.gauge, size2:spec.gauge2, angle:spec.angle, lw:jointLW(spec.joint, s) });
   }, across);
 }
 function renderWallPanel(){
@@ -20257,8 +20370,8 @@ function renderSurfacePanel(){
       const g = tileGauge();
       const up = g.run <= 0 ? 'Nothing to tile - the tile line is at or below where the tiling starts.'
         : g.cut <= 0.5
-          ? (g.full + ' full courses of ' + g.module.h + ' - gauges out exactly over ' + Math.round(g.run) + ' mm.')
-          : (g.full + ' full courses of ' + g.module.h + ' over ' + Math.round(g.run) + ' mm, leaving a ' + g.cut + ' mm cut'
+          ? (g.full + ' full courses of ' + gaugeNote(g.module.tileH, g.module.joint) + ' - gauges out exactly over ' + Math.round(g.run) + ' mm.')
+          : (g.full + ' full courses of ' + gaugeNote(g.module.tileH, g.module.joint) + ' over ' + Math.round(g.run) + ' mm, leaving a ' + g.cut + ' mm cut'
              + (g.mode === 'both' ? (' split as ' + Math.round(g.cut / 2 * 10) / 10 + ' mm at each end.')
                                   : (' at the ' + (g.mode === 'top' ? 'floor.' : 'top.'))));
       let across = '';
@@ -20267,8 +20380,8 @@ function renderSurfacePanel(){
         const gx = tileGaugeX(wl);
         const name = 'Across wall ' + wallLetter(room, wall.id) + ': ';
         across = (gx.cut <= 0.5)
-          ? (name + gx.full + ' full tiles of ' + gx.module.w + ' - gauges out exactly over ' + Math.round(gx.run) + ' mm.')
-          : (name + gx.full + ' full tiles of ' + gx.module.w + ' over ' + Math.round(gx.run) + ' mm, leaving a '
+          ? (name + gx.full + ' full tiles of ' + gaugeNote(gx.module.tileW, gx.module.joint) + ' - gauges out exactly over ' + Math.round(gx.run) + ' mm.')
+          : (name + gx.full + ' full tiles of ' + gaugeNote(gx.module.tileW, gx.module.joint) + ' over ' + Math.round(gx.run) + ' mm, leaving a '
              + gx.cut + ' mm cut'
              + (gx.mode === 'both' ? (' split as ' + Math.round(gx.cut / 2 * 10) / 10 + ' mm at each end.')
                                    : (' at ' + (gx.mode === 'end' ? 'the left.' : 'the right.'))));
@@ -20283,8 +20396,17 @@ function renderSurfacePanel(){
   // and sitting at 300 × 600 under a chosen mosaic they answered it wrongly.
   {
     const _m = tileModule();
-    setFieldValue('tileW', _m.w);
-    setFieldValue('tileH', _m.h);
+    setFieldValue('tileW', _m.tileW);
+    setFieldValue('tileH', _m.tileH);
+    // Not while it is being typed in: writing 0 back over "0." as the second
+    // character lands would take the rest of the number with it.
+    const _je = document.getElementById('tileJoint');
+    if(_je && document.activeElement !== _je) setFieldValue('tileJoint', _m.joint);
+    const _jn = document.getElementById('tileJointNote');
+    if(_jn) _jn.textContent = _m.joint > 0
+      ? _m.tileW + ' × ' + _m.tileH + ' tile laid at ' + _m.w + ' × ' + _m.h
+        + ' centres — every setout below is worked off that.'
+      : 'Laid tight, with no joint allowance: the setout below divides by the bare tile.';
     const bondBar = document.getElementById('tileBondBar');
     if(bondBar){
       bondBar.querySelectorAll('.pill').forEach(p=>
@@ -23597,6 +23719,14 @@ function loadDesign(snap){
   if(snap.drawStyle)     state.drawStyle     = deepClone(snap.drawStyle);
   if(snap.kick)          state.kick          = deepClone(snap.kick);
   if(snap.island)        state.island        = deepClone(snap.island);
+  // The gauge used to be the bare tile, with no joint in it. A job saved then
+  // is left that way rather than re-gauged behind its back: a sheet already
+  // issued would come back with different cuts on it. Set a joint on it and it
+  // takes one — this only decides what an untouched old job opens as.
+  if(state.splashback && typeof state.splashback.joint !== 'number') state.splashback.joint = 0;
+  if(state.room && state.room.floor && typeof state.room.floor.joint !== 'number') {
+    state.room.floor.joint = 0;
+  }
   state.measurements = snap.measurements ? deepClone(snap.measurements) : {};
   // A job saved before the tape had any settings gets the ones it was drawn
   // with, so it comes back looking the way it went in.
