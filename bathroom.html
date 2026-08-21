@@ -591,6 +591,9 @@ header .project-label .dot.dirty{background:#F7C04A}
           and <b>Width and Length become the finished, tiled clear sizes</b>, because the build-up is
           drawn outward from them. The floor is set out the same way under <b>Floor</b>, and both go on
           the <b>Wall &amp; floor details</b> sheet.
+          <br><br>On the plan the wall keeps whatever poché it has — blank stays blank, and the build-up
+          shows as the line between the lining and the frame, which is as much as 1:20 can carry. Set a
+          <b>poché pattern</b> below to see the layers in their own colours.
         </div>
         <div id="wallBuildBox" style="display:none">
           <div class="ctrl"><label>Wall</label>
@@ -4497,7 +4500,35 @@ function drawWallLayers(d, p1, p2, nx, ny, layers, s, fallbackT, fallbackCol, fa
 // perEdge[i] = { layers, total, color, hatch } for the wall on edge i. Walls
 // with no build-up get a single band of their own colour, so a plain partition
 // and a brick veneer external can sit on the same loop.
-function drawOutlineWallLayers(d, pox, poy, s, inner, perEdge){
+// Layers merged down to the bands a drawing at this scale can actually show.
+// Nothing moves: the total is the same and so is every face. What changes is
+// which boundaries get a line, and a boundary you cannot see is not a boundary,
+// it is ink.
+//
+// The band keeps the identity of the thickest layer in it, because a 96 mm band
+// of stud-and-sheet is a stud wall, not a sheet.
+const PLAN_LAYER_MIN = 0.5;          // page-mm: enough for two lines to read apart
+function readableLayers(layers, s){
+  if(!layers || layers.length < 2) return layers;
+  const min = PLAN_LAYER_MIN / Math.max(1e-6, s);
+  const fold = (band, l)=>{
+    const keep = band.t >= l.t ? band : l;
+    band.t += l.t;
+    band.color = keep.color; band.hatch = keep.hatch; band.material = keep.material;
+  };
+  const out = [];
+  for(const l of layers){
+    const prev = out[out.length - 1];
+    if(prev && l.t < min) fold(prev, l);
+    else out.push({ t:l.t, color:l.color, hatch:l.hatch, material:l.material });
+  }
+  // The band against the room has nothing before it to fold into, so it folds
+  // forward instead — which is how a 1:50 plan ends up showing one wall.
+  while(out.length > 1 && out[0].t < min) fold(out[1], out.shift());
+  return out;
+}
+
+function drawOutlineWallLayers(d, pox, poy, s, inner, perEdge, opts){
   const n = inner.length;
   const toPage = pts => pts.map(p => [pox + p.x*s, poy + p.y*s]);
   // Cumulative depth into edge i after k layers, clamped to the wall's total.
@@ -4519,7 +4550,9 @@ function drawOutlineWallLayers(d, pox, poy, s, inner, perEdge){
       if(!lay || !(lay.t > 0)) return;
       const j = (i + 1) % n;
       const quad = [from[i], from[j], to[j], to[i]];
-      if(lay.color) d.polygon(quad, lay.color, null, 0);
+      // A blank poché stays blank. The build-up shows as the line between the
+      // lining and the frame, which is how a plan says it anyway.
+      if(lay.color && !(opts && opts.noFill)) d.polygon(quad, lay.color, null, 0);
       if(lay.hatch){
         // Hatch the largest rectangle that fits inside the mitred band, so the
         // pattern never runs past the mitre into the next wall. The patterns
@@ -4539,7 +4572,11 @@ function drawOutlineWallLayers(d, pox, poy, s, inner, perEdge){
             Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), lay.hatch);
         }
       }
-      d.polygon(quad, null, COL.faint2, LW.hairline);
+      // Only the boundaries between bands, and only once each — the outer face
+      // of one band is the inner face of the next, and drawing both put two
+      // lines where the drawing wants one.
+      if(k > 0) d.line(from[i][0], from[i][1], from[j][0], from[j][1],
+        (opts && opts.noFill) ? COL.ink3 : COL.faint2, LW.hairline);
     });
   }
 }
@@ -7078,6 +7115,7 @@ function drawOutlineRoom(d, pox, poy, s, roomObj, wmat){
   const anyComposite = segs.some((sg, i)=>
     !!wallBuildOf(walls[i]) || !!compositeById((walls[i] || {}).compositeId));
   if(anyLayers || anyComposite){
+    const noFill = !!wallPattern(wmat.hatch).noFill;
     const perEdge = segs.map((sg, i)=>{
       const wl = walls[i] || {};
       const cmp = compositeById(wl.compositeId);
@@ -7087,10 +7125,10 @@ function drawOutlineRoom(d, pox, poy, s, roomObj, wmat){
       // An authored build-up is already written room face outward. Only the
       // ones that came in from a site measure need turning the right way round.
       const own = wallBuildLayers(wl);
-      const layers = own || layersInnerToOuter(compositeLayers(cmp));
+      const layers = readableLayers(own || layersInnerToOuter(compositeLayers(cmp)), s);
       return { layers, total: thick[i], color: fill.color, hatch: fill.hatch };
     });
-    drawOutlineWallLayers(d, pox, poy, s, inner, perEdge);
+    drawOutlineWallLayers(d, pox, poy, s, inner, perEdge, { noFill });
   } else if(!wallPattern(wmat.hatch).noFill){
     d.polygon(ringPolygon(outerP, innerP), wmat.color, null, 0);
   }
