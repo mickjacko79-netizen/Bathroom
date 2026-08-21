@@ -1195,6 +1195,8 @@ header .project-label .dot.dirty{background:#F7C04A}
           </div>
         </div>
         <div class="ctrl"><label>Dim text size <span class="val"><input class="valInp" id="dimTextSizeVal" type="number" min="3" max="14" step="0.5" value="6"> pt</span></label><input id="dimTextSize" type="range" min="3" max="14" step="0.5" value="6"></div>
+        <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="groutToScale" checked> <span>Draw grout joints to scale</span></label>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin:-2px 0 8px">On, the joint is drawn at the width it is, so the tile face on the sheet measures the tile. Off, every joint is a hairline — thinner than it is, and the faces correspondingly wider.</div>
         <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="showPerCabDims" checked> <span>Show per-cabinet dims</span></label>
         <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="showOverallDims" checked> <span>Show overall dims</span></label>
         <label class="toggle" style="margin:4px 0;display:flex;align-items:center;gap:6px"><input type="checkbox" id="showCabDoorSwings" checked> <span>Show cabinet door swings on plan</span></label>
@@ -2809,7 +2811,7 @@ function drawWallTiling(d, ox, oy, wL, Hm, s){
         : Math.round(-bottom) + ' BELOW FFL'),
       { size:4.2, color:COL.accent, align:'right' });
     d.text(ox - 13, dy + 4,
-      `${g.full} × ${g.module.h}${g.module.joint > 0 ? ' GAUGE' : ''} ${g.cut > 0.5 ? '+ ' + g.cut + ' cut ' + (g.mode === 'both' ? 'each end' : 'at ' + (g.mode === 'top' ? 'floor' : 'top')) : '· gauges full'}`,
+      `${g.full} × ${g.module.joint > 0 ? g.module.tileH + '+' + g.module.joint : g.module.h} ${g.cut > 0.5 ? '+ ' + g.cut + ' cut ' + (g.mode === 'both' ? 'each end' : 'at ' + (g.mode === 'top' ? 'floor' : 'top')) : '· gauges full'}`,
       { size:3.8, color:COL.muted, align:'right' });
   }
 }
@@ -3608,7 +3610,7 @@ const state = {
   viewports: {}, // per-view: {zoom, panX, panY}
   lastElev: {},  // per-view elevation transform, for dragging fittings
   library: { projects: [], currentProjectId: null, currentJobId: null, dirty: false },
-  drawStyle: { snapTol: 50, lineScale: 0.05, lineColor: '#111111', dimScale: 0.05, dimColor: '#3C3C3C', dimTextSize: 6, showPerCabDims: true, showOverallDims: true, showCabDoorSwings: true, cabDoorSwingAngle: 40, showDrawerLines: true, showHiddenCarcass: true, showHeightDims: true, showOverheadDims: true, showWallCabsOnPlan: true, showAdjoining: true },
+  drawStyle: { snapTol: 50, lineScale: 0.05, lineColor: '#111111', dimScale: 0.05, dimColor: '#3C3C3C', dimTextSize: 6, groutToScale: true, showPerCabDims: true, showOverallDims: true, showCabDoorSwings: true, cabDoorSwingAngle: 40, showDrawerLines: true, showHiddenCarcass: true, showHeightDims: true, showOverheadDims: true, showWallCabsOnPlan: true, showAdjoining: true },
   island: { enabled: false, x: 2100, y: 1500, length: 1800, depth: 600, angle: 0, mirror: false, barBack: true, overhang: 300, bench: { material: null, colorOverride: null, hatchOverride: null, thickness: null }, leftEnd: { enabled: false, thickness: 18, waterfall: false, mitre: true }, rightEnd: { enabled: false, thickness: 18, waterfall: false, mitre: true }, baseRow: [] },
 };
 // ============================================================
@@ -5943,14 +5945,20 @@ function tileModule(){
   const j = tileJoint();
   return { w: tw + j, h: th + j, bond: b, joint: j, tileW: tw, tileH: th };
 }
-// How wide to draw a joint: its real width at the scale of the sheet, held
-// between the drawing's own hairline and its thick line. The floor is so a fine
-// joint does not vanish; the ceiling is because grout has no business being the
-// boldest line on a sheet — at 1:20 a 3 mm joint is 0.15 mm, which is wider
-// than every outline on the page.
+// How wide to draw a joint: its real width at the scale of the sheet.
+//
+// Not capped, though at 1:20 a 3 mm joint is 0.15 mm and heavier than every
+// outline on the page. Capping it would draw the tile face wider than the tile
+// — the face is whatever is left between two joint lines — and a tiling
+// elevation exists to be measured off. The only floor is the hairline, so a
+// fine joint does not disappear altogether.
+//
+// "Grout to scale" off puts the old hairline back, for a sheet where the tiling
+// is background rather than the subject.
 function jointLW(jointMm, s){
+  if(state.drawStyle && state.drawStyle.groutToScale === false) return LW.hairline;
   const w = (+jointMm || 0) * (+s || 0);
-  return Math.min(LW.thick, Math.max(LW.hairline, w));
+  return Math.max(LW.hairline, w);
 }
 // Said the way a tiler says it, when there is a joint to say.
 function gaugeNote(tile, joint){
@@ -12846,8 +12854,16 @@ function drawPlan(d, area, view, opts){
     northArrow(d, area.x + area.w - 20, area.y + 32, 5);
     try { drawLightingLegend(d, area.x + 8, area.y + area.h - 62); } catch(_){}
     autoScaleBar(d, area.x + 8, area.y + area.h - 18, s);
+    // The floor is drawn to its gauge here, so the footer says what that gauge
+    // is — the tile and the joint between them, which is the pair a tiler sets
+    // out from and the one thing the drawn joint is too fine to be measured
+    // for at this scale.
+    const _fl = floorSpec();
+    const _flNote = _fl.joint > 0
+      ? `Floor ${_fl.size} × ${_fl.size2} at ${_fl.joint} mm joint`
+      : (floorMaterial(state.room.floor.material) || {}).label || '';
     d.text(area.x + 8, area.y + area.h - 6,
-      `${wmat.label} walls (${state.room.wallT} mm) · ${state.carcass.substrate} ${state.carcass.T} mm carcass · ${benchDefOf(state.bench.material).label} · Wall cabinets dashed`,
+      `${wmat.label} walls (${state.room.wallT} mm) · ${state.carcass.substrate} ${state.carcass.T} mm carcass · ${benchDefOf(state.bench.material).label} · ${_flNote} · Wall cabinets dashed`,
       { size:6, color:COL.muted, italic:true });
   }
 
@@ -20078,6 +20094,7 @@ function _wireDimToggle(id, key){
     renderActive();
   });
 })();
+_wireDimToggle('groutToScale',       'groutToScale');
 _wireDimToggle('showPerCabDims',     'showPerCabDims');
 _wireDimToggle('showOverallDims',    'showOverallDims');
 _wireDimToggle('showCabDoorSwings',  'showCabDoorSwings');
@@ -24028,6 +24045,7 @@ function loadDesign(snap){
   }
   if(state.drawStyle){
     if(state.drawStyle.dimTextSize === undefined) state.drawStyle.dimTextSize = 7;
+    if(state.drawStyle.groutToScale === undefined) state.drawStyle.groutToScale = true;
     if(state.drawStyle.showPerCabDims === undefined) state.drawStyle.showPerCabDims = true;
     if(state.drawStyle.showOverallDims === undefined) state.drawStyle.showOverallDims = true;
     if(state.drawStyle.showCabDoorSwings === undefined) state.drawStyle.showCabDoorSwings = true;
@@ -24740,6 +24758,7 @@ function syncSidebarFromState(){
   setVal('vNoteOverall', _vn.overall || '');
   setVal('vNoteSplash',  _vn.splashback || '');
   setVal('vNoteRoom',    _vn.room    || '');
+  const gts = document.getElementById('groutToScale'); if(gts) gts.checked = state.drawStyle.groutToScale !== false;
   const spc = document.getElementById('showPerCabDims'); if(spc) spc.checked = state.drawStyle.showPerCabDims !== false;
   const sod = document.getElementById('showOverallDims'); if(sod) sod.checked = state.drawStyle.showOverallDims !== false;
   const scs = document.getElementById('showCabDoorSwings'); if(scs) scs.checked = state.drawStyle.showCabDoorSwings !== false;
