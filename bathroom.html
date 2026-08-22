@@ -7273,7 +7273,7 @@ function drawOpeningOnElevation(d, op, ox, oy, Hm, s, pick){
     if(pick && pick.view){
       const _x = ox + op.position*s, _fy = oy + Hm*s;
       recordOpeningHit(pick.view, { opId: op.id, wallId: pick.wallId, roomId: pick.roomId || null,
-        bounds:[_x, _fy - _lg.openH*s, _x + _lg.openW*s, _fy] });
+        bounds:[_x, _fy - _lg.openH*s, _x + _lg.openW*s, _fy - (_lg.openBottom || 0)*s] });
     }
     drawLinkedOpeningOnElevation(d, op, _lg, ox, oy, Hm, s, false);
     return;
@@ -7530,6 +7530,26 @@ function linkedDoorById(id){
   if(!id) return null;
   return linkedDoors().find(d => d.id === id) || null;
 }
+// The window units, published by the other half of the same app. They arrive
+// in the same file and are linked the same way; only what gets drawn differs.
+function linkedWindows(){
+  const lib = _openingsLib;
+  return (lib && Array.isArray(lib.windows)) ? lib.windows : [];
+}
+function linkedWindowById(id){
+  if(!id) return null;
+  return linkedWindows().find(w => w.id === id) || null;
+}
+// A door record carries a leaf; a window record carries panels and a sill.
+// That is the whole difference, and it is worth asking rather than trusting a
+// label, because both halves of the schedule can hold a thing called a door.
+function isLinkWindow(rec){
+  return !!(rec && rec.leafW == null && (rec.kind != null || Array.isArray(rec.panels)));
+}
+// Whatever the opening points at, from either half of the schedule.
+function linkedUnitById(id){
+  return linkedDoorById(id) || linkedWindowById(id);
+}
 // A profile out of the other app's library: '67 × 12' is 67 wide and 12 thick.
 function linkProfile(kind, id){
   const lib = _openingsLib && _openingsLib.library;
@@ -7542,8 +7562,74 @@ function linkProfile(kind, id){
 }
 // Everything the drawing needs from one door, worked out once and in one place
 // so the plan and the elevation cannot disagree about where the jamb is.
+// A window unit from the other app, worked out once. Same job as linkGeom does
+// for a door: the plan and the elevation both read from here, so they cannot
+// end up disagreeing about where the mullion is.
+function linkWinGeom(win){
+  if(!win) return null;
+  const n = (v, dflt) => { const x = +v; return isFinite(x) ? x : dflt; };
+  const W = Math.max(1, n(win.width, 1200));
+  const H = Math.max(1, n(win.height, 900));
+  const sill = n(win.sillHeight, 900);
+  const ft = n(win.frameThick, 40);
+  const fJ = Math.max(0, n(win.frameThickJamb, ft));
+  const fH = Math.max(0, n(win.frameThickHead, ft));
+  const fS = Math.max(0, n(win.frameThickSill, ft));
+  const depth = Math.max(20, n(win.frameDepth, 90));
+  const raw = (Array.isArray(win.panels) && win.panels.length)
+    ? win.panels
+    : [{ type: win.type || 'fixed', handing: win.handing || '' }];
+  // Panel widths: the real figures where the other app holds them, its
+  // fractions where it does not, an equal split otherwise. Whatever they are,
+  // they are made to add up to the unit width - panels hanging over the jamb
+  // would draw a window wider than the hole it sits in.
+  let widths = raw.map(p => { const v = +p.widthMm; return (isFinite(v) && v > 0) ? v : null; });
+  if(widths.some(v => v == null)){
+    const fr = raw.map(p => { const v = +p.widthFraction; return (isFinite(v) && v > 0) ? v : 1; });
+    const tot = fr.reduce((a, b) => a + b, 0) || 1;
+    widths = fr.map(v => W * v / tot);
+  } else {
+    const tot = widths.reduce((a, b) => a + b, 0) || 1;
+    if(Math.abs(tot - W) > 0.5) widths = widths.map(v => v * W / tot);
+  }
+  const panels = [];
+  let u = 0;
+  raw.forEach((p, i)=>{
+    let t = String(p.type || 'fixed');
+    const hand = String(p.handing || win.handing || '');
+    // A bare 'casement' takes its side from the handing.
+    if(t === 'casement') t = /^L/i.test(hand) ? 'casement-l' : 'casement-r';
+    panels.push({ u0: u, w: widths[i], type: t, handing: hand, glazing: p.glazing || '' });
+    u += widths[i];
+  });
+  return {
+    isWindow: true, win, kind: String(win.kind || 'window'),
+    openW: W, winH: H, sill,
+    // The hole, read the way the elevation reads a door: openH is the head
+    // above FFL, openBottom the sill. A door is 0 at the bottom; a window
+    // is not, and everything that measures the hole has to know that.
+    openH: sill + H, openBottom: sill,
+    frameJamb: fJ, frameHead: fH, frameSill: fS,
+    sashT: Math.max(6, n(win.sashFrameThick, Math.max(12, ft * 0.6))),
+    mull: Math.max(0, n(win.mullionWidthMm, fJ)),
+    frameDepth: depth,
+    sashDepth: Math.max(10, n(win.sashDepth, depth * 0.55)),
+    sillPlanT: Math.max(0, n(win.sillPlanThickMm, fS)),
+    panels,
+    frameColor: win.frameColor || SAN.metal,
+    glazingNote: win.glazing || '',
+    frameNote: win.frame || '',
+    sillType: win.sillType || 'standard',
+    wallThickness: depth,
+    // Nothing below here belongs to a window, but the door drawing code and
+    // the editor both read these off a geom without asking what it is. They
+    // are given harmless values rather than left undefined.
+    doorType: 'window', handing: String(win.handing || ''), arch: null, skirt: null,
+  };
+}
 function linkGeom(door){
   if(!door) return null;
+  if(isLinkWindow(door)) return linkWinGeom(door);
   const n = (v, d) => { const x = +v; return isFinite(x) ? x : d; };
   const leafW = n(door.leafW, 820), leafH = n(door.leafH, 2040);
   const jambGap = n(door.jambGap, 4);
@@ -7560,6 +7646,9 @@ function linkGeom(door){
     // The hole in the wall the frame goes into.
     openW: leafW + 2*jambGap + 2*jambT,
     openH: head + jambT,
+    // A door starts at the floor. A window does not, and everything that
+    // measures the hole reads this rather than assuming.
+    openBottom: 0,
     leafBottom: botGap,
     leafTop: botGap + leafH,
     reveal: n(door.reveal, 10),
@@ -7587,7 +7676,7 @@ function linkGeom(door){
 }
 // The opening on this wall, if it is pointed at a door that is still there.
 function openingLink(op){
-  return (op && op.linkId) ? linkedDoorById(op.linkId) : null;
+  return (op && op.linkId) ? linkedUnitById(op.linkId) : null;
 }
 
 // ---- Drawing a linked opening ------------------------------------------
@@ -7596,7 +7685,142 @@ function openingLink(op){
 // the architrave standing off it by the reveal, the leaf sitting on its gaps
 // rather than filling the hole, and the two figures a carpenter actually hangs
 // a door to — the lockset centre line and the hinges.
+// How a sash opens, said the way an elevation says it: dashed lines meeting at
+// the middle of the hinged edge, an arrow for anything that slides. The apex
+// of the V is the hinge - that is the whole convention, and reading it
+// backwards is how a window gets built opening the wrong way.
+function winOpeningMark(d, type, x, y, w, h){
+  const c = COL.ink3, lw = LW.hairline;
+  const V = (ax, ay, x1, y1, x2, y2)=>{
+    d.dashed(true);
+    d.line(x1, y1, ax, ay, c, lw);
+    d.line(x2, y2, ax, ay, c, lw);
+    d.dashed(false);
+  };
+  switch(String(type || 'fixed')){
+    case 'awning':     V(x + w/2, y,     x,     y + h, x + w, y + h); break;  // hinged at the head
+    case 'hopper':     V(x + w/2, y + h, x,     y,     x + w, y);     break;  // hinged at the sill
+    case 'casement-l': V(x,       y+h/2, x + w, y,     x + w, y + h); break;
+    case 'casement-r': V(x + w,   y+h/2, x,     y,     x,     y + h); break;
+    case 'sliding-h':
+      _opArrow(d, x + w*0.28, y + h/2, x + w*0.74, y + h/2, c, lw); break;
+    case 'double-hung':
+      _opArrow(d, x + w/2, y + h*0.64, x + w/2, y + h*0.22, c, lw); break;
+    case 'pivot-v':
+      d.dashed(true); d.line(x + w/2, y, x + w/2, y + h, c, lw); d.dashed(false);
+      _opArrow(d, x + w*0.60, y + h/2, x + w*0.86, y + h/2, c, lw);
+      _opArrow(d, x + w*0.40, y + h/2, x + w*0.14, y + h/2, c, lw); break;
+    case 'pivot-h':
+      d.dashed(true); d.line(x, y + h/2, x + w, y + h/2, c, lw); d.dashed(false);
+      _opArrow(d, x + w/2, y + h*0.60, x + w/2, y + h*0.86, c, lw);
+      _opArrow(d, x + w/2, y + h*0.40, x + w/2, y + h*0.14, c, lw); break;
+    default: break;                       // fixed, louvre, fanlight - nothing opens
+  }
+}
+// The window on an elevation: the outer frame as a real section with its own
+// head, sill and jamb thicknesses, a mullion between each pair of panels, a
+// sash frame around every panel that opens, and the mark that says how.
+function drawLinkedWindowOnElevation(d, op, g, ox, oy, Hm, s, sel){
+  const x = ox + op.position*s;
+  const floorY = oy + Hm*s;
+  const Y = h => floorY - h*s;
+  const col = COL.ink, thin = LW.thin, hair = LW.hairline;
+  const top = Y(g.openH), bot = Y(g.sill);
+  const W = g.openW*s, H = g.winH*s;
+  const fj = g.frameJamb*s, fh = g.frameHead*s, fs = g.frameSill*s, mw = g.mull*s;
+  const fill = g.frameColor || SAN.metal;
+  d.rect(x, top, W, H, SAN.glass, col, thin);
+  d.rect(x,          top,      fj, H,  fill, col, hair);
+  d.rect(x + W - fj, top,      fj, H,  fill, col, hair);
+  d.rect(x,          top,      W,  fh, fill, col, hair);
+  d.rect(x,          bot - fs, W,  fs, fill, col, hair);
+  const last = g.panels.length - 1;
+  g.panels.forEach((p, i)=>{
+    const px = x + p.u0*s, pw = p.w*s;
+    if(i > 0) d.rect(px - mw/2, top, mw, H, fill, col, hair);
+    const left  = (i === 0)    ? fj : mw/2;
+    const right = (i === last) ? fj : mw/2;
+    const sx = px + left, sy = top + fh;
+    const sw = pw - left - right, sh = H - fh - fs;
+    if(!(sw > 0) || !(sh > 0)) return;
+    const t = p.type;
+    if(t === 'louvre'){
+      // Blades across the opening, at a nominal 150 pitch.
+      for(let yy = sy + 150*s; yy < sy + sh - 0.4; yy += 150*s)
+        d.line(sx, yy, sx + sw, yy, SAN.glassLine, hair);
+    } else if(t !== 'fixed' && t !== 'fixed-fanlight'){
+      // An operable sash carries its own frame inside the opening, and the
+      // glass sits inside that - not hard against the jamb.
+      const st = Math.min(g.sashT*s, Math.min(sw, sh)/2.5);
+      d.rect(sx, sy, sw, sh, fill, col, hair);
+      d.rect(sx + st, sy + st, sw - 2*st, sh - 2*st, SAN.glass, SAN.glassLine, hair);
+    }
+    winOpeningMark(d, t, sx, sy, sw, sh);
+  });
+  if(sel) d.rect(x, top, W, H, null, COL.selected, LW.medium);
+  d.text(x + W/2, top - 3, (op.linkId || '') + (g.win.location ? ' \u00B7 ' + g.win.location : ''),
+    { align:'center', size:4, color:COL.muted, italic:true });
+}
+// The same window in plan: the frame set in the wall at its own depth, the
+// mullions between the panels, the glass line through the middle, and the
+// sash swung open where that is something you can see from above.
+function drawLinkedWindowOnPlan(d, wallId, op, g, plan, wallT){
+  const u1 = op.position, u2 = u1 + g.openW;
+  const P = (u, v) => planMap(wallId, u, v, plan);
+  const fill = g.frameColor || SAN.metal;
+  // The wall poche is cut away through the opening.
+  d.polygon([P(u1, -wallT), P(u2, -wallT), P(u2, 0), P(u1, 0)], '#FFFFFF', null);
+  // The frame sits centred in the wall, or takes the whole thickness when it
+  // is the deeper of the two.
+  const dep = Math.min(g.frameDepth, wallT);
+  const v0 = -(wallT - dep)/2, v1 = v0 - dep;
+  d.polygon([P(u1, v0), P(u1 + g.frameJamb, v0), P(u1 + g.frameJamb, v1), P(u1, v1)], fill, COL.ink2, LW.hairline);
+  d.polygon([P(u2 - g.frameJamb, v0), P(u2, v0), P(u2, v1), P(u2 - g.frameJamb, v1)], fill, COL.ink2, LW.hairline);
+  const gv = (v0 + v1)/2;
+  const last = g.panels.length - 1;
+  g.panels.forEach((p, i)=>{
+    const a = u1 + p.u0 + ((i === 0)    ? g.frameJamb : g.mull/2);
+    const b = u1 + p.u0 + p.w - ((i === last) ? g.frameJamb : g.mull/2);
+    if(i > 0){
+      const m0 = u1 + p.u0 - g.mull/2;
+      d.polygon([P(m0, v0), P(m0 + g.mull, v0), P(m0 + g.mull, v1), P(m0, v1)], fill, COL.ink2, LW.hairline);
+    }
+    if(!(b > a)) return;
+    d.line.apply(d, P(a, gv).concat(P(b, gv)).concat([SAN.glassLine, LW.thin]));
+    const t = p.type, len = b - a;
+    if(t === 'casement-l' || t === 'casement-r'){
+      // Open at ninety, hinged on the outside face, with the arc back to shut.
+      const left = (t === 'casement-l');
+      const hu = left ? a : b, dir = left ? 1 : -1;
+      const st = Math.min(g.sashDepth, len/2);
+      const pt = (along, out) => P(hu + dir*along, v1 - out);
+      d.polygon([pt(0, 0), pt(st, 0), pt(st, len), pt(0, len)], '#FFFFFF', COL.ink, LW.thin);
+      const pts = [];
+      for(let k = 0; k <= 12; k++){
+        const th = (k/12) * (Math.PI/2);
+        pts.push(P(hu + dir*len*Math.cos(th), v1 - len*Math.sin(th)));
+      }
+      d.dashed(true);
+      for(let k = 1; k < pts.length; k++) d.line(pts[k-1][0], pts[k-1][1], pts[k][0], pts[k][1], COL.ink3, LW.hairline);
+      d.dashed(false);
+    } else if(t === 'sliding-h'){
+      const c0 = P(a + len*0.18, gv), c1 = P(b - len*0.18, gv);
+      _opArrow(d, c0[0], c0[1], c1[0], c1[1], COL.ink3, LW.hairline);
+    }
+  });
+  // The sill sits below the cut, so it is shown dashed at the depth it runs to.
+  // It is not clipped to the wall: a projecting sill is deeper than the wall on
+  // purpose, and clamping it flush would draw the one thing about it that
+  // matters as though it were not there.
+  if(g.sillPlanT > 0){
+    const sv = v1 + g.sillPlanT;
+    d.dashed(true);
+    d.line.apply(d, P(u1, sv).concat(P(u2, sv)).concat([COL.ink3, LW.hairline]));
+    d.dashed(false);
+  }
+}
 function drawLinkedOpeningOnElevation(d, op, g, ox, oy, Hm, s, sel){
+  if(g && g.isWindow) return drawLinkedWindowOnElevation(d, op, g, ox, oy, Hm, s, sel);
   const u = op.position, W = g.openW;
   const x = ox + u*s;
   const floorY = oy + Hm*s;
@@ -7654,6 +7878,7 @@ function drawLinkedOpeningOnElevation(d, op, g, ox, oy, Hm, s, sel){
 // In plan the same door is the jamb lining, the architrave either side, and the
 // leaf swung off its hinge edge.
 function drawLinkedOpeningOnPlan(d, wallId, op, g, plan, wallT){
+  if(g && g.isWindow) return drawLinkedWindowOnPlan(d, wallId, op, g, plan, wallT);
   const u1 = op.position, u2 = u1 + g.openW;
   const P = (u, v) => planMap(wallId, u, v, plan);
   const jt = g.jambT;
@@ -16159,7 +16384,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.38.1';
+const APP_VERSION = '1.39.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -19373,17 +19598,33 @@ function renderOpeningEditor(op, wall){
   // from the other app and the fields below it go quiet - editing a width here
   // when the door says otherwise is how two drawings of one door end up
   // disagreeing, and the door is the one that gets built.
-  if(linkedDoors().length || op.linkId){
+  if(linkedDoors().length || linkedWindows().length || op.linkId){
     editor.appendChild(el('h3', {}, 'Linked opening'));
     const sel = el('select', {});
     sel.appendChild(el('option', { value:'' }, '(not linked — drawn from the type below)'));
-    linkedDoors().forEach(dr=>{
-      const o = el('option', { value:dr.id },
-        dr.id + ' · ' + (dr.room || 'no room') + ' · ' + (dr.leafW||'?') + ' × ' + (dr.leafH||'?') + ' · ' + (dr.doorType||''));
-      if(op.linkId === dr.id) o.setAttribute('selected','');
-      sel.appendChild(o);
-    });
-    if(op.linkId && !linkedDoorById(op.linkId)){
+    if(linkedDoors().length){
+      const grp = el('optgroup', { label:'Internal doors' });
+      linkedDoors().forEach(dr=>{
+        const o = el('option', { value:dr.id },
+          dr.id + ' · ' + (dr.room || 'no room') + ' · ' + (dr.leafW||'?') + ' × ' + (dr.leafH||'?') + ' · ' + (dr.doorType||''));
+        if(op.linkId === dr.id) o.setAttribute('selected','');
+        grp.appendChild(o);
+      });
+      sel.appendChild(grp);
+    }
+    if(linkedWindows().length){
+      const grp = el('optgroup', { label:'Windows and external doors' });
+      linkedWindows().forEach(wn=>{
+        const o = el('option', { value:wn.id },
+          (wn.name || wn.id) + ' · ' + (wn.location || 'no room') + ' · ' +
+          (wn.width||'?') + ' × ' + (wn.height||'?') +
+          ' · sill ' + (wn.sillHeight == null ? '?' : wn.sillHeight));
+        if(op.linkId === wn.id) o.setAttribute('selected','');
+        grp.appendChild(o);
+      });
+      sel.appendChild(grp);
+    }
+    if(op.linkId && !linkedUnitById(op.linkId)){
       const o = el('option', { value:op.linkId }, op.linkId + ' — not in the published schedule');
       o.setAttribute('selected',''); sel.appendChild(o);
     }
@@ -19393,13 +19634,26 @@ function renderOpeningEditor(op, wall){
       // Take the hole's size from the door, so the wall it is cut into agrees
       // with it and the dimension chain reads the same figure.
       const g = linkGeom(openingLink(op));
-      if(g){ op.width = Math.round(g.openW); op.headH = Math.round(g.openH); op.sillH = 0; }
+      if(g){ op.width = Math.round(g.openW); op.headH = Math.round(g.openH);
+             op.sillH = Math.round(g.openBottom || 0); }
       scheduleAutosave();
       renderOpeningEditor(op, wall); renderCabinetList(); renderActive(); syncOpeningsPanel();
     });
     editor.appendChild(el('div', { class:'ctrl' }, sel));
     const g = linkGeom(openingLink(op));
-    if(g){
+    if(g && g.isWindow){
+      const kinds = g.panels.map(p => p.type).filter((v, i, a) => a.indexOf(v) === i).join(', ');
+      editor.appendChild(el('div', { class:'ctrl', style:'font-size:11px;color:var(--muted);line-height:1.55;margin-top:-4px' },
+        'Unit ' + Math.round(g.openW) + ' × ' + Math.round(g.winH) +
+        ' · sill ' + Math.round(g.sill) + ' · head ' + Math.round(g.openH) + ' above FFL' +
+        ' · ' + g.panels.length + ' panel' + (g.panels.length === 1 ? '' : 's') + ' (' + kinds + ')' +
+        ' · frame ' + g.frameNote + ' ' + Math.round(g.frameJamb) + ' jamb / ' +
+        Math.round(g.frameHead) + ' head / ' + Math.round(g.frameSill) + ' sill, ' +
+        Math.round(g.frameDepth) + ' deep' +
+        (g.glazingNote ? ' · ' + g.glazingNote : '')));
+      editor.appendChild(el('div', { class:'ctrl', style:'font-size:11px;color:var(--muted);margin-top:-6px;font-style:italic' },
+        'Size and detail come from that window. Change them there and this follows.'));
+    } else if(g){
       editor.appendChild(el('div', { class:'ctrl', style:'font-size:11px;color:var(--muted);line-height:1.55;margin-top:-4px' },
         'Opening ' + Math.round(g.openW) + ' × ' + Math.round(g.openH) +
         ' · leaf ' + g.leafW + ' × ' + g.leafH + ' × ' + g.leafT +
@@ -24224,26 +24478,33 @@ async function refreshOpeningsLink(){
 function syncOpeningsPanel(){
   const host = document.getElementById('linkStatus');
   if(!host) return;
-  const m = _openingsMeta, n = linkedDoors().length;
+  const m = _openingsMeta, n = linkedDoors().length + linkedWindows().length;
   const when = m.when ? new Date(m.when).toLocaleString() : '';
   let msg;
   if(m.state === 'ok')            msg = n + ' opening' + (n === 1 ? '' : 's') + ' published' + (when ? ', ' + when : '') + '.';
-  else if(m.state === 'missing')  msg = 'Nothing published yet. Open the Window, Door &amp; Wall Composite Builder, go to the internal door schedule and save — it publishes as you work.';
+  else if(m.state === 'missing')  msg = 'Nothing published yet. Open the Window, Door &amp; Wall Composite Builder — the window units and the internal door schedule both publish as you work.';
   else if(m.state === 'error')    msg = 'The published file could not be read: ' + m.error;
   else                            msg = 'Only the desktop app can reach the published schedule.';
   host.innerHTML = msg;
   const list = document.getElementById('linkList');
   if(list){
     list.innerHTML = '';
-    linkedDoors().forEach(dr => {
-      const used = (allWallsEverywhere() || []).some(w => (w.openings||[]).some(o => o.linkId === dr.id));
-      const row = el('div', { class:'m-row', title: used ? 'Used on this drawing' : 'Not on this drawing yet' },
+    const onDrawing = id => (allWallsEverywhere() || [])
+      .some(w => (w.openings||[]).some(o => o.linkId === id));
+    const row = (id, label, note)=>{
+      const used = onDrawing(id);
+      list.appendChild(el('div', { class:'m-row', title: used ? 'Used on this drawing' : 'Not on this drawing yet' },
         el('span', { class:'sw-dot', style:'background:' + (used ? 'var(--brand)' : 'var(--border)') }),
-        el('span', {}, dr.id + '  ' + (dr.room || '') + '  ·  ' + (dr.leafW || '?') + ' × ' + (dr.leafH || '?')),
-        el('span', { style:'font-size:11px;color:var(--muted)' }, String(dr.doorType || '')));
-      list.appendChild(row);
-    });
-    if(!linkedDoors().length)
+        el('span', {}, label),
+        el('span', { style:'font-size:11px;color:var(--muted)' }, note)));
+    };
+    linkedDoors().forEach(dr => row(dr.id,
+      dr.id + '  ' + (dr.room || '') + '  ·  ' + (dr.leafW || '?') + ' × ' + (dr.leafH || '?'),
+      String(dr.doorType || '')));
+    linkedWindows().forEach(wn => row(wn.id,
+      (wn.name || wn.id) + '  ' + (wn.location || '') + '  ·  ' + (wn.width || '?') + ' × ' + (wn.height || '?'),
+      (wn.sillHeight == null ? '' : 'sill ' + wn.sillHeight)));
+    if(!n)
       list.appendChild(el('div', { style:'font-size:11px;color:var(--muted);margin-top:6px' }, 'No openings to link to.'));
   }
 }
