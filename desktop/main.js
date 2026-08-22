@@ -16,6 +16,11 @@ const chat = require('./chat');
 const APP_ID = 'com.joinerystudio.bathroom';
 const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
 const STATE_FILE = path.join(app.getPath('userData'), 'window-state.json');
+/* The openings library, published by the Window, Door & Wall Composite
+   Builder. Two desktop apps cannot see each other's storage, so they meet at
+   a file in the roaming profile. This app only ever reads it - the schedule
+   is authored over there and nothing here should be able to change it.  */
+const LINK_FILE  = path.join(app.getPath('appData'), 'DrawSpec', 'openings.json');
 
 // Where bathroom.html lives in a checkout: the root of the repo this shell sits
 // in. Two ways to get there, because __dirname points inside app.asar once the
@@ -206,6 +211,49 @@ function chatFor() {
     });
   }
   return chatSession;
+}
+
+/* ------------------------------------------------------------
+   Reading the openings library, and noticing when it changes.
+
+   Watched on the FOLDER rather than the file: the publisher writes
+   to a temp name and renames over the top, and a watch on the file
+   itself follows the old inode and goes silent after the first
+   publish. Coalesced, because one save can produce several events.  */
+function readOpeningsLink() {
+  try {
+    if (!fs.existsSync(LINK_FILE)) return { ok: true, found: false, path: LINK_FILE };
+    const raw = fs.readFileSync(LINK_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    return { ok: true, found: true, path: LINK_FILE, data,
+             mtime: fs.statSync(LINK_FILE).mtime.toISOString() };
+  } catch (err) {
+    return { ok: false, found: true, path: LINK_FILE, error: String((err && err.message) || err) };
+  }
+}
+ipcMain.handle('openings:read', () => readOpeningsLink());
+ipcMain.handle('openings:where', () => LINK_FILE);
+ipcMain.handle('openings:reveal', async () => {
+  try { await shell.openPath(path.dirname(LINK_FILE)); return { ok: true }; }
+  catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+});
+let _linkWatcher = null, _linkTimer = null;
+function watchOpeningsLink() {
+  if (_linkWatcher) return;
+  const dir = path.dirname(LINK_FILE);
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  try {
+    _linkWatcher = fs.watch(dir, (_evt, name) => {
+      if (name && name !== path.basename(LINK_FILE)) return;
+      clearTimeout(_linkTimer);
+      _linkTimer = setTimeout(() => {
+        const payload = readOpeningsLink();
+        BrowserWindow.getAllWindows().forEach(w => {
+          try { w.webContents.send('openings:changed', payload); } catch (_) {}
+        });
+      }, 250);
+    });
+  } catch (_) { /* no watch is survivable - the panel still has Refresh */ }
 }
 
 ipcMain.handle('chat:status', () => chatFor().status());
@@ -631,6 +679,7 @@ if (!single) {
     createWindow();
     startClaudeBridge();
     startSiteMeasureBridge();
+    watchOpeningsLink();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

@@ -511,6 +511,17 @@ header .project-label .dot.dirty{background:#F7C04A}
       </div>
 
       <div class="group">
+        <h2>Linked openings</h2>
+        <div class="ctrl" style="font-size:11px;color:var(--muted);margin-bottom:6px">Doors authored in the Window, Door &amp; Wall Composite Builder. Point an opening at one in its editor and it is drawn from that door&rsquo;s own jamb, architrave, reveal, gaps and hardware &mdash; and follows it when it changes.</div>
+        <div class="ctrl" style="font-size:11px;color:var(--muted)" id="linkStatus">&mdash;</div>
+        <div class="ctrl" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+          <button id="linkRefresh" class="btn small" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Refresh</button>
+          <button id="linkReveal" class="btn small" style="padding:6px 10px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Show the file</button>
+        </div>
+        <div class="cab-list" id="linkList"></div>
+      </div>
+
+      <div class="group">
         <h2>Callouts</h2>
         <div class="ctrl" style="display:flex;gap:6px;flex-wrap:wrap">
           <button id="calloutAdd" class="btn small" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:#fff;cursor:pointer">Add a callout</button>
@@ -7255,6 +7266,18 @@ function _opArrow(d, x1, y1, x2, y2, color, lw){
   d.line(x2, y2, x2 - ux*k + uy*k*0.55, y2 - uy*k - ux*k*0.55, color, lw);
 }
 function drawOpeningOnElevation(d, op, ox, oy, Hm, s, pick){
+  // Pointed at a door in the other app? Then draw that door, with everything
+  // it knows about itself, rather than this app's stand-in for one.
+  const _lg = linkGeom(openingLink(op));
+  if(_lg){
+    if(pick && pick.view){
+      const _x = ox + op.position*s, _fy = oy + Hm*s;
+      recordOpeningHit(pick.view, { opId: op.id, wallId: pick.wallId, roomId: pick.roomId || null,
+        bounds:[_x, _fy - _lg.openH*s, _x + _lg.openW*s, _fy] });
+    }
+    drawLinkedOpeningOnElevation(d, op, _lg, ox, oy, Hm, s, false);
+    return;
+  }
   const def = openingDef(op.type);
   const isWin = def.kind === 'window';
   const head = op.headH ?? def.head;
@@ -7477,7 +7500,214 @@ function _planSlideArrow(d, wallId, plan, uA, uB, v, color){
 
 // Draw any opening on the floor plan: cut the wall poché away, line the reveal,
 // then add the symbol that identifies how the opening operates.
+// ============================================================
+// THE OPENINGS LINK — doors authored next door, drawn here
+// ============================================================
+// A bathroom drawing has to show the door properly: the jamb, the architrave,
+// the reveal, the gaps around the leaf, where the lockset and the hinges land.
+// All of that is already decided in the Window, Door & Wall Composite Builder,
+// and none of it was reaching this app — an opening here carried a width, a
+// head, a sill and a swing, and was drawn from a generic symbol.
+//
+// So the two apps meet at a file the other one publishes, and an opening on a
+// wall can be pointed at a door in it. Linked, the opening takes its size from
+// the door and is drawn from the door's own numbers. The link is live: the
+// other app saves, the file changes, and the drawing follows without anyone
+// pressing anything.
+//
+// The library is never saved into the job. It belongs to the other app, and a
+// stale copy carried around inside a drawing is exactly the thing this is meant
+// to stop. Only the id of the door is kept.
+let _openingsLib = null;         // the published payload, or null
+let _openingsMeta = { state:'unknown', path:'', when:'', error:'' };
+
+function openingsLibrary(){ return _openingsLib; }
+function linkedDoors(){
+  const lib = _openingsLib;
+  return (lib && Array.isArray(lib.doors)) ? lib.doors : [];
+}
+function linkedDoorById(id){
+  if(!id) return null;
+  return linkedDoors().find(d => d.id === id) || null;
+}
+// A profile out of the other app's library: '67 × 12' is 67 wide and 12 thick.
+function linkProfile(kind, id){
+  const lib = _openingsLib && _openingsLib.library;
+  const arr = (lib && lib[kind]) || [];
+  const rec = arr.find(x => x.id === id);
+  if(!rec) return null;
+  const m = String(rec.section || '').match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i);
+  return { id: rec.id, name: rec.name,
+           w: m ? parseFloat(m[1]) : 0, t: m ? parseFloat(m[2]) : 0 };
+}
+// Everything the drawing needs from one door, worked out once and in one place
+// so the plan and the elevation cannot disagree about where the jamb is.
+function linkGeom(door){
+  if(!door) return null;
+  const n = (v, d) => { const x = +v; return isFinite(x) ? x : d; };
+  const leafW = n(door.leafW, 820), leafH = n(door.leafH, 2040);
+  const jambGap = n(door.jambGap, 4);
+  const jambT   = n(door.jambThickness, 25);      // into the opening
+  const jambS   = n(door.jambSection, 138);       // across the wall
+  const topGap  = n(door.topGap, 0);
+  const botGap  = n(door.bottomGap, 10);
+  const head    = n(door.headHeight, leafH + botGap + topGap);
+  const arch    = linkProfile('architraves', door.architrave);
+  const skirt   = linkProfile('skirtings', door.skirting);
+  return {
+    door, leafW, leafH, leafT: n(door.leafT, 35),
+    jambGap, jambT, jambS, topGap, botGap, head,
+    // The hole in the wall the frame goes into.
+    openW: leafW + 2*jambGap + 2*jambT,
+    openH: head + jambT,
+    leafBottom: botGap,
+    leafTop: botGap + leafH,
+    reveal: n(door.reveal, 10),
+    locksetCL: n(door.locksetCL, 1000),
+    hingeTopFromHead: n(door.hingeTopFromHead, 200),
+    hingeBottomFromFloor: n(door.hingeBottomFromFloor, 230),
+    hinges: (function(){
+      const lib = _openingsLib && _openingsLib.library;
+      const hw = ((lib && lib.hardware) || []).find(h => h.id === door.hardwareSet);
+      return hw ? n(hw.hinges, 3) : 3;
+    })(),
+    hardware: (function(){
+      const lib = _openingsLib && _openingsLib.library;
+      return ((lib && lib.hardware) || []).find(h => h.id === door.hardwareSet) || null;
+    })(),
+    arch, skirt,
+    handing: String(door.handing || 'RH-in'),
+    doorType: String(door.doorType || 'hinged'),
+    wallThickness: n(door.wallThickness, 90),
+  };
+}
+// The opening on this wall, if it is pointed at a door that is still there.
+function openingLink(op){
+  return (op && op.linkId) ? linkedDoorById(op.linkId) : null;
+}
+
+// ---- Drawing a linked opening ------------------------------------------
+// The generic symbol draws a frame and a leaf and stops there. With a door
+// behind it there is more to say and it is all worth saying: the jamb lining,
+// the architrave standing off it by the reveal, the leaf sitting on its gaps
+// rather than filling the hole, and the two figures a carpenter actually hangs
+// a door to — the lockset centre line and the hinges.
+function drawLinkedOpeningOnElevation(d, op, g, ox, oy, Hm, s, sel){
+  const u = op.position, W = g.openW;
+  const x = ox + u*s;
+  const floorY = oy + Hm*s;
+  const Y = h => floorY - h*s;                       // height above FFL to page
+  const col = COL.ink, thin = LW.thin, hair = LW.hairline;
+
+  // The hole: jamb linings each side and the head over.
+  d.rect(x, Y(g.openH), W*s, (g.openH)*s, '#FFFFFF', col, thin);
+  const jt = g.jambT*s;
+  d.rect(x,             Y(g.head), jt, g.head*s, SAN.metal, col, hair);
+  d.rect(x + W*s - jt,  Y(g.head), jt, g.head*s, SAN.metal, col, hair);
+  d.rect(x, Y(g.openH), W*s, jt, SAN.metal, col, hair);
+
+  // The architrave, set back from the jamb face by the reveal.
+  if(g.arch && g.arch.w > 0){
+    const aw = g.arch.w*s, rev = g.reveal*s;
+    const aOut = x - aw + rev, aIn = x + W*s - rev;
+    const aTop = Y(g.openH) - aw + rev;
+    d.rect(aOut, aTop, aw, (floorY - aTop), null, COL.ink2, hair);
+    d.rect(aIn,  aTop, aw, (floorY - aTop), null, COL.ink2, hair);
+    d.rect(aOut, aTop, (aIn + aw) - aOut, aw, null, COL.ink2, hair);
+  }
+
+  // The leaf, on its gaps: it does not fill the hole and should not look as
+  // though it does.
+  const lx = x + (g.jambT + g.jambGap)*s;
+  const lw = g.leafW*s;
+  const lTop = Y(g.leafTop), lBot = Y(g.leafBottom);
+  d.rect(lx, lTop, lw, lBot - lTop, '#FFFFFF', col, thin);
+  if(sel) d.rect(lx, lTop, lw, lBot - lTop, null, COL.selected, LW.medium);
+
+  // Which edge it is hung on, from the handing the other app holds.
+  const hingeLeft = /^LH/.test(g.handing);
+  const hx = hingeLeft ? lx : (lx + lw);
+  // Hinges, at the figures they are set out to.
+  if(g.doorType === 'hinged' || g.doorType === 'french' || g.doorType === 'pivot'){
+    const n = Math.max(0, g.hinges|0);
+    const top = g.leafTop - g.hingeTopFromHead;
+    const bot = g.hingeBottomFromFloor;
+    for(let i = 0; i < n; i++){
+      const h = (n === 1) ? top : (top + (bot - top) * (i/(n-1)));
+      const hy = Y(h), e = hingeLeft ? 1 : -1;
+      d.rect(hx, hy - 50*s, e*22*s, 100*s, SAN.metal, COL.ink2, hair);
+    }
+    // And the lockset, on the other edge.
+    const kx = hingeLeft ? (lx + lw) : lx;
+    const ky = Y(g.locksetCL), e2 = hingeLeft ? -1 : 1;
+    d.circle(kx + e2*32*s, ky, 11*s, SAN.metal, COL.ink2, hair);
+    d.line(kx, ky - 55*s, kx, ky + 55*s, COL.ink3, hair);
+  }
+  // What it is, said once, small.
+  d.text(x + W*s/2, Y(g.openH) - 3, (op.linkId || '') + (g.door.room ? ' · ' + g.door.room : ''),
+    { align:'center', size:4, color:COL.muted, italic:true });
+}
+// In plan the same door is the jamb lining, the architrave either side, and the
+// leaf swung off its hinge edge.
+function drawLinkedOpeningOnPlan(d, wallId, op, g, plan, wallT){
+  const u1 = op.position, u2 = u1 + g.openW;
+  const P = (u, v) => planMap(wallId, u, v, plan);
+  const jt = g.jambT;
+  // The reveal is white: the wall poché is cut away through the opening.
+  d.polygon([P(u1, -wallT), P(u2, -wallT), P(u2, 0), P(u1, 0)], '#FFFFFF', null);
+  // Jamb linings on both faces of the hole.
+  d.polygon([P(u1, -wallT), P(u1 + jt, -wallT), P(u1 + jt, 0), P(u1, 0)], SAN.metal, COL.ink2, LW.hairline);
+  d.polygon([P(u2 - jt, -wallT), P(u2, -wallT), P(u2, 0), P(u2 - jt, 0)], SAN.metal, COL.ink2, LW.hairline);
+  // Architrave, standing off both faces of the wall.
+  if(g.arch && g.arch.t > 0){
+    const at = g.arch.t, aw = g.arch.w, rev = g.reveal;
+    [[0, at], [-wallT, -wallT - at]].forEach(([v0, v1])=>{
+      d.polygon([P(u1 - aw + rev, v0), P(u1 + rev, v0), P(u1 + rev, v1), P(u1 - aw + rev, v1)],
+        null, COL.ink2, LW.hairline);
+      d.polygon([P(u2 - rev, v0), P(u2 + aw - rev, v0), P(u2 + aw - rev, v1), P(u2 - rev, v1)],
+        null, COL.ink2, LW.hairline);
+    });
+  }
+  // The leaf, and the arc it sweeps.
+  const hingeLeft = /^LH/.test(g.handing);
+  const outward = /out$/.test(g.handing);
+  const lu = hingeLeft ? (u1 + jt + g.jambGap) : (u2 - jt - g.jambGap);
+  const dir = hingeLeft ? 1 : -1;
+  const side = outward ? -1 : 1;                    // into the room, or out of it
+  if(g.doorType === 'sliding' || g.doorType === 'double-slider' || g.doorType === 'barn'){
+    // A slider stays in the wall: draw the leaf parked beside the opening.
+    const pu = hingeLeft ? (u1 - g.leafW) : (u2 + g.leafW);
+    d.line(...P(Math.min(u1, pu), side*40).concat(P(Math.max(u2, pu), side*40)), COL.ink3, LW.hairline);
+    d.polygon([P(u1, side*10), P(u2, side*10), P(u2, side*10 + g.leafT*side), P(u1, side*10 + g.leafT*side)],
+      '#FFFFFF', COL.ink, LW.thin);
+  } else {
+    const tip = lu + dir*g.leafW;
+    const a = P(lu, 0), b = P(tip, 0), c = P(lu, side*g.leafW);
+    d.polygon([a, P(lu, side*g.leafT), P(tip, side*g.leafT), b], '#FFFFFF', COL.ink, LW.thin);
+    // The swing, drawn as the quarter circle it is.
+    const pts = [];
+    for(let k = 0; k <= 12; k++){
+      const t = (k/12) * (Math.PI/2);
+      pts.push(P(lu + dir*g.leafW*Math.cos(t), side*g.leafW*Math.sin(t)));
+    }
+    d.dashed(true);
+    for(let k = 1; k < pts.length; k++) d.line(pts[k-1][0], pts[k-1][1], pts[k][0], pts[k][1], COL.ink3, LW.hairline);
+    d.dashed(false);
+  }
+}
+
 function drawOpeningOnPlan(d, wallId, op, plan, wallT){
+  const _lg = linkGeom(openingLink(op));
+  if(_lg){
+    if(state.ui && state.ui.view){
+      const a = planMap(wallId, op.position, 0, plan), b = planMap(wallId, op.position + _lg.openW, -wallT, plan);
+      const xs=[a[0],b[0]], ys=[a[1],b[1]], pad=1.6;
+      recordOpeningHit(state.ui.view, { opId: op.id, wallId, roomId: (op.__srcRoomId || null),
+        bounds:[Math.min(...xs)-pad, Math.min(...ys)-pad, Math.max(...xs)+pad, Math.max(...ys)+pad] });
+    }
+    drawLinkedOpeningOnPlan(d, wallId, op, _lg, plan, wallT);
+    return;
+  }
   const def = openingDef(op.type);
   const u1 = op.position, u2 = op.position + op.width, w = op.width;
   const i1 = planMap(wallId, u1, 0, plan), i2 = planMap(wallId, u2, 0, plan);
@@ -15908,7 +16138,7 @@ const PAGE_W = 420, PAGE_H = 297;
 // where there is no package.json to read and no shell to ask, so the number
 // lives here — and sync-bundle.js refuses to build if it and package.json have
 // drifted apart, which is the only way a version in two places stays in one.
-const APP_VERSION = '1.37.0';
+const APP_VERSION = '1.38.0';
 function syncLegalVersion(){
   const a = document.getElementById('legalVersion');
   const b = document.getElementById('legalVersionFoot');
@@ -19118,6 +19348,48 @@ function renderOpeningEditor(op, wall){
     el('div', { class:'ttl' }, openingShortLabel(op)),
     el('div', { class:'sub' }, `Elevation ${wallLetter(roomOfWall(wall), wall.id)}  ·  ${op.id}`),
   ));
+  // Linked to a real door, or not. Linked, the size and everything drawn comes
+  // from the other app and the fields below it go quiet - editing a width here
+  // when the door says otherwise is how two drawings of one door end up
+  // disagreeing, and the door is the one that gets built.
+  if(linkedDoors().length || op.linkId){
+    editor.appendChild(el('h3', {}, 'Linked opening'));
+    const sel = el('select', {});
+    sel.appendChild(el('option', { value:'' }, '(not linked — drawn from the type below)'));
+    linkedDoors().forEach(dr=>{
+      const o = el('option', { value:dr.id },
+        dr.id + ' · ' + (dr.room || 'no room') + ' · ' + (dr.leafW||'?') + ' × ' + (dr.leafH||'?') + ' · ' + (dr.doorType||''));
+      if(op.linkId === dr.id) o.setAttribute('selected','');
+      sel.appendChild(o);
+    });
+    if(op.linkId && !linkedDoorById(op.linkId)){
+      const o = el('option', { value:op.linkId }, op.linkId + ' — not in the published schedule');
+      o.setAttribute('selected',''); sel.appendChild(o);
+    }
+    sel.addEventListener('change', ()=>{
+      pushHistory();
+      op.linkId = sel.value || null;
+      // Take the hole's size from the door, so the wall it is cut into agrees
+      // with it and the dimension chain reads the same figure.
+      const g = linkGeom(openingLink(op));
+      if(g){ op.width = Math.round(g.openW); op.headH = Math.round(g.openH); op.sillH = 0; }
+      scheduleAutosave();
+      renderOpeningEditor(op, wall); renderCabinetList(); renderActive(); syncOpeningsPanel();
+    });
+    editor.appendChild(el('div', { class:'ctrl' }, sel));
+    const g = linkGeom(openingLink(op));
+    if(g){
+      editor.appendChild(el('div', { class:'ctrl', style:'font-size:11px;color:var(--muted);line-height:1.55;margin-top:-4px' },
+        'Opening ' + Math.round(g.openW) + ' × ' + Math.round(g.openH) +
+        ' · leaf ' + g.leafW + ' × ' + g.leafH + ' × ' + g.leafT +
+        ' · jamb ' + g.jambT + ' into a ' + g.jambS + ' section' +
+        (g.arch ? ' · architrave ' + g.arch.name : '') +
+        ' · reveal ' + g.reveal + ' · lockset ' + g.locksetCL +
+        ' · ' + g.handing + (g.hardware ? ' · ' + g.hardware.name : '')));
+      editor.appendChild(el('div', { class:'ctrl', style:'font-size:11px;color:var(--muted);margin-top:-6px;font-style:italic' },
+        'Size and detail come from that door. Change them there and this follows.'));
+    }
+  }
   // Type — switching keeps position and width, but adopts the new type's
   // sill/head defaults when the old ones make no sense for it.
   editor.appendChild(el('h3', {}, 'Type'));
@@ -23900,6 +24172,67 @@ function syncLowWallPanel(){
     syncLowWallPanel(); pushHistory(); scheduleAutosave(); renderActive();
   });
 })();
+// ---- Keeping the library in step ---------------------------------------
+// Read once at start, and again whenever the other app publishes. A drawing
+// that has a door in it should follow that door without anyone remembering to
+// press anything — that is the whole point of linking rather than importing.
+function applyOpeningsPayload(p){
+  if(!p){ _openingsMeta = { state:'no-bridge', path:'', when:'', error:'' }; _openingsLib = null; }
+  else if(!p.ok){ _openingsMeta = { state:'error', path:p.path||'', when:'', error:p.error||'' }; }
+  else if(!p.found){ _openingsMeta = { state:'missing', path:p.path||'', when:'', error:'' }; _openingsLib = null; }
+  else {
+    _openingsLib = p.data || null;
+    _openingsMeta = { state:'ok', path:p.path||'', when:(p.data && p.data.updatedAt) || p.mtime || '', error:'' };
+  }
+  try { syncOpeningsPanel(); } catch(_){}
+  try { renderActive(); } catch(_){}
+}
+async function refreshOpeningsLink(){
+  const b = window.bathroomOpenings;
+  if(!b || !b.read){ applyOpeningsPayload(null); return; }
+  try { applyOpeningsPayload(await b.read()); }
+  catch(err){ applyOpeningsPayload({ ok:false, found:true, error:String(err && err.message || err) }); }
+}
+(function(){
+  const b = window.bathroomOpenings;
+  if(!b){ _openingsMeta = { state:'no-bridge', path:'', when:'', error:'' }; return; }
+  refreshOpeningsLink();
+  if(b.onChange) b.onChange(p => applyOpeningsPayload(p));
+})();
+// What the panel says about the link, and the doors it found.
+function syncOpeningsPanel(){
+  const host = document.getElementById('linkStatus');
+  if(!host) return;
+  const m = _openingsMeta, n = linkedDoors().length;
+  const when = m.when ? new Date(m.when).toLocaleString() : '';
+  let msg;
+  if(m.state === 'ok')            msg = n + ' opening' + (n === 1 ? '' : 's') + ' published' + (when ? ', ' + when : '') + '.';
+  else if(m.state === 'missing')  msg = 'Nothing published yet. Open the Window, Door &amp; Wall Composite Builder, go to the internal door schedule and save — it publishes as you work.';
+  else if(m.state === 'error')    msg = 'The published file could not be read: ' + m.error;
+  else                            msg = 'Only the desktop app can reach the published schedule.';
+  host.innerHTML = msg;
+  const list = document.getElementById('linkList');
+  if(list){
+    list.innerHTML = '';
+    linkedDoors().forEach(dr => {
+      const used = (allWallsEverywhere() || []).some(w => (w.openings||[]).some(o => o.linkId === dr.id));
+      const row = el('div', { class:'m-row', title: used ? 'Used on this drawing' : 'Not on this drawing yet' },
+        el('span', { class:'sw-dot', style:'background:' + (used ? 'var(--brand)' : 'var(--border)') }),
+        el('span', {}, dr.id + '  ' + (dr.room || '') + '  ·  ' + (dr.leafW || '?') + ' × ' + (dr.leafH || '?')),
+        el('span', { style:'font-size:11px;color:var(--muted)' }, String(dr.doorType || '')));
+      list.appendChild(row);
+    });
+    if(!linkedDoors().length)
+      list.appendChild(el('div', { style:'font-size:11px;color:var(--muted);margin-top:6px' }, 'No openings to link to.'));
+  }
+}
+// Every wall in the job, whichever room it belongs to.
+function allWallsEverywhere(){
+  const out = (state.walls || []).slice();
+  (state.rooms || []).forEach(r => (r.walls || []).forEach(w => out.push(w)));
+  return out;
+}
+
 // Measure tool wiring
 function syncMeasurePanel(){
   const btn = document.getElementById('measureToggle');
@@ -23991,6 +24324,14 @@ function renderMeasureList(){
     });
   });
 }
+(function(){
+  const r = document.getElementById('linkRefresh');
+  if(r) r.addEventListener('click', ()=> refreshOpeningsLink());
+  const v = document.getElementById('linkReveal');
+  if(v) v.addEventListener('click', async ()=>{
+    if(window.bathroomOpenings && window.bathroomOpenings.reveal) await window.bathroomOpenings.reveal();
+  });
+})();
 (function(){
   const btn = document.getElementById('measureToggle');
   const clr = document.getElementById('measureClear');

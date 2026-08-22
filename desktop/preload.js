@@ -38,6 +38,23 @@ contextBridge.exposeInMainWorld('bathroomChat', {
 
   // Opens the Windows page where the speech privacy policy is accepted.
   openSpeechSettings: () => ipcRenderer.invoke('chat:openSpeechSettings'),
+});
+
+// The openings library, authored in the Window, Door & Wall Composite Builder
+// and published to a file both apps can reach. Read only: the schedule belongs
+// to that app and nothing here should be able to write it.
+contextBridge.exposeInMainWorld('bathroomOpenings', {
+  available: true,
+  read:   () => ipcRenderer.invoke('openings:read'),
+  where:  () => ipcRenderer.invoke('openings:where'),
+  reveal: () => ipcRenderer.invoke('openings:reveal'),
+  // Fires when the other app publishes, so a drawing follows the schedule
+  // without anybody having to remember to press anything.
+  onChange: (fn) => {
+    const h = (_e, payload) => { try { fn(payload); } catch (_) {} };
+    ipcRenderer.on('openings:changed', h);
+    return () => ipcRenderer.removeListener('openings:changed', h);
+  },
   dictateStop:  () => ipcRenderer.invoke('chat:dictateStop'),
 
   // Hand a floor plan over for Claude to read.
